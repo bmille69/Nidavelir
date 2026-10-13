@@ -118,6 +118,7 @@ L'adaptateur Claude Code **refuse de démarrer** si sa ligne de commande contien
 
 ## 9. Limites assumées
 
+- **Dépendances partagées** (ADR-16) : la copie de travail utilise votre `node_modules` par une jonction. L'agent ne peut ni y écrire, ni installer de dépendance, ni créer de lien. Mais les outils de test qu'il lance peuvent y écrire leur cache. Toute suppression d'une copie de travail commence par retirer les jonctions, car `git worktree remove --force` effacerait leur cible.
 - **Pas de bac à sable système** : Claude Code s'exécute avec vos droits Windows. Les commandes autorisées (par exemple Godot headless) peuvent elles-mêmes exécuter du code du projet, comme les scripts GDScript de test. Le niveau de risque est le même que celui d'un développeur qui lance les tests de son propre projet, ce qui est accepté pour le MVP. Si le besoin apparaît, l'option sera Windows Sandbox ou WSL2 avec Docker (voir DECISIONS, arbitrage ouvert).
 - La liste blanche de commandes porte sur le préfixe de la commande : une commande autorisée qui en lance d'autres n'est pas inspectée en profondeur. D'où la règle : **pas d'interpréteurs génériques** (`powershell`, `bash -c`, `node -e`, `python`) dans les listes blanches.
 - L'heuristique anti-injection réduit le bruit mais ne garantit rien. La garantie vient du §6.1 et du §6.2.

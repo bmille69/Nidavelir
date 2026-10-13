@@ -94,6 +94,11 @@ describe("commandes", () => {
       "cat .env > out.txt",
       "ls `whoami`",
       "npx -y cowsay",
+      "npm install left-pad",
+      "npm ci",
+      "yarn add x",
+      "ln -s / sortie",
+      "mklink /J sortie C:/",
     ];
     for (const c of bad) expect(d(exec, "Bash", { command: c }), c).toBe("deny");
   });

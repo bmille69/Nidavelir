@@ -16,6 +16,8 @@ export interface VcsPort {
 
   // ── Exécution isolée (phase 2) ──
   head(root: string): Promise<string>;
+  /** Vrai si Git ignore ce chemin (relatif au dépôt). */
+  isIgnored(root: string, path: string): Promise<boolean>;
   currentBranch(root: string): Promise<string | null>;
   /** Modifications suivies non commitées (hors fichiers non suivis). */
   trackedChanges(root: string): Promise<string[]>;
@@ -66,6 +68,15 @@ export class GitCli implements VcsPort {
 
   async head(root: string): Promise<string> {
     return (await this.#git(root, ["rev-parse", "HEAD"])).trim();
+  }
+
+  async isIgnored(root: string, path: string): Promise<boolean> {
+    try {
+      await this.#git(root, ["check-ignore", "-q", "--", path]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async currentBranch(root: string): Promise<string | null> {

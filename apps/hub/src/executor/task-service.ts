@@ -25,6 +25,7 @@ import type { VcsPort } from "../vcs/git.ts";
 import type { VisionService } from "../vision/vision-service.ts";
 import { describeTool } from "./claude-code.ts";
 import { PolicyEngine, TOOLS_BY_MODE, type Decision, type RunMode } from "./policy-engine.ts";
+import { linkSharedDirs, unlinkAllLinks } from "./shared-dirs.ts";
 import type { AgentBridge, ExecResult, ExecutorPort, RunEvent } from "./port.ts";
 import {
   executionPrompt,
@@ -604,13 +605,18 @@ export class TaskService {
     mkdirSync(join(path, ".."), { recursive: true });
     if (await this.#vcs.branchHead(repo, branch)) throw new TaskError(`La branche ${branch} existe déjà dans votre projet`);
     await this.#vcs.addWorktree(repo, path, branch, base);
-    this.#log(task.project, "worktree.created", task.id, { path, branch, base });
+    const linked = await linkSharedDirs(repo, path, this.#vcs);
+    this.#log(task.project, "worktree.created", task.id, { path, branch, base, linked });
     return this.#update(task, { base_commit: base, branch, worktree: path });
   }
 
   async #cleanup(task: Task): Promise<void> {
     const repo = this.#projects.get(task.project).root;
-    if (task.worktree && existsSync(task.worktree)) await this.#vcs.removeWorktree(repo, task.worktree).catch(() => {});
+    if (task.worktree && existsSync(task.worktree)) {
+      // Jonctions d'abord : git worktree remove --force effacerait leur cible.
+      unlinkAllLinks(task.worktree);
+      await this.#vcs.removeWorktree(repo, task.worktree).catch(() => {});
+    }
     if (task.branch && (await this.#vcs.branchHead(repo, task.branch))) await this.#vcs.deleteBranch(repo, task.branch).catch(() => {});
   }
 

@@ -41,7 +41,8 @@ export class Journal {
     return Number(result.lastInsertRowid);
   }
 
-  list(filter: { project?: string; subject?: string; limit?: number } = {}): HubEvent[] {
+  /** Événements dans l'ordre chronologique ; avec `latest`, les `limit` plus récents. */
+  list(filter: { project?: string; subject?: string; limit?: number; latest?: boolean } = {}): HubEvent[] {
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (filter.project) {
@@ -52,9 +53,10 @@ export class Journal {
       where.push("subject = ?");
       params.push(filter.subject);
     }
-    const sql = `SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq LIMIT ?`;
+    const sql = `SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq ${filter.latest ? "DESC" : ""} LIMIT ?`;
     params.push(filter.limit ?? 1000);
     const rows = this.#db.prepare(sql).all(...params) as Record<string, unknown>[];
+    if (filter.latest) rows.reverse();
     return rows.map((r) => ({
       seq: Number(r.seq),
       at: String(r.at),

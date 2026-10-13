@@ -83,3 +83,12 @@ describe("fichiers d'items", () => {
     expect(() => parseItem(serializeItem({ ...base, status: "captured" }))).toThrow(/statut/);
   });
 });
+
+describe("journal : lecture des plus récents", () => {
+  it("avec latest, renvoie les N derniers événements dans l'ordre chronologique", () => {
+    sb = sandbox();
+    for (let k = 1; k <= 5; k++) sb.hub.journal.append({ project: null, actor: { kind: "system" }, type: `e${k}`, payload: {} });
+    expect(sb.hub.journal.list({ limit: 2, latest: true }).map((e) => e.type)).toEqual(["e4", "e5"]);
+    expect(sb.hub.journal.list({ limit: 2 }).map((e) => e.type)).toEqual(["e1", "e2"]);
+  });
+});

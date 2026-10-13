@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -286,6 +286,51 @@ describe("revue, fusion, corrections, abandon", () => {
     expect(existsSync(review.task.worktree!)).toBe(false);
     expect(git(repo, "branch", "--list", "studio/*").trim()).toBe("");
     expect(existsSync(join(repo, "src/boss.ts"))).toBe(false);
+  });
+});
+
+describe("dépendances partagées (node_modules) par jonction", () => {
+  async function withDeps(ignored: boolean) {
+    const r = sb.makeGameRepo("jeu-deps", { "README.md": "# Deps\n", ".gitignore": ignored ? "node_modules/\n" : "\n" });
+    mkdirSync(join(r, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(r, "node_modules", "pkg", "index.js"), "précieux");
+    await hub.projects.register(sb.human(), { path: r, slug: "deps", name: "Deps" });
+    hub.vision.capture("deps", DIRECTOR, { type: "idea", title: "x", statement: "x", source: msg("m", "x") });
+    const { proposal, hash } = hub.vision.submitProposal("deps", DIRECTOR, { title: "D", statement: "D", source: { kind: "message", ref: "m" }, details: { based_on: ["I-0001"] } });
+    await hub.vision.decideProposal("deps", hub.approvals.record(sb.human(), { project: "deps", subject: { kind: "proposal", id: proposal.id, hash }, verdict: "approved" }).id);
+    const t = hub.tasks.create(sb.human(), "deps", { decisions: ["D-0001"] });
+    fake.scripts.plan.push(() => planOutput());
+    await hub.tasks.startPlanning("deps", t.id);
+    await until(() => hub.tasks.get("deps", t.id).status === "plan_review");
+    return { r, task: hub.tasks.get("deps", t.id) };
+  }
+
+  it("la copie de travail voit les dépendances, l'agent ne peut pas y écrire, et l'abandon ne les efface pas", async () => {
+    const { r, task } = await withDeps(true);
+    expect(lstatSync(join(task.worktree!, "node_modules")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(task.worktree!, "node_modules", "pkg", "index.js"), "utf8")).toBe("précieux");
+    hub.tasks.approvePlan(sb.human(), "deps", task.id, hub.tasks.plan("deps", task.plan!).hash);
+    fake.scripts.execute.push(async (t) => {
+      await t.write("node_modules/pkg/index.js", "piraté");
+      await t.bash("npm install left-pad");
+      await t.bash("mklink /J sortie C:\\");
+      return REPORT;
+    });
+    fake.scripts.verify.push(() => VERIFIED);
+    await hub.tasks.startExecution(sb.human(), "deps", task.id);
+    await until(() => hub.tasks.get("deps", task.id).status === "review");
+    expect(fake.tools.find((t) => t.req.kind === "execute")!.log.every((l) => l.endsWith("refused"))).toBe(true);
+    // Le commit de la copie ne contient pas node_modules.
+    expect((await hub.tasks.review("deps", task.id)).files).toEqual([]);
+
+    await hub.tasks.abandon(sb.human(), "deps", task.id);
+    expect(existsSync(task.worktree!)).toBe(false);
+    expect(readFileSync(join(r, "node_modules", "pkg", "index.js"), "utf8")).toBe("précieux");
+  });
+
+  it("aucune jonction si node_modules est versionné (il serait commité)", async () => {
+    const { task } = await withDeps(false);
+    expect(existsSync(join(task.worktree!, "node_modules"))).toBe(false);
   });
 });
 

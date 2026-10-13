@@ -37,6 +37,10 @@ const FORBIDDEN_COMMANDS = [
   /^(rm|del|rmdir|rd) .*(-r|-rf|-fr|\/s)\b/i,
   /^(sudo|runas|chmod|chown|icacls|takeown|reg|setx|format|diskpart|shutdown)\b/i,
   /^npx -y\b/i,
+  // Liens : ils permettraient de sortir de la copie de travail.
+  /^(ln|mklink|new-item|cp -s)\b/i,
+  // Dépendances : node_modules est partagé avec votre projet (jonction) ; installer le modifierait.
+  /^(npm|pnpm|yarn|bun) (i|install|ci|add|remove|rm|uninstall|un|update|up|upgrade|link|unlink|rebuild|prune|dedupe)\b/i,
 ];
 const SHELL_META = /[;&|`$<>(){}\r\n\\]/;
 

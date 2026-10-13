@@ -321,7 +321,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.conversations.send(slug, id, Body.message.parse(req.body).text);
     });
-    api.get("/projects/:slug/journal", async (req) => hub.journal.list({ project: (req.params as { slug: string }).slug, limit: 200 }));
+    api.get("/projects/:slug/journal", async (req) => hub.journal.list({ project: (req.params as { slug: string }).slug, limit: 200, latest: true }));
   }, { prefix: "/api/human" });
 
   // Routes des relais d'agent (hook et gardien) : jeton du run, aucun cookie, aucune décision humaine possible.
