@@ -60,6 +60,19 @@ export class HumanSessions {
     return { sessionId, ...record };
   }
 
+  /** Lecture seule : le cookie suffit (aucune HumanSession n'est émise). */
+  check(sessionId: string, cookie: string): boolean {
+    const record = this.#sessions.get(sessionId);
+    return !!record && safeEqual(record.cookie, cookie);
+  }
+
+  /** Jeton CSRF d'une session, à fournir au frontend après vérification du cookie. */
+  csrfFor(sessionId: string, cookie: string): string {
+    const record = this.#sessions.get(sessionId);
+    if (!record || !safeEqual(record.cookie, cookie)) throw new HumanSessionRequiredError();
+    return record.csrf;
+  }
+
   verify(sessionId: string, cookie: string, csrf: string): HumanSession {
     const record = this.#sessions.get(sessionId);
     if (!record || !safeEqual(record.cookie, cookie) || !safeEqual(record.csrf, csrf)) {

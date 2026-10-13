@@ -97,6 +97,35 @@ const MIGRATIONS: string[] = [
   CREATE TRIGGER events_no_delete BEFORE DELETE ON events
   BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
   `,
+  `
+  CREATE TABLE threads (
+    id TEXT PRIMARY KEY,
+    project TEXT NOT NULL REFERENCES projects (slug),
+    title TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX threads_project ON threads (project, created_at);
+
+  CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    thread TEXT NOT NULL REFERENCES threads (id),
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    at TEXT NOT NULL,
+    extraction TEXT NOT NULL,
+    cost_usd REAL,
+    UNIQUE (thread, seq)
+  );
+  -- Ce qui a été dit ne se réécrit pas : seul le statut d'extraction évolue.
+  CREATE TRIGGER messages_immutable BEFORE UPDATE ON messages
+  WHEN NEW.id IS NOT OLD.id OR NEW.thread IS NOT OLD.thread OR NEW.seq IS NOT OLD.seq
+    OR NEW.role IS NOT OLD.role OR NEW.text IS NOT OLD.text OR NEW.at IS NOT OLD.at
+  BEGIN SELECT RAISE(ABORT, 'messages are immutable'); END;
+  CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
+  BEGIN SELECT RAISE(ABORT, 'messages are immutable'); END;
+  `,
 ];
 
 export function openDatabase(path: string): Db {

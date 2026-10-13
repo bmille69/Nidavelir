@@ -77,6 +77,15 @@ export class ProjectRegistry {
     return p;
   }
 
+  /** Raisons d'isolation qui empêcheraient l'import de ce dossier (synchrone, lecture seule). */
+  problemsFor(path: string): string[] {
+    try {
+      return this.#isolationProblems(this.#canonical(path));
+    } catch (err) {
+      return [(err as Error).message];
+    }
+  }
+
   /** Analyse en lecture seule d'un dossier candidat à l'import. N'écrit rien. */
   async analyze(path: string): Promise<ProjectAnalysis> {
     const problems: string[] = [];

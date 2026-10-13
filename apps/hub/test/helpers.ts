@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Author, Source } from "@studio/contracts";
 import { createHub, type Hub } from "../src/hub.ts";
+import type { OrchestratorPort } from "../src/orchestrator/port.ts";
 
 export const DIRECTOR: Author = { kind: "agent", role: "director", run: "RUN-0001" };
 export const HUMAN: Author = { kind: "human" };
@@ -36,13 +37,13 @@ export function cleanupSandboxes(): void {
   for (const s of live.splice(0)) s.cleanup();
 }
 
-export function sandbox(): Sandbox {
-  const s = makeSandbox();
+export function sandbox(orchestrator?: OrchestratorPort): Sandbox {
+  const s = makeSandbox(orchestrator);
   live.push(s);
   return s;
 }
 
-function makeSandbox(): Sandbox {
+function makeSandbox(orchestrator?: OrchestratorPort): Sandbox {
   const dir = mkdtempSync(join(tmpdir(), "studio-test-"));
   const hubRoot = join(dir, "hub");
   const dataDir = join(hubRoot, ".data");
@@ -51,6 +52,7 @@ function makeSandbox(): Sandbox {
     databasePath: join(dataDir, "hub.db"),
     registry: { forbiddenTrees: [hubRoot], forbiddenExact: [dir] },
     clock: fakeClock(),
+    orchestrator,
   });
   return {
     dir,

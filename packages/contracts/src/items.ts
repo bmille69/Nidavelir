@@ -176,6 +176,8 @@ export const ItemFrontmatter = z
     proposal: ProposalDetails.optional(),
     decision: DecisionDetails.optional(),
     confidence: z.number().min(0).max(1).optional(),
+    /** Indice d'aide au tri, jamais un statut : « ressemble à une décision déjà prise ». */
+    hint: z.enum(["existing_decision"]).optional(),
     vision_rev: z.number().int().min(0),
     created_at: z.string(),
     updated_at: z.string(),

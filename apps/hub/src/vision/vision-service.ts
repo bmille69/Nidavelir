@@ -44,6 +44,7 @@ export type CaptureInput = {
   domain?: string[];
   confidence?: number;
   links?: Link[];
+  hint?: "existing_decision";
 };
 
 export type ProposalInput = {
@@ -156,6 +157,7 @@ export class VisionService {
       authored_by: actor,
       links: input.links ?? [],
       confidence: input.confidence,
+      hint: input.hint,
       created_at: now,
       updated_at: now,
     });

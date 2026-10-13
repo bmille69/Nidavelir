@@ -2,16 +2,28 @@
 
 Studio personnel de développement de jeux vidéo assisté par IA, conçu pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**.
 
-> État actuel : **Phase 1, étape 1 terminée**. Le socle est en place : contrats, stockage de la vision, validations humaines, journal et import de projets (sans interface pour l'instant).
+> État actuel : **Phase 1, étape 2 terminée**. On peut importer un projet ou en créer un, discuter avec le directeur en mode exploration, amorcer la vision depuis les documents, et trier. Le mode décision arrive à l'étape 3.
+
+## Lancer le studio
+
+```powershell
+cd C:\Games\Ambition
+npm install        # la première fois
+npm start          # compile l'interface puis lance le hub sur http://127.0.0.1:4317
+```
+
+Le navigateur s'ouvre sur un **lien de connexion à usage unique**, également affiché dans le terminal. Arrêt : `Ctrl+C`.
+Les appels à Claude passent par votre Claude Code (votre abonnement), sans outils et sans accès à vos fichiers.
+
+Variables facultatives : `STUDIO_PORT`, `STUDIO_GAMES_ROOT` (défaut `C:\Games`), `STUDIO_DATA_DIR` (défaut `.data`), `STUDIO_MODEL_CHAT` et `STUDIO_MODEL_STRUCTURED` (défaut `sonnet`), `STUDIO_NO_BROWSER=1`.
 
 ## Développement
 
 Prérequis : Node.js 24 et Git (vérifiés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §1).
 
 ```powershell
-npm install
-npm test           # suite Vitest (dépôts Git temporaires, aucun appel à un LLM)
-npm run typecheck
+npm test           # suite Vitest (dépôts Git temporaires, orchestrateur factice : aucun appel à un LLM)
+npm run typecheck  # backend et interface
 ```
 
 | Dossier | Contenu |
@@ -23,6 +35,10 @@ npm run typecheck
 | `apps/hub/src/projects` | Registre, isolation des répertoires, analyse et import d'un projet existant |
 | `apps/hub/src/journal` | Journal en ajout seul, avec masquage des secrets |
 | `apps/hub/src/vcs` | Git : commits restreints à `studio/` |
+| `apps/hub/src/conversation` | Fils de discussion, paquet de contexte, prompts du directeur |
+| `apps/hub/src/orchestrator`, `llm` | Port d'orchestration ; adaptateur Claude Code CLI sans outils |
+| `apps/hub/src/server` | Serveur HTTP local : contrôle du Host, cookie de session, CSRF |
+| `apps/web` | Interface React : projets, import, conversation, tri |
 
 ## Le problème à résoudre
 
