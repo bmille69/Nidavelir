@@ -13,6 +13,21 @@ export interface VcsPort {
    * modifications en cours du dépôt. Renvoie le sha, ou null s'il n'y avait rien.
    */
   commitPaths(root: string, paths: string[], message: string): Promise<string | null>;
+
+  // ── Exécution isolée (phase 2) ──
+  head(root: string): Promise<string>;
+  currentBranch(root: string): Promise<string | null>;
+  /** Modifications suivies non commitées (hors fichiers non suivis). */
+  trackedChanges(root: string): Promise<string[]>;
+  addWorktree(repo: string, path: string, branch: string, base: string): Promise<void>;
+  removeWorktree(repo: string, path: string): Promise<void>;
+  deleteBranch(repo: string, branch: string): Promise<void>;
+  branchHead(repo: string, branch: string): Promise<string | null>;
+  /** Commite tout le contenu du worktree. Renvoie le sha, ou null s'il n'y avait rien. */
+  commitAll(worktree: string, message: string): Promise<string | null>;
+  diff(repo: string, base: string, branch: string): Promise<{ files: { status: string; path: string }[]; patch: string }>;
+  /** Fusion --no-ff de branch dans la branche courante ; annule proprement en cas de conflit. */
+  merge(repo: string, branch: string, message: string): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }>;
 }
 
 export class GitCli implements VcsPort {
@@ -47,6 +62,75 @@ export class GitCli implements VcsPort {
     // Les hooks du dépôt sont respectés : s'ils refusent, l'erreur remonte telle quelle.
     await this.#git(root, ["commit", "--quiet", "-m", message, "--", ...paths]);
     return (await this.#git(root, ["rev-parse", "HEAD"])).trim();
+  }
+
+  async head(root: string): Promise<string> {
+    return (await this.#git(root, ["rev-parse", "HEAD"])).trim();
+  }
+
+  async currentBranch(root: string): Promise<string | null> {
+    const b = (await this.#git(root, ["branch", "--show-current"])).trim();
+    return b || null;
+  }
+
+  async trackedChanges(root: string): Promise<string[]> {
+    const out = await this.#git(root, ["status", "--porcelain=v1", "--untracked-files=no"]);
+    return out.split("\n").filter(Boolean).map((l) => l.slice(3));
+  }
+
+  async addWorktree(repo: string, path: string, branch: string, base: string): Promise<void> {
+    await this.#git(repo, ["worktree", "add", "-b", branch, path, base]);
+  }
+
+  async removeWorktree(repo: string, path: string): Promise<void> {
+    await this.#git(repo, ["worktree", "remove", "--force", path]);
+  }
+
+  async deleteBranch(repo: string, branch: string): Promise<void> {
+    await this.#git(repo, ["branch", "-D", branch]);
+  }
+
+  async branchHead(repo: string, branch: string): Promise<string | null> {
+    try {
+      return (await this.#git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  async commitAll(worktree: string, message: string): Promise<string | null> {
+    await this.#git(worktree, ["add", "--all"]);
+    const staged = await this.#git(worktree, ["diff", "--cached", "--name-only"]);
+    if (!staged.trim()) return null;
+    await this.#git(worktree, ["commit", "--quiet", "-m", message]);
+    return (await this.#git(worktree, ["rev-parse", "HEAD"])).trim();
+  }
+
+  async diff(repo: string, base: string, branch: string) {
+    const range = `${base}...${branch}`;
+    const names = await this.#git(repo, ["diff", "--name-status", "--no-renames", range]);
+    const files = names
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        const [status, ...rest] = l.split("\t");
+        return { status: status!, path: rest.join("\t") };
+      });
+    const patch = await this.#git(repo, ["diff", "--no-renames", "--no-color", range]);
+    return { files, patch };
+  }
+
+  async merge(repo: string, branch: string, message: string) {
+    try {
+      await this.#git(repo, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
+      return { ok: true as const, sha: (await this.#git(repo, ["rev-parse", "HEAD"])).trim() };
+    } catch {
+      const conflicts = (await this.#git(repo, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
+        .split("\n")
+        .filter(Boolean);
+      await this.#git(repo, ["merge", "--abort"]).catch(() => "");
+      return { ok: false as const, conflicts };
+    }
   }
 }
 

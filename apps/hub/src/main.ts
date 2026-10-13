@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createHub } from "./hub.ts";
 import { ClaudeCli } from "./llm/claude-cli.ts";
 import { DirectClaudeOrchestrator } from "./orchestrator/direct-claude.ts";
+import { ClaudeCodeExecutor } from "./executor/claude-code.ts";
 import { WindowsFolderPicker } from "./projects/folder-picker.ts";
 import { defaultRegistryOptions } from "./projects/project-registry.ts";
 import { buildServer } from "./server/http.ts";
@@ -23,7 +24,12 @@ const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
   registry: defaultRegistryOptions(hubRoot, dataDir),
   orchestrator,
+  executor: new ClaudeCodeExecutor(process.env.STUDIO_MODEL_DEV ?? "sonnet"),
+  dataDir,
+  agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
 });
+// Un run ne survit pas à un arrêt du hub : on le signale plutôt que de le laisser « en cours ».
+hub.tasks.recoverInterrupted();
 
 // Les fichiers studio/ font foi : on réaligne l'index à chaque démarrage (ADR-05).
 for (const p of hub.projects.list()) {

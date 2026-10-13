@@ -14,6 +14,7 @@ import type { FolderPicker } from "../projects/folder-picker.ts";
 import { ProjectError } from "../projects/project-registry.ts";
 import { suggestFolders } from "../projects/suggestions.ts";
 import { VisionError } from "../vision/vision-service.ts";
+import { TaskError } from "../executor/task-service.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -46,6 +47,12 @@ const Body = {
   message: z.object({ text: z.string().min(1) }),
   triage: z.object({ action: z.enum(["keep", "discard", "restore"]) }),
   synthesis: z.object({ thread: z.string().optional(), source: z.string().optional() }),
+  createTask: z.object({ decisions: z.array(z.string()).min(1).max(10), title: z.string().max(160).optional(), goal: z.string().max(4000).optional() }),
+  hash: z.object({ hash: z.string().length(64) }),
+  head: z.object({ head: z.string().regex(/^[0-9a-f]{40}$/) }),
+  feedback: z.object({ feedback: z.string().min(1).max(4000) }),
+  escalation: z.object({ allowed: z.boolean() }),
+  agentTool: z.object({ tool_name: z.string().min(1).max(200), tool_input: z.record(z.string(), z.unknown()).default({}) }),
   decide: z.object({
     hash: z.string().length(64),
     verdict: z.enum(["approved", "rejected"]),
@@ -226,6 +233,79 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return { ...hub.vision.lineage(slug, id), hash: hub.vision.itemHash(slug, id) };
     });
 
+    // ── Phase 2 : tâches, plans, exécution contrôlée ──
+    type TaskParams = { slug: string; id: string };
+    api.get("/projects/:slug/tasks", async (req) => {
+      const { slug } = req.params as { slug: string };
+      const pending = hub.tasks.escalations(slug, { status: "pending" });
+      return hub.tasks.list(slug).map((t) => ({ ...t, pending_escalations: pending.filter((e) => e.task === t.id).length }));
+    });
+    api.post("/projects/:slug/tasks", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.tasks.create(req.human!, slug, Body.createTask.parse(req.body));
+    });
+    api.get("/projects/:slug/tasks/:id", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      const task = hub.tasks.get(slug, id);
+      return {
+        task,
+        plan: task.plan ? hub.tasks.plan(slug, task.plan) : null,
+        runs: hub.tasks.runs(slug, id),
+        escalations: hub.tasks.escalations(slug, { task: id }),
+        decisions: task.authorized_by.map((d) => hub.vision.get(slug, d)),
+        executor: hub.tasks.executorName,
+      };
+    });
+    api.post("/projects/:slug/tasks/:id/plan", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.startPlanning(slug, id);
+    });
+    api.post("/projects/:slug/tasks/:id/plan/approve", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.approvePlan(req.human!, slug, id, Body.hash.parse(req.body).hash);
+    });
+    api.post("/projects/:slug/tasks/:id/plan/reject", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.rejectPlan(req.human!, slug, id, Body.note.parse(req.body ?? {}).note);
+    });
+    api.post("/projects/:slug/tasks/:id/execute", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.startExecution(req.human!, slug, id);
+    });
+    api.post("/projects/:slug/tasks/:id/cancel", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.cancel(req.human!, slug, id);
+    });
+    api.get("/projects/:slug/tasks/:id/runs/:run/events", async (req) => {
+      const { run } = req.params as TaskParams & { run: string };
+      const after = Number((req.query as { after?: string }).after ?? 0);
+      return hub.tasks.events(run, Number.isFinite(after) ? after : 0);
+    });
+    api.get("/projects/:slug/tasks/:id/review", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.review(slug, id);
+    });
+    api.post("/projects/:slug/tasks/:id/merge", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.merge(req.human!, slug, id, Body.head.parse(req.body).head);
+    });
+    api.post("/projects/:slug/tasks/:id/changes", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.requestChanges(req.human!, slug, id, Body.feedback.parse(req.body).feedback);
+    });
+    api.post("/projects/:slug/tasks/:id/abandon", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.abandon(req.human!, slug, id);
+    });
+    api.get("/projects/:slug/escalations", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.tasks.escalations(slug, { status: "pending" });
+    });
+    api.post("/projects/:slug/escalations/:id/decide", async (req) => {
+      const { slug, id } = req.params as TaskParams;
+      return hub.tasks.decideEscalation(req.human!, slug, id, Body.escalation.parse(req.body).allowed);
+    });
+
     api.get("/projects/:slug/jobs", async (req) => hub.bootstrap.list((req.params as { slug: string }).slug));
 
     // ── Conversations ──
@@ -244,10 +324,36 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/projects/:slug/journal", async (req) => hub.journal.list({ project: (req.params as { slug: string }).slug, limit: 200 }));
   }, { prefix: "/api/human" });
 
+  // Routes des relais d'agent (hook et gardien) : jeton du run, aucun cookie, aucune décision humaine possible.
+  app.register(
+    async (agent) => {
+      const token = (req: FastifyRequest) => String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+      agent.post("/runs/:run/pretool", async (req, reply) => {
+        const { run } = req.params as { run: string };
+        const body = Body.agentTool.parse(req.body);
+        try {
+          return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input);
+        } catch (err) {
+          return reply.code(403).send({ decision: "deny", reason: (err as Error).message });
+        }
+      });
+      agent.post("/runs/:run/permission", async (req, reply) => {
+        const { run } = req.params as { run: string };
+        const body = Body.agentTool.parse(req.body);
+        try {
+          return await hub.tasks.agentPermission(run, token(req), body.tool_name, body.tool_input);
+        } catch (err) {
+          return reply.code(403).send({ behavior: "deny", message: (err as Error).message });
+        }
+      });
+    },
+    { prefix: "/api/agent" },
+  );
+
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

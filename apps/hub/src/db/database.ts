@@ -126,6 +126,53 @@ const MIGRATIONS: string[] = [
   CREATE TRIGGER messages_no_delete BEFORE DELETE ON messages
   BEGIN SELECT RAISE(ABORT, 'messages are immutable'); END;
   `,
+  `
+  CREATE TABLE tasks (
+    id TEXT NOT NULL,
+    project TEXT NOT NULL REFERENCES projects (slug),
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project, id)
+  );
+  CREATE TABLE plans (
+    id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    PRIMARY KEY (project, id)
+  );
+  -- Le contenu d'un plan est figé : seul son statut peut changer.
+  CREATE TRIGGER plans_immutable BEFORE UPDATE ON plans
+  WHEN NEW.data_json IS NOT OLD.data_json OR NEW.id IS NOT OLD.id OR NEW.task IS NOT OLD.task
+  BEGIN SELECT RAISE(ABORT, 'plans are immutable'); END;
+  CREATE TABLE runs (
+    id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    cost_usd REAL,
+    error TEXT,
+    result_json TEXT,
+    PRIMARY KEY (project, id)
+  );
+  CREATE TABLE escalations (
+    id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    run TEXT NOT NULL,
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    PRIMARY KEY (project, id)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

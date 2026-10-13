@@ -18,7 +18,7 @@ export type ApprovalEdits = z.infer<typeof ApprovalEdits>;
 export const Approval = z.object({
   id: z.string().regex(/^A-\d{4,}$/),
   project: z.string().min(1),
-  subject: z.object({ kind: ApprovalSubjectKind, id: ItemId, hash: z.string().length(64) }),
+  subject: z.object({ kind: ApprovalSubjectKind, id: z.string().regex(/^[A-Z]{1,4}-\d{4,}$/), hash: z.string().length(64) }),
   verdict: z.enum(["approved", "rejected"]),
   note: z.string().optional(),
   edits: ApprovalEdits.optional(),

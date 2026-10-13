@@ -54,7 +54,7 @@ function makeSandbox(orchestrator?: OrchestratorPort): Sandbox {
     clock: fakeClock(),
     orchestrator,
   });
-  return {
+  const self: Sandbox = {
     dir,
     hub,
     makeGameRepo(name, files = { "README.md": `# ${name}\n` }) {
@@ -73,13 +73,17 @@ function makeSandbox(orchestrator?: OrchestratorPort): Sandbox {
       return root;
     },
     human() {
-      const token = hub.sessions.createLoginToken();
-      const { sessionId, cookie, csrf } = hub.sessions.login(token);
-      return hub.sessions.verify(sessionId, cookie, csrf);
+      // Toujours le hub courant : un test peut le remplacer (ex. exécuteur factice).
+      const h = self.hub;
+      const token = h.sessions.createLoginToken();
+      const { sessionId, cookie, csrf } = h.sessions.login(token);
+      return h.sessions.verify(sessionId, cookie, csrf);
     },
     cleanup() {
       hub.close();
-      rmSync(dir, { recursive: true, force: true });
+      self.hub.close();
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
+  return self;
 }
