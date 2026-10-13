@@ -2,7 +2,9 @@
 
 Studio personnel de développement de jeux vidéo assisté par IA, conçu pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**.
 
-> État actuel : **Phase 1 terminée (MVP)**. Importer ou créer un projet, discuter librement avec le directeur, amorcer la vision depuis les documents, faire regrouper les fiches en propositions, valider, modifier ou refuser, puis consulter la vision validée et le « Pourquoi ? » de chaque décision.
+> État actuel : **Phases 1 et 2 terminées**.
+> - Phase 1 : importer ou créer un projet, discuter librement, faire regrouper les fiches en propositions, décider, consulter la vision validée et le « Pourquoi ? ».
+> - Phase 2 : faire implémenter une décision par Claude Code sous contrôle. Le développeur propose un plan, vous le validez ; il travaille dans une copie isolée et chaque action est filtrée ; il vous demande pour tout imprévu ; le QA vérifie ; vous fusionnez ou abandonnez.
 
 ## Lancer le studio
 
@@ -39,7 +41,8 @@ npm run build && npm run test:e2e   # parcours complet dans Edge (headless), cap
 | `apps/hub/src/conversation` | Fils de discussion, paquet de contexte, prompts du directeur |
 | `apps/hub/src/orchestrator`, `llm` | Port d'orchestration ; adaptateur Claude Code CLI sans outils |
 | `apps/hub/src/server` | Serveur HTTP local : contrôle du Host, cookie de session, CSRF |
-| `apps/web` | Interface React : projets, import, conversation, tri |
+| `apps/hub/src/executor` | Phase 2 : `PolicyEngine` (allow / deny / ask), `TaskService`, lanceur Claude Code, relais hook et gardien |
+| `apps/web` | Interface React : projets, import, discussion, décisions, vision, tâches |
 
 ## Le problème à résoudre
 

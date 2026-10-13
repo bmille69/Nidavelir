@@ -51,7 +51,14 @@ C'est le cœur du studio : le moteur de vision, sans aucune exécution de code.
 
 ---
 
-## Phase 2 : exécution contrôlée avec Claude Code
+## Phase 2 : exécution contrôlée avec Claude Code ✅ (14/10/2026)
+
+> Bilan des critères :
+> - **1, 2, 3, 4, 5 et 7** : validés par des tests automatisés (97 au total, plus 9 étapes navigateur), et 1 à 5 également lors d'un **essai réel avec Claude Code** sur une copie de Destiny Survivor.
+> - **6 (arrêt en moins de 5 s)** : vérifié avec l'exécuteur factice. Avec le vrai Claude Code, l'arrêt passe par `taskkill /T /F` mais n'a pas encore été chronométré.
+> - **8 (consigne malveillante dans un fichier)** : la politique bloque suppressions, réseau et interpréteurs (testé, y compris avec le vrai Claude Code lors des essais préalables). En revanche, aucun essai réel n'a encore placé une consigne piégée *dans un fichier du projet* : à faire.
+>
+> Constats de l'essai réel : voir DECISIONS, « Constats de la phase 2 ».
 
 **Périmètre**
 

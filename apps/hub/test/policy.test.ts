@@ -101,6 +101,9 @@ describe("commandes", () => {
     expect(d(exec, "Bash", { command: "npm run lint" })).toBe("ask");
     expect(d(planning, "Bash", { command: "npm run lint" })).toBe("deny");
   });
+  it("le rendu du résultat structuré est toujours permis (sans effet)", () => {
+    expect(d(planning, "StructuredOutput", { summary: "x" })).toBe("allow");
+  });
   it("outils non prévus refusés", () => {
     for (const t of ["WebFetch", "WebSearch", "Task", "Agent", "mcp__autre__outil"]) expect(d(exec, t, {}), t).toBe("deny");
   });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Item, type Lineage } from "../api.ts";
 import { formatDate, STATUS_LABEL, TYPE_LABEL } from "./labels.ts";
+import { ImplementButton } from "./TasksView.tsx";
 
 export function VisionView({ slug }: { slug: string }) {
   const [canon, setCanon] = useState<Item[]>([]);
@@ -68,6 +69,7 @@ export function VisionView({ slug }: { slug: string }) {
                 <button className="link small" onClick={() => showWhy(d.id)}>
                   Pourquoi ? D'où vient cette décision
                 </button>
+                <ImplementButton slug={slug} decision={d.id} />
                 {d.decision?.human_edits && <span className="badge">modifiée par vous</span>}
                 {d.decision?.supersedes.length ? <span className="badge">remplace {d.decision.supersedes.join(", ")}</span> : null}
               </div>

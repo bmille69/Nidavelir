@@ -1,6 +1,20 @@
-import type { ItemFrontmatter, Message, Thread } from "@studio/contracts";
+import type { Escalation, ItemFrontmatter, Message, Plan, Run, Task, Thread, VerificationOutput, ExecutionReportOutput } from "@studio/contracts";
 
-export type { ItemFrontmatter as Item, Message, Thread };
+export type { ItemFrontmatter as Item, Message, Thread, Task, Plan, Escalation };
+export type TaskRow = Task & { pending_escalations: number };
+export type RunInfo = Run & { result: { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string } | null };
+export type TaskDetail = { task: Task; plan: Plan | null; runs: RunInfo[]; escalations: Escalation[]; decisions: ItemFrontmatter[]; executor: string };
+export type RunEvent = { seq: number; at: string; type: "text" | "tool" | "result" | "info" | "error"; text: string };
+export type Review = {
+  task: Task;
+  plan: Plan | null;
+  head: string | null;
+  files: { status: string; path: string; planned: boolean }[];
+  patch: string;
+  report: ExecutionReportOutput | null;
+  verification: VerificationOutput | null;
+  escalations: Escalation[];
+};
 
 export type Project = { slug: string; name: string; root: string; engine: "godot" | "web" | "unknown"; created_at: string };
 export type Analysis = {
@@ -96,6 +110,22 @@ export const api = {
   returnProposal: (slug: string, id: string, note?: string) => request<ItemFrontmatter>("POST", `/projects/${slug}/proposals/${id}/return`, { note }),
   abandon: (slug: string, id: string, hash: string) => request<unknown>("POST", `/projects/${slug}/decisions/${id}/abandon`, { hash }),
   why: (slug: string, id: string) => request<Lineage>("GET", `/projects/${slug}/items/${id}/why`),
+  tasks: (slug: string) => request<TaskRow[]>("GET", `/projects/${slug}/tasks`),
+  createTask: (slug: string, decisions: string[]) => request<Task>("POST", `/projects/${slug}/tasks`, { decisions }),
+  task: (slug: string, id: string) => request<TaskDetail>("GET", `/projects/${slug}/tasks/${id}`),
+  startPlan: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/plan`, {}),
+  approvePlan: (slug: string, id: string, hash: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/plan/approve`, { hash }),
+  rejectPlan: (slug: string, id: string, note?: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/plan/reject`, { note }),
+  execute: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/execute`, {}),
+  cancelTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/cancel`, {}),
+  runEvents: (slug: string, id: string, run: string, after: number) =>
+    request<RunEvent[]>("GET", `/projects/${slug}/tasks/${id}/runs/${run}/events?after=${after}`),
+  review: (slug: string, id: string) => request<Review>("GET", `/projects/${slug}/tasks/${id}/review`),
+  merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
+  requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
+  abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  pendingEscalations: (slug: string) => request<Escalation[]>("GET", `/projects/${slug}/escalations`),
+  decideEscalation: (slug: string, id: string, allowed: boolean) => request<Escalation>("POST", `/projects/${slug}/escalations/${id}/decide`, { allowed }),
   jobs: (slug: string) => request<Job[]>("GET", `/projects/${slug}/jobs`),
   threads: (slug: string) => request<Thread[]>("GET", `/projects/${slug}/threads`),
   createThread: (slug: string, title: string) => request<Thread>("POST", `/projects/${slug}/threads`, { title }),

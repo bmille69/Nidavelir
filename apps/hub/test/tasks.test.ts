@@ -145,7 +145,8 @@ describe("exécution sous contrôle", () => {
 
     await until(() => hub.tasks.escalations(P, { status: "pending" }).length === 1);
     const [esc] = hub.tasks.escalations(P, { status: "pending" });
-    expect(esc).toMatchObject({ tool: "Write", summary: expect.stringMatching(/src[\\/]extra\.ts/) });
+    // Chemin affiché relatif au jeu, sans le dossier technique de la copie de travail.
+    expect(esc).toMatchObject({ tool: "Write", summary: "Écrit src/extra.ts" });
     hub.tasks.decideEscalation(sb.human(), P, esc!.id, false);
     await until(() => status() === "review");
 

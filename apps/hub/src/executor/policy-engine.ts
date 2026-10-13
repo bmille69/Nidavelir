@@ -62,6 +62,8 @@ export class PolicyEngine {
   }
 
   evaluate(tool: string, input: Record<string, unknown>): Decision {
+    // Outil interne de Claude Code pour rendre la réponse au format --json-schema : aucun effet (constaté le 14/10/2026).
+    if (tool === "StructuredOutput") return allow("rendu du résultat final");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);
     if (WRITE_TOOLS.has(tool)) return this.#write(tool, input);
     if (tool === "Bash") return this.#bash(String(input.command ?? ""));

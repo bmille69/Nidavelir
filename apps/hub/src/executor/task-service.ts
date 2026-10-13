@@ -51,6 +51,7 @@ const FORBIDDEN_CHANGE = /^(studio|\.git|\.claude)(\/|$)/i;
 
 type ActiveRun = {
   id: string;
+  root: string;
   project: string;
   task: string;
   kind: RunMode;
@@ -418,7 +419,7 @@ export class TaskService {
   agentPreTool(runId: string, token: string, tool: string, input: Record<string, unknown>): Decision {
     const run = this.#authRun(runId, token);
     const d = run.policy.evaluate(tool, input);
-    if (d.decision !== "allow") this.#event(run, "info", `${d.decision === "deny" ? "Refusé" : "Demande d'autorisation"} : ${describeTool(tool, input)} (${d.reason})`);
+    if (d.decision !== "allow") this.#event(run, "info", `${d.decision === "deny" ? "Refusé" : "Demande d'autorisation"} : ${this.#describe(run, tool, input)} (${d.reason})`);
     if (d.decision === "deny") this.#log(run.project, "policy.denied", run.task, { run: run.id, tool, reason: d.reason, input: summarizeInput(input) });
     return d;
   }
@@ -436,7 +437,7 @@ export class TaskService {
       task: run.task,
       run: run.id,
       tool,
-      summary: describeTool(tool, input),
+      summary: this.#describe(run, tool, input),
       input: summarizeInput(input),
       reason: d.reason,
       status: "pending",
@@ -480,6 +481,7 @@ export class TaskService {
     const token = randomBytes(32).toString("base64url");
     const run: ActiveRun = {
       id,
+      root: task.worktree!,
       project: task.project,
       task: task.id,
       kind,
@@ -543,6 +545,23 @@ export class TaskService {
     this.#background.add(job);
     void job.finally(() => this.#background.delete(job));
     return id;
+  }
+
+  /** Description lisible, chemins relatifs au jeu (sans le dossier technique du worktree). */
+  #describe(run: ActiveRun, tool: string, input: Record<string, unknown>): string {
+    const slash = (s: string) => s.replace(/\\/g, "/");
+    const text = slash(describeTool(tool, input));
+    const root = slash(run.root).replace(/\/+$/, "") + "/";
+    // Retire le préfixe du worktree où qu'il apparaisse, sans tenir compte de la casse (Windows).
+    let out = "";
+    let i = 0;
+    const lower = text.toLowerCase();
+    const needle = root.toLowerCase();
+    for (let at = lower.indexOf(needle); at >= 0; at = lower.indexOf(needle, i)) {
+      out += text.slice(i, at);
+      i = at + needle.length;
+    }
+    return out + text.slice(i);
   }
 
   #authRun(runId: string, token: string): ActiveRun {
