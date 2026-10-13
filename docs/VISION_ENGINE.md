@@ -47,6 +47,8 @@ Renforcer la tension (pilier V-0001 « chaque pas compte »).
 
 **Règle d'or : le corps et le statut d'un item `validated` ne peuvent changer que par une nouvelle décision qui le remplace (`supersedes`).** On ne réécrit jamais l'histoire.
 
+*Précision d'implémentation (étape 1 de la phase 1)* : l'énoncé est stocké dans l'en-tête YAML (`statement`), avec la justification et les options (`proposal`, `decision`). **L'en-tête fait foi.** Le corps Markdown est un rendu lisible, régénéré à chaque écriture. On évite ainsi d'avoir à interpréter du texte libre pour reconstruire l'index.
+
 ### 1.2 Types d'items
 
 | Préfixe | Type | Rôle | Niveau possible |

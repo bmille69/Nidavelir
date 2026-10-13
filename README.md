@@ -2,7 +2,27 @@
 
 Studio personnel de développement de jeux vidéo assisté par IA, conçu pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**.
 
-> État actuel : **Phase 0 — audit et conception**. Aucun code applicatif n'existe encore. Ce dépôt contient uniquement la conception.
+> État actuel : **Phase 1, étape 1 terminée**. Le socle est en place : contrats, stockage de la vision, validations humaines, journal et import de projets (sans interface pour l'instant).
+
+## Développement
+
+Prérequis : Node.js 24 et Git (vérifiés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §1).
+
+```powershell
+npm install
+npm test           # suite Vitest (dépôts Git temporaires, aucun appel à un LLM)
+npm run typecheck
+```
+
+| Dossier | Contenu |
+|---|---|
+| `packages/contracts` | Schémas Zod partagés : items, approbations, événements, projets |
+| `apps/hub/src/vision` | `VisionService`, seul écrivain de la vision ; fichiers d'items ; `BRIEF.md` |
+| `apps/hub/src/approvals` | Validations humaines liées au hash, à usage unique |
+| `apps/hub/src/auth` | Sessions humaines (cookie + CSRF), impossibles à fabriquer hors du module |
+| `apps/hub/src/projects` | Registre, isolation des répertoires, analyse et import d'un projet existant |
+| `apps/hub/src/journal` | Journal en ajout seul, avec masquage des secrets |
+| `apps/hub/src/vcs` | Git : commits restreints à `studio/` |
 
 ## Le problème à résoudre
 

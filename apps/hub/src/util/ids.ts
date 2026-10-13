@@ -1,0 +1,24 @@
+import type { Db } from "../db/database.ts";
+
+/** Attribue le prochain identifiant d'un préfixe pour un projet (ex. D-0007). */
+export function nextId(db: Db, project: string, prefix: string): string {
+  db.prepare(
+    `INSERT INTO counters (project, prefix, value) VALUES (?, ?, 1)
+     ON CONFLICT (project, prefix) DO UPDATE SET value = value + 1`,
+  ).run(project, prefix);
+  const row = db.prepare("SELECT value FROM counters WHERE project = ? AND prefix = ?").get(project, prefix) as {
+    value: number;
+  };
+  return `${prefix}-${String(row.value).padStart(4, "0")}`;
+}
+
+/** Garantit que le compteur ne redescend jamais sous un identifiant existant. */
+export function bumpCounterTo(db: Db, project: string, id: string): void {
+  const match = /^([A-Z]+)-(\d+)$/.exec(id);
+  if (!match) return;
+  const [, prefix, num] = match;
+  db.prepare(
+    `INSERT INTO counters (project, prefix, value) VALUES (?, ?, ?)
+     ON CONFLICT (project, prefix) DO UPDATE SET value = MAX(value, excluded.value)`,
+  ).run(project, prefix!, Number(num));
+}

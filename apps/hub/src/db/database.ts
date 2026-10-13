@@ -1,0 +1,136 @@
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+export type Db = DatabaseSync;
+
+/**
+ * Migrations appliquées dans l'ordre. Ne jamais modifier une migration publiée :
+ * en ajouter une nouvelle.
+ */
+const MIGRATIONS: string[] = [
+  `
+  CREATE TABLE projects (
+    slug TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    root TEXT NOT NULL UNIQUE,
+    engine TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE counters (
+    project TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    value INTEGER NOT NULL,
+    PRIMARY KEY (project, prefix)
+  );
+
+  CREATE TABLE vision_revs (
+    project TEXT PRIMARY KEY,
+    rev INTEGER NOT NULL
+  );
+
+  -- Index reconstructible à partir des fichiers studio/items/*.md.
+  CREATE TABLE items (
+    project TEXT NOT NULL,
+    id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    title TEXT NOT NULL,
+    domain_json TEXT NOT NULL,
+    vision_rev INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project, id)
+  );
+  CREATE TABLE links (
+    project TEXT NOT NULL,
+    from_id TEXT NOT NULL,
+    rel TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    PRIMARY KEY (project, from_id, rel, to_id)
+  );
+  CREATE INDEX links_to ON links (project, to_id);
+  CREATE VIRTUAL TABLE items_fts USING fts5(
+    project UNINDEXED, id UNINDEXED, title, statement,
+    tokenize = 'unicode61 remove_diacritics 2'
+  );
+
+  CREATE TABLE approvals (
+    id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    subject_kind TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    subject_hash TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    note TEXT,
+    edits_json TEXT,
+    at TEXT NOT NULL,
+    session TEXT NOT NULL,
+    consumed_at TEXT,
+    PRIMARY KEY (project, id)
+  );
+  -- Une approbation n'est modifiable qu'une fois : pour la marquer consommée.
+  CREATE TRIGGER approvals_immutable BEFORE UPDATE ON approvals
+  WHEN OLD.consumed_at IS NOT NULL
+    OR NEW.id IS NOT OLD.id OR NEW.project IS NOT OLD.project
+    OR NEW.subject_kind IS NOT OLD.subject_kind OR NEW.subject_id IS NOT OLD.subject_id
+    OR NEW.subject_hash IS NOT OLD.subject_hash OR NEW.verdict IS NOT OLD.verdict
+    OR NEW.note IS NOT OLD.note OR NEW.edits_json IS NOT OLD.edits_json
+    OR NEW.at IS NOT OLD.at OR NEW.session IS NOT OLD.session
+  BEGIN SELECT RAISE(ABORT, 'approvals are immutable'); END;
+  CREATE TRIGGER approvals_no_delete BEFORE DELETE ON approvals
+  BEGIN SELECT RAISE(ABORT, 'approvals are immutable'); END;
+
+  -- Journal append-only.
+  CREATE TABLE events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    project TEXT,
+    actor_json TEXT NOT NULL,
+    type TEXT NOT NULL,
+    subject TEXT,
+    payload_json TEXT NOT NULL
+  );
+  CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+  BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+  CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+  BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+  `,
+];
+
+export function openDatabase(path: string): Db {
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+  migrate(db);
+  return db;
+}
+
+function migrate(db: Db): void {
+  db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+  const row = db.prepare("SELECT version FROM schema_version").get() as { version: number } | undefined;
+  let version = row?.version ?? 0;
+  if (!row) db.prepare("INSERT INTO schema_version (version) VALUES (0)").run();
+  while (version < MIGRATIONS.length) {
+    const sql = MIGRATIONS[version]!;
+    transaction(db, () => {
+      db.exec(sql);
+      db.prepare("UPDATE schema_version SET version = ?").run(version + 1);
+    });
+    version++;
+  }
+}
+
+/** Exécute fn dans une transaction ; annule si fn lève une exception. */
+export function transaction<T>(db: Db, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
