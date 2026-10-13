@@ -2,7 +2,7 @@
 
 Studio personnel de développement de jeux vidéo assisté par IA, conçu pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**.
 
-> État actuel : **Phase 1, étape 2 terminée**. On peut importer un projet ou en créer un, discuter avec le directeur en mode exploration, amorcer la vision depuis les documents, et trier. Le mode décision arrive à l'étape 3.
+> État actuel : **Phase 1 terminée (MVP)**. Importer ou créer un projet, discuter librement avec le directeur, amorcer la vision depuis les documents, faire regrouper les fiches en propositions, valider, modifier ou refuser, puis consulter la vision validée et le « Pourquoi ? » de chaque décision.
 
 ## Lancer le studio
 
@@ -24,6 +24,7 @@ Prérequis : Node.js 24 et Git (vérifiés dans [docs/ARCHITECTURE.md](docs/ARCH
 ```powershell
 npm test           # suite Vitest (dépôts Git temporaires, orchestrateur factice : aucun appel à un LLM)
 npm run typecheck  # backend et interface
+npm run build && npm run test:e2e   # parcours complet dans Edge (headless), captures dans .data/screenshots
 ```
 
 | Dossier | Contenu |

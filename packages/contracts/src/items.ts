@@ -142,6 +142,10 @@ export const ProposalDetails = z.object({
   recommended_option: z.string().optional(),
   assumptions: z.array(ItemId).default([]),
   open_questions: z.array(ItemId).default([]),
+  /** Contradictions repérées avec le canon, expliquées simplement. */
+  conflict_notes: z.array(z.string()).default([]),
+  /** Questions que la proposition laisse ouvertes, formulées pour vous. */
+  questions: z.array(z.string()).default([]),
 });
 export type ProposalDetails = z.infer<typeof ProposalDetails>;
 

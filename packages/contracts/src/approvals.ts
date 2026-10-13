@@ -9,6 +9,8 @@ export const ApprovalEdits = z.object({
   title: z.string().min(1).max(200).optional(),
   statement: z.string().min(1).optional(),
   chosen_option: z.string().optional(),
+  /** Éléments sources que vous retirez du groupe : ils reviennent au tri, non validés. */
+  exclude: z.array(ItemId).max(500).optional(),
 });
 export type ApprovalEdits = z.infer<typeof ApprovalEdits>;
 

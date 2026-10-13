@@ -48,3 +48,25 @@ export type ExtractedItem = z.infer<typeof ExtractedItem>;
 
 export const ExtractionResult = z.object({ items: z.array(ExtractedItem).max(30) });
 export type ExtractionResult = z.infer<typeof ExtractionResult>;
+
+/** Un groupe d'éléments résumé en une proposition (docs/VISION_ENGINE.md §2.2). */
+export const SynthesizedProposal = z.object({
+  title: z.string().min(1).max(100),
+  /** La règle qui serait décidée, en langage simple. */
+  statement: z.string().min(1).max(1500),
+  rationale: z.string().max(800),
+  based_on: z.array(ItemId).min(1).max(60),
+  /** Décisions validées que cette proposition remplacerait (contradiction). */
+  supersedes: z.array(ItemId).max(5),
+  conflict_notes: z.array(z.string().max(400)).max(5),
+  questions: z.array(z.string().max(300)).max(3),
+  domain: z.array(z.string().max(40)).max(3),
+});
+export type SynthesizedProposal = z.infer<typeof SynthesizedProposal>;
+
+export const SynthesisResult = z.object({
+  proposals: z.array(SynthesizedProposal).max(30),
+  /** Éléments laissés de côté (trop vagues, hors sujet), avec la raison. */
+  left_out: z.array(z.object({ id: ItemId, reason: z.string().max(200) })).max(200),
+});
+export type SynthesisResult = z.infer<typeof SynthesisResult>;

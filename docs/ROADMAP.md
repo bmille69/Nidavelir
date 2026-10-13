@@ -13,7 +13,9 @@ Chaque phase livre un **parcours utilisable de bout en bout**, testé, avant d'e
 
 ---
 
-## Phase 1 (MVP) : « De la conversation à la décision validée »
+## Phase 1 (MVP) : « De la conversation à la décision validée » ✅ (13/10/2026)
+
+> Bilan : critères 1 à 3 et 5 à 11 validés par des tests automatisés (64 tests, plus 6 étapes dans un vrai navigateur via `npm run test:e2e`). Le critère 4 est satisfait sous une forme différente : le conflit est porté par la proposition (voir DECISIONS, constats de l'étape 3). Ajouts hors plan initial, nés des essais réels : regroupement des fiches en propositions de synthèse, tri et validation par lot, retrait d'une fiche d'un groupe au moment de valider.
 
 C'est le cœur du studio : le moteur de vision, sans aucune exécution de code.
 

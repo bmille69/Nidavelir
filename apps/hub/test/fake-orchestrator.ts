@@ -20,8 +20,9 @@ export class FakeOrchestrator implements OrchestratorPort {
     this.calls.push({ kind: "structured", systemPrompt: input.systemPrompt, prompt: input.prompt });
     const next = this.extractions.shift() ?? [];
     if (next instanceof Error) throw next;
-    const items = typeof next === "function" ? next(input.prompt) : next;
-    return { data: { items }, costUsd: 0.002 };
+    const out: unknown = typeof next === "function" ? next(input.prompt) : next;
+    // Un tableau = éléments d'extraction ; un objet = sortie structurée complète (ex. regroupement).
+    return { data: Array.isArray(out) ? { items: out } : out, costUsd: 0.002 };
   }
 }
 

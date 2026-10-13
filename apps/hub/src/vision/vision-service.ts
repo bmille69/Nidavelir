@@ -269,6 +269,10 @@ export class VisionService {
       if (details.options.length && !option) {
         throw new VisionError("Cette proposition a des options : choisissez-en une pour la valider");
       }
+      const excluded = new Set(edits.exclude ?? []);
+      for (const id of excluded) {
+        if (!details.based_on.includes(id)) throw new VisionError(`${id} ne fait pas partie de la proposition ${proposal.id}`);
+      }
 
       const decision = this.#draft(project, "decision", {
         status: "validated",
@@ -288,7 +292,7 @@ export class VisionService {
           from_proposal: proposal.id,
           chosen_option: option?.key,
           supersedes: details.supersedes,
-          human_edits: !!(edits.title || edits.statement),
+          human_edits: !!(edits.title || edits.statement || excluded.size),
         },
         vision_rev: rev,
         created_at: now,
@@ -299,6 +303,11 @@ export class VisionService {
 
       for (const id of details.based_on) {
         const b = this.get(project, id);
+        if (excluded.has(id)) {
+          // Retiré du groupe par vous : retour au tri, sans validation.
+          if (isContent(b.type)) changed.push({ ...b, status: "triaged", updated_at: now });
+          continue;
+        }
         if (isContent(b.type)) {
           changed.push({ ...b, status: "validated", tier: "canon", validated_by: validatedBy, vision_rev: rev, updated_at: now });
         } else if (b.type === "hypothesis") {
@@ -376,6 +385,62 @@ export class VisionService {
     const commit = await this.#vcs.commitPaths(this.#root(project), ["studio"], `vision: ${decision.id} abandonnée (${approvalId})`);
     this.#log(project, { kind: "human" }, "decision.abandoned", decision.id, { approval: approvalId, vision_rev: rev, commit });
     return { commit };
+  }
+
+  /**
+   * Renvoie une proposition en discussion : elle n'est ni validée ni refusée,
+   * et ses éléments reviennent au tri. Aucun effet sur le canon.
+   */
+  returnProposal(project: string, actor: Author, id: string, note?: string): Item {
+    const proposal = this.get(project, id);
+    if (proposal.type !== "proposal" || proposal.status !== "submitted") {
+      throw new VisionError(`${id} n'est pas une proposition en attente`);
+    }
+    const now = this.#clock.now();
+    const changed: Item[] = [{ ...proposal, status: "returned", updated_at: now }];
+    for (const bid of proposal.proposal!.based_on) {
+      const b = this.get(project, bid);
+      if (b.status === "proposed") changed.push({ ...b, status: "triaged", updated_at: now });
+    }
+    this.#persist(project, changed);
+    this.#log(project, actor, "proposal.returned", id, { note });
+    return changed[0]!;
+  }
+
+  /**
+   * « Pourquoi ? » : d'où vient un élément et ce qu'il a remplacé.
+   * Remonte les liens derived_from / supersedes, et retrouve la décision qui a validé un élément source.
+   */
+  lineage(project: string, id: string): { item: Item; ancestors: Item[]; decidedBy: Item[]; supersededBy: Item | null } {
+    const item = this.get(project, id);
+    const seen = new Set<string>([id]);
+    const ancestors: Item[] = [];
+    const walk = (it: Item, depth: number) => {
+      if (depth > 4) return;
+      for (const l of it.links) {
+        if ((l.rel === "derived_from" || l.rel === "supersedes") && !seen.has(l.to)) {
+          seen.add(l.to);
+          try {
+            const parent = this.get(project, l.to);
+            ancestors.push(parent);
+            walk(parent, depth + 1);
+          } catch {
+            /* lien vers un item disparu : ignoré */
+          }
+        }
+      }
+    };
+    walk(item, 0);
+    const proposals = (this.#db
+      .prepare("SELECT from_id FROM links WHERE project = ? AND to_id = ? AND rel = 'derived_from' AND from_id LIKE 'P-%'")
+      .all(project, id) as { from_id: string }[]).map((r) => r.from_id);
+    const decidedBy = proposals.flatMap((pid) =>
+      (this.#db
+        .prepare("SELECT from_id FROM links WHERE project = ? AND to_id = ? AND rel = 'derived_from' AND from_id LIKE 'D-%'")
+        .all(project, pid) as { from_id: string }[]).map((r) => this.get(project, r.from_id)),
+    );
+    const by = item.decision?.superseded_by;
+    return { item, ancestors, decidedBy, supersededBy: by ? this.get(project, by) : null };
   }
 
   /** Hash d'un item quelconque, pour les approbations autres que les propositions. */

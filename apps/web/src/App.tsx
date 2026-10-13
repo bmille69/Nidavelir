@@ -2,23 +2,30 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type SessionInfo } from "./api.ts";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { ImportFlow } from "./pages/ImportFlow.tsx";
-import { ProjectView } from "./pages/ProjectView.tsx";
+import { ProjectShell } from "./pages/ProjectShell.tsx";
 
 export type Route =
   | { page: "dashboard" }
   | { page: "import" }
-  | { page: "project"; slug: string; thread?: string };
+  | { page: "project"; slug: string; thread?: string; view?: "discussion" | "decisions" | "vision" };
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "import") return { page: "import" };
-  if (parts[0] === "p" && parts[1]) return { page: "project", slug: parts[1], thread: parts[2] === "t" ? parts[3] : undefined };
+  if (parts[0] === "p" && parts[1]) {
+    if (parts[2] === "decisions" || parts[2] === "vision") return { page: "project", slug: parts[1], view: parts[2] };
+    return { page: "project", slug: parts[1], thread: parts[2] === "t" ? parts[3] : undefined, view: "discussion" };
+  }
   return { page: "dashboard" };
 }
 
 export function href(route: Route): string {
   if (route.page === "import") return "#/import";
-  if (route.page === "project") return `#/p/${encodeURIComponent(route.slug)}${route.thread ? `/t/${route.thread}` : ""}`;
+  if (route.page === "project") {
+    const base = `#/p/${encodeURIComponent(route.slug)}`;
+    if (route.view === "decisions" || route.view === "vision") return `${base}/${route.view}`;
+    return `${base}${route.thread ? `/t/${route.thread}` : ""}`;
+  }
   return "#/";
 }
 
@@ -74,7 +81,7 @@ export function App() {
       </header>
       {route.page === "dashboard" && <Dashboard />}
       {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
-      {route.page === "project" && <ProjectView slug={route.slug} threadId={route.thread} />}
+      {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} />}
     </div>
   );
 }

@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["packages/*/src/**/*.ts", "apps/hub/src/**/*.ts", "apps/hub/test/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "apps/hub/src/**/*.ts", "apps/hub/test/**/*.ts", "apps/hub/e2e/**/*.ts"]
 }

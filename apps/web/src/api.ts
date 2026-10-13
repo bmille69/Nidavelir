@@ -21,6 +21,20 @@ export type Job = {
   created: number;
   costUsd: number;
 };
+export type ProposalCard = { proposal: ItemFrontmatter; hash: string; sources: ItemFrontmatter[]; supersedes: ItemFrontmatter[] };
+export type SynthesisJob = {
+  id: string;
+  status: "running" | "done" | "failed";
+  candidates: number;
+  chunks: { total: number; done: number };
+  proposals: string[];
+  left_out: { id: string; reason: string }[];
+  corrections: string[];
+  error?: string;
+  costUsd: number;
+};
+export type Lineage = { item: ItemFrontmatter; ancestors: ItemFrontmatter[]; decidedBy: ItemFrontmatter[]; supersededBy: ItemFrontmatter | null; hash: string };
+export type DecideEdits = { title?: string; statement?: string; chosen_option?: string; exclude?: string[] };
 export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string };
 
 export class ApiError extends Error {
@@ -70,6 +84,18 @@ export const api = {
     request<ItemFrontmatter>("POST", `/projects/${slug}/items/${id}/triage`, { action }),
   triageBatch: (slug: string, ids: string[], action: "keep" | "discard") =>
     request<{ done: number; errors: { id: string; error: string }[] }>("POST", `/projects/${slug}/items/triage-batch`, { ids, action }),
+  candidates: (slug: string) => request<{ count: number }>("GET", `/projects/${slug}/synthesis/candidates`),
+  synthesize: (slug: string, scope: { thread?: string; source?: string } = {}) =>
+    request<SynthesisJob>("POST", `/projects/${slug}/synthesis`, scope),
+  synthesisJobs: (slug: string) => request<SynthesisJob[]>("GET", `/projects/${slug}/synthesis`),
+  proposals: (slug: string) => request<ProposalCard[]>("GET", `/projects/${slug}/proposals`),
+  decide: (slug: string, id: string, body: { hash: string; verdict: "approved" | "rejected"; edits?: DecideEdits; note?: string }) =>
+    request<{ approval: string; decision?: ItemFrontmatter }>("POST", `/projects/${slug}/proposals/${id}/decide`, body),
+  decideBatch: (slug: string, proposals: { id: string; hash: string }[]) =>
+    request<{ results: { id: string; decision?: string; error?: string }[] }>("POST", `/projects/${slug}/proposals/decide-batch`, { proposals }),
+  returnProposal: (slug: string, id: string, note?: string) => request<ItemFrontmatter>("POST", `/projects/${slug}/proposals/${id}/return`, { note }),
+  abandon: (slug: string, id: string, hash: string) => request<unknown>("POST", `/projects/${slug}/decisions/${id}/abandon`, { hash }),
+  why: (slug: string, id: string) => request<Lineage>("GET", `/projects/${slug}/items/${id}/why`),
   jobs: (slug: string) => request<Job[]>("GET", `/projects/${slug}/jobs`),
   threads: (slug: string) => request<Thread[]>("GET", `/projects/${slug}/threads`),
   createThread: (slug: string, title: string) => request<Thread>("POST", `/projects/${slug}/threads`, { title }),

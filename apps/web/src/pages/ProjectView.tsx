@@ -42,13 +42,18 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
     api.threads(slug).then(setThreads);
   }, [slug]);
 
+  // La discussion courante est lue via une référence : un rafraîchissement lancé juste avant
+  // la création d'une discussion ne doit pas effacer les messages de la nouvelle.
+  const threadRef = useRef(threadId);
+  threadRef.current = threadId;
   const refresh = useCallback(async () => {
+    const current = threadRef.current;
     const [msgs, its, js] = await Promise.all([
-      threadId ? api.messages(slug, threadId) : Promise.resolve([] as Message[]),
-      api.items(slug, panel === "canon" ? "canon" : "inbox", panel === "noted" ? threadId : undefined),
+      current ? api.messages(slug, current) : Promise.resolve([] as Message[]),
+      api.items(slug, panel === "canon" ? "canon" : "inbox", panel === "noted" ? current : undefined),
       api.jobs(slug),
     ]);
-    setMessages(msgs);
+    if (current === threadRef.current) setMessages(msgs);
     setItems(its.items);
     setJobs(js);
   }, [slug, threadId, panel]);
@@ -65,7 +70,10 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
     return () => clearInterval(t);
   }, [busy, refresh]);
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages.length, sending]);
+  // Accolades obligatoires : les navigateurs récents renvoient une promesse, que React prendrait pour une fonction de nettoyage.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, sending]);
 
   async function newThread() {
     const t = await api.createThread(slug, "");
@@ -85,6 +93,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
         const t = await api.createThread(slug, text.slice(0, 60));
         setThreads((ts) => [t, ...ts]);
         thread = t.id;
+        threadRef.current = thread;
         navigate({ page: "project", slug, thread });
       }
       setMessages((m) => [...m, { id: "pending", thread: thread!, seq: m.length + 1, role: "human", text, at: "", extraction: "pending", cost_usd: null }]);
@@ -168,9 +177,9 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
         <div className="mode-bar">
           <span className="badge mode">Exploration</span>
           <span className="muted small">Pensez à voix haute : rien n'est validé sans vous.</span>
-          <span className="badge muted" title="Disponible à l'étape 3">
-            Décision — bientôt
-          </span>
+          <a className="small" href={`#/p/${slug}/decisions`}>
+            Passer aux décisions →
+          </a>
         </div>
         <div className="messages">
           {!threadId && messages.length === 0 && (
@@ -285,7 +294,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
 
         {items.length === 0 && (
           <p className="muted small">
-            {panel === "canon" ? "Rien n'est encore validé. Le mode décision arrive à l'étape 3." : "Rien à trier pour l'instant."}
+            {panel === "canon" ? "Rien n'est encore validé : voir l'onglet « Décisions »." : "Rien à trier pour l'instant."}
           </p>
         )}
         <ul className="items">

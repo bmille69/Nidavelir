@@ -9,6 +9,7 @@ import { BootstrapService } from "./projects/bootstrap.ts";
 import { ProjectRegistry, type RegistryOptions } from "./projects/project-registry.ts";
 import { GitCli, type VcsPort } from "./vcs/git.ts";
 import { ExtractionService } from "./vision/extraction.ts";
+import { SynthesisService } from "./vision/synthesis.ts";
 import { VisionService } from "./vision/vision-service.ts";
 
 export type HubOptions = {
@@ -31,6 +32,7 @@ export type Hub = {
   extraction: ExtractionService;
   conversations: ConversationService;
   bootstrap: BootstrapService;
+  synthesis: SynthesisService;
   close(): void;
 };
 
@@ -53,6 +55,7 @@ export function createHub(options: HubOptions): Hub {
   const extraction = new ExtractionService(vision, orchestrator, journal);
   const conversations = new ConversationService({ db, clock, journal, projects, vision, extraction, orchestrator });
   const bootstrap = new BootstrapService({ db, clock, projects, extraction });
+  const synthesis = new SynthesisService({ db, clock, journal, vision, orchestrator });
   let closed = false;
   return {
     db,
@@ -66,6 +69,7 @@ export function createHub(options: HubOptions): Hub {
     extraction,
     conversations,
     bootstrap,
+    synthesis,
     close: () => {
       if (closed) return;
       closed = true;

@@ -1,6 +1,6 @@
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { ItemType, ProjectSlug } from "@studio/contracts";
+import { ApprovalEdits, ItemType, ProjectSlug } from "@studio/contracts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -45,6 +45,16 @@ const Body = {
   thread: z.object({ title: z.string().max(120).default("") }),
   message: z.object({ text: z.string().min(1) }),
   triage: z.object({ action: z.enum(["keep", "discard", "restore"]) }),
+  synthesis: z.object({ thread: z.string().optional(), source: z.string().optional() }),
+  decide: z.object({
+    hash: z.string().length(64),
+    verdict: z.enum(["approved", "rejected"]),
+    note: z.string().max(2000).optional(),
+    edits: ApprovalEdits.optional(),
+  }),
+  decideBatch: z.object({ proposals: z.array(z.object({ id: z.string(), hash: z.string().length(64) })).min(1).max(50) }),
+  note: z.object({ note: z.string().max(2000).optional() }),
+  abandon: z.object({ hash: z.string().length(64), note: z.string().max(2000).optional() }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
 
@@ -144,6 +154,78 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       }
       return { done, errors };
     });
+    // ── Mode décision : regroupement, propositions, validations humaines ──
+    api.post("/projects/:slug/synthesis", async (req) => {
+      const { slug } = req.params as { slug: string };
+      hub.projects.get(slug);
+      return hub.synthesis.start(slug, Body.synthesis.parse(req.body ?? {}));
+    });
+    api.get("/projects/:slug/synthesis", async (req) => hub.synthesis.list((req.params as { slug: string }).slug));
+    api.get("/projects/:slug/synthesis/candidates", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return { count: hub.synthesis.candidates(slug, Body.synthesis.parse(req.query ?? {})).length };
+    });
+    api.get("/projects/:slug/proposals", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.vision.list(slug, { type: "proposal", status: "submitted" }).map((p) => ({
+        proposal: p,
+        hash: hub.vision.proposalHash(slug, p.id),
+        sources: p.proposal!.based_on.map((id) => hub.vision.get(slug, id)),
+        supersedes: p.proposal!.supersedes.map((id) => hub.vision.get(slug, id)),
+      }));
+    });
+    api.post("/projects/:slug/proposals/:id/decide", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      const body = Body.decide.parse(req.body);
+      const approval = hub.approvals.record(req.human!, {
+        project: slug,
+        subject: { kind: "proposal", id, hash: body.hash },
+        verdict: body.verdict,
+        note: body.note,
+        edits: body.edits,
+      });
+      return { approval: approval.id, ...(await hub.vision.decideProposal(slug, approval.id)) };
+    });
+    api.post("/projects/:slug/proposals/decide-batch", async (req) => {
+      const { slug } = req.params as { slug: string };
+      const body = Body.decideBatch.parse(req.body);
+      const results: { id: string; decision?: string; error?: string }[] = [];
+      for (const p of body.proposals) {
+        try {
+          const approval = hub.approvals.record(req.human!, {
+            project: slug,
+            subject: { kind: "proposal", id: p.id, hash: p.hash },
+            verdict: "approved",
+            note: "validation groupée",
+          });
+          const { decision } = await hub.vision.decideProposal(slug, approval.id);
+          results.push({ id: p.id, decision: decision?.id });
+        } catch (err) {
+          results.push({ id: p.id, error: (err as Error).message });
+        }
+      }
+      return { results };
+    });
+    api.post("/projects/:slug/proposals/:id/return", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.vision.returnProposal(slug, { kind: "human" }, id, Body.note.parse(req.body ?? {}).note);
+    });
+    api.post("/projects/:slug/decisions/:id/abandon", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      const body = Body.abandon.parse(req.body);
+      const approval = hub.approvals.record(req.human!, {
+        project: slug,
+        subject: { kind: "abandon", id, hash: body.hash },
+        verdict: "approved",
+        note: body.note,
+      });
+      return hub.vision.abandonDecision(slug, approval.id);
+    });
+    api.get("/projects/:slug/items/:id/why", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return { ...hub.vision.lineage(slug, id), hash: hub.vision.itemHash(slug, id) };
+    });
+
     api.get("/projects/:slug/jobs", async (req) => hub.bootstrap.list((req.params as { slug: string }).slug));
 
     // ── Conversations ──
@@ -169,6 +251,9 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });
+    if (err instanceof Error && err.message.startsWith("Un regroupement est déjà en cours")) {
+      return reply.code(409).send({ error: err.message });
+    }
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status < 500) return reply.code(status).send({ error: (err as Error).message });
     hub.journal.append({ project: null, actor: { kind: "system" }, type: "server.error", payload: { error: (err as Error).message } });
