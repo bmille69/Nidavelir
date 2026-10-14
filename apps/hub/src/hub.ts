@@ -14,6 +14,9 @@ import { dirname } from "node:path";
 import { ExtractionService } from "./vision/extraction.ts";
 import { SynthesisService } from "./vision/synthesis.ts";
 import { VisionService } from "./vision/vision-service.ts";
+import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
+import { UsageService } from "./usage/usage-service.ts";
+import { PreviewService } from "./executor/preview.ts";
 
 export type HubOptions = {
   databasePath: string;
@@ -27,6 +30,10 @@ export type HubOptions = {
   /** URL de base des routes agents, connue une fois le serveur démarré. */
   agentBaseUrl?: () => string;
   escalationTimeoutMs?: number;
+  /** Pilote automatique (ADR-20). Absent : le directeur ne décide jamais seul. */
+  autopilot?: AutopilotOptions;
+  /** Appel minimal à Claude Code pour rafraîchir vos limites d'abonnement (ADR-21). */
+  usageProbe?: () => Promise<void>;
 };
 
 export type Hub = {
@@ -43,6 +50,9 @@ export type Hub = {
   bootstrap: BootstrapService;
   synthesis: SynthesisService;
   tasks: TaskService;
+  usage: UsageService;
+  autopilot: Autopilot | null;
+  previews: PreviewService;
   close(): void;
 };
 
@@ -86,6 +96,20 @@ export function createHub(options: HubOptions): Hub {
       escalationTimeoutMs: options.escalationTimeoutMs,
     },
   });
+  const usage = new UsageService(db, clock, options.usageProbe);
+  const previews = new PreviewService({ workDir: options.dataDir ?? dirname(options.databasePath) });
+  tasks.usage = usage;
+  let autopilot: Autopilot | null = null;
+  if (options.autopilot) {
+    const pilot = new Autopilot({ projects, vision, approvals, synthesis, tasks, journal, clock, options: options.autopilot });
+    conversations.autopilot = pilot;
+    pilot.conversations = conversations;
+    synthesis.onCompleted = (job) => pilot.onSynthesis(job);
+    tasks.onPlanSubmitted = (project, id) => pilot.onPlanSubmitted(project, id);
+    tasks.onStatus = (task) => pilot.onTaskStatus(task);
+    tasks.onRunFinished = (task, kind) => pilot.onRunFinished(task, kind);
+    autopilot = pilot;
+  }
   let closed = false;
   return {
     db,
@@ -101,9 +125,14 @@ export function createHub(options: HubOptions): Hub {
     bootstrap,
     synthesis,
     tasks,
+    usage,
+    autopilot,
+    previews,
     close: () => {
       if (closed) return;
       closed = true;
+      void previews.stopAll();
+      autopilot?.close();
       db.close();
     },
   };

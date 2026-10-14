@@ -1,3 +1,4 @@
+import type { UsageService } from "../usage/usage-service.ts";
 import {
   ExecutionReportOutput,
   Plan,
@@ -56,6 +57,7 @@ type ActiveRun = {
   project: string;
   task: string;
   kind: RunMode;
+  startedAt: string;
   tokenHash: string;
   policy: PolicyEngine;
   abort: AbortController;
@@ -89,6 +91,14 @@ export class TaskService {
   readonly #executor: ExecutorPort;
   readonly #opts: TaskServiceOptions;
   readonly #active = new Map<string, ActiveRun>();
+  /** Prévenu quand un plan attend une validation (pilote automatique, ADR-20). */
+  onPlanSubmitted: ((project: string, id: string) => Promise<unknown> | void) | null = null;
+  /** Prévenu à chaque changement de statut d'une tâche (nouvelles dans la discussion d'origine, ADR-24). */
+  onStatus: ((task: Task) => void) | null = null;
+  /** Prévenu quand un run est terminé et enregistré (son résultat est alors lisible). */
+  onRunFinished: ((task: Task, kind: RunMode) => void) | null = null;
+  /** Compteur d'utilisation (jetons et limites rapportés par Claude Code). */
+  usage: UsageService | null = null;
   readonly #finished = new Map<string, RunEvent[]>();
   readonly #background = new Set<Promise<void>>();
 
@@ -161,6 +171,18 @@ export class TaskService {
     return list.filter((e) => e.seq > after);
   }
 
+  /** Runs en cours, tous projets confondus, avec leur dernier événement (vue « Studio »). */
+  activeRuns(): { id: string; project: string; task: string; kind: RunMode; started_at: string; last: RunEvent | null }[] {
+    return [...this.#active.values()].map((r) => ({
+      id: r.id,
+      project: r.project,
+      task: r.task,
+      kind: r.kind,
+      started_at: r.startedAt,
+      last: r.events.findLast((e) => e.type !== "info") ?? r.events.at(-1) ?? null,
+    }));
+  }
+
   escalations(project: string, filter: { task?: string; status?: Escalation["status"] } = {}): Escalation[] {
     const rows = this.#db.prepare("SELECT data_json, status, decided_at FROM escalations WHERE project = ? ORDER BY created_at").all(project) as {
       data_json: string;
@@ -177,8 +199,31 @@ export class TaskService {
   /** Crée une tâche à partir de décisions validées (une tâche orpheline est refusée). */
   create(session: HumanSession, project: string, input: { decisions: string[]; title?: string; goal?: string }): Task {
     assertHumanSession(session);
+    return this.#create(project, input, {});
+  }
+
+  /**
+   * Le directeur confie un travail au développeur, dans le cadre de l'autonomie que vous
+   * lui avez donnée (ADR-22). Toujours appuyé sur des décisions validées ; le plan suit
+   * ensuite les règles habituelles (votre accord, ou validation déléguée s'il est sans risque).
+   */
+  createDelegated(project: string, input: { decisions: string[]; title?: string; goal?: string }, autonomy: string): Task {
+    if (this.#projects.get(project).autonomy === "supervised") throw new TaskError("Autonomie « Je valide tout » : c'est vous qui lancez les tâches");
+    return this.#create(project, input, { delegated: true, autonomy });
+  }
+
+  /**
+   * Mode atelier (ADR-24) : chantier lancé depuis une discussion quand vous dites « go ».
+   * La consigne rédigée par le directeur tient lieu de cahier des charges ; la discussion est sa trace.
+   */
+  createFromConversation(project: string, input: { title: string; goal: string; decisions?: string[] }, thread: string): Task {
+    if (this.#projects.get(project).autonomy === "supervised") throw new TaskError("Autonomie « Je valide tout » : c'est vous qui lancez les tâches");
+    return this.#create(project, { decisions: input.decisions ?? [], title: input.title, goal: input.goal }, { delegated: true, thread }, { thread });
+  }
+
+  #create(project: string, input: { decisions: string[]; title?: string; goal?: string }, extra: Record<string, unknown>, origin: { thread: string } | null = null): Task {
     this.#projects.get(project);
-    if (!input.decisions.length) throw new TaskError("Une tâche doit s'appuyer sur au moins une décision validée");
+    if (!input.decisions.length && !origin) throw new TaskError("Une tâche doit s'appuyer sur au moins une décision validée");
     const decisions = input.decisions.map((id) => this.#vision.get(project, id));
     for (const d of decisions) {
       if (d.type !== "decision" || d.status !== "validated") throw new TaskError(`${d.id} n'est pas une décision validée`);
@@ -190,6 +235,7 @@ export class TaskService {
       title: input.title?.trim() || decisions[0]!.title,
       goal: input.goal?.trim() || decisions.map((d) => d.statement).join("\n\n"),
       authorized_by: decisions.map((d) => d.id),
+      origin,
       status: "draft",
       feedback: [],
       base_commit: null,
@@ -200,7 +246,7 @@ export class TaskService {
       updated_at: now,
     });
     this.#db.prepare("INSERT INTO tasks (id, project, status, data_json, updated_at) VALUES (?, ?, ?, ?, ?)").run(task.id, project, task.status, JSON.stringify(task), now);
-    this.#log(project, "task.created", task.id, { authorized_by: task.authorized_by });
+    this.#log(project, "task.created", task.id, { authorized_by: task.authorized_by, ...extra });
     return task;
   }
 
@@ -225,6 +271,14 @@ export class TaskService {
         const out = PlanOutput.parse(r.structured);
         const plan = this.#storePlan(task, out);
         this.#update(this.get(project, id), { status: "plan_review", plan: plan.id });
+        if (this.onPlanSubmitted) {
+          const hook = Promise.resolve(this.onPlanSubmitted(project, id)).then(
+            () => {},
+            () => {},
+          );
+          this.#background.add(hook);
+          void hook.finally(() => this.#background.delete(hook));
+        }
         return { text: out.summary_simple };
       },
       onFailure: () => this.#update(this.get(project, id), { status: "failed" }),
@@ -260,6 +314,52 @@ export class TaskService {
 
   async startExecution(session: HumanSession, project: string, id: string): Promise<Task> {
     assertHumanSession(session);
+    return this.#execute(project, id);
+  }
+
+  /**
+   * Autonomie « autonome » (ADR-20) : le directeur valide lui-même un plan sans risque
+   * (aucun problème, aucune suppression, aucune nouvelle dépendance, aucune question),
+   * puis lance le travail. La fusion dans votre jeu reste toujours à vous.
+   */
+  async autoApprovePlan(project: string, id: string, autonomy: string): Promise<boolean> {
+    const task = this.get(project, id);
+    if (task.status !== "plan_review" || !task.plan) return false;
+    const plan = this.plan(project, task.plan);
+    if (this.planNeedsYou(plan, autonomy).length) return false;
+    const approval = this.#approvals.recordDelegated({
+      project,
+      subject: { kind: "plan", id: plan.id, hash: plan.hash },
+      verdict: "approved",
+      autonomy,
+      run: "autopilot",
+      note: "Plan sans risque, validé par le directeur",
+    });
+    transaction(this.#db, () => {
+      this.#approvals.consume(project, approval.id, { kind: "plan", id: plan.id, hash: plan.hash });
+      this.#db.prepare("UPDATE plans SET status = 'approved' WHERE project = ? AND id = ?").run(project, plan.id);
+    });
+    this.#log(project, "plan.approved", task.id, { plan: plan.id, approval: approval.id, delegated: true });
+    this.#update(task, { status: "approved" });
+    await this.#execute(project, id);
+    return true;
+  }
+
+  /**
+   * Ce qui, dans un plan, demande votre accord même en autonomie : problèmes bloquants,
+   * suppressions, nouvelles bibliothèques. En atelier, les questions du développeur ne bloquent
+   * pas (il part de ses hypothèses, que vous verrez au résultat).
+   */
+  planNeedsYou(plan: Plan, autonomy: string): string[] {
+    const why: string[] = [];
+    if (plan.problems.length) why.push(...plan.problems);
+    if (plan.files_to_delete.length) why.push(`il supprime ${plan.files_to_delete.join(", ")}`);
+    if (plan.new_dependencies.length) why.push(`il ajoute ${plan.new_dependencies.map((d) => d.name).join(", ")} (bibliothèque téléchargée)`);
+    if (plan.questions.length && autonomy !== "workshop") why.push("le développeur pose des questions");
+    return why;
+  }
+
+  async #execute(project: string, id: string): Promise<Task> {
     const task = this.get(project, id);
     if (task.status !== "approved" || !task.plan) throw new TaskError("Le plan doit être validé avant l'exécution");
     const plan = this.plan(project, task.plan);
@@ -276,7 +376,7 @@ export class TaskService {
         const parsed = ExecutionReportOutput.safeParse(r.structured);
         const report: ExecutionReportOutput = parsed.success
           ? parsed.data
-          : { outcome: "partial", summary: r.text.slice(0, 2000), summary_simple: "Le développeur n'a pas rendu de rapport structuré.", deviations: [], open_issues: [] };
+          : { outcome: "partial", summary: r.text.slice(0, 2000), summary_simple: "Le développeur n'a pas rendu de rapport structuré.", deviations: [], open_issues: [], how_to_test: [] };
         await this.#vcs.commitAll(task.worktree!, `studio: ${task.id} — ${task.title} (plan ${plan.id})`);
         const repo = this.#projects.get(project).root;
         const { files, patch } = await this.#vcs.diff(repo, task.base_commit!, task.branch!);
@@ -431,6 +531,14 @@ export class TaskService {
     const d = run.policy.evaluate(tool, input);
     if (d.decision === "allow") return { behavior: "allow" };
     if (d.decision === "deny") return { behavior: "deny", message: `Refusé par le hub : ${d.reason}` };
+    // Atelier (ADR-25) : hors plan mais sans danger (le gardien a déjà refusé ce qui l'est), dans une copie
+    // du jeu que vous relirez avant fusion. On laisse travailler, et on le note.
+    if (this.#projects.get(run.project).autonomy === "workshop") {
+      const summary = this.#describe(run, tool, input);
+      this.#log(run.project, "escalation.auto_allowed", run.task, { summary, reason: d.reason });
+      this.#event(run, "info", `Hors plan, autorisé automatiquement (atelier) : ${summary}`);
+      return { behavior: "allow" };
+    }
 
     const esc: Escalation = {
       id: nextId(this.#db, run.project, "E"),
@@ -486,6 +594,7 @@ export class TaskService {
       project: task.project,
       task: task.id,
       kind,
+      startedAt: this.#clock.now(),
       tokenHash: sha256(token),
       policy,
       abort: new AbortController(),
@@ -526,6 +635,7 @@ export class TaskService {
           signal: run.abort.signal,
         });
         cost = result.costUsd;
+        this.usage?.record({ project: task.project, agent: kind === "verify" ? "qa" : "developer", tokens: result.tokens ?? null, costUsd: cost, limits: result.limits });
         outcome = await spec.onResult(result);
         if (outcome.text) this.#event(run, "result", outcome.text);
       } catch (err) {
@@ -541,6 +651,11 @@ export class TaskService {
         this.#active.delete(id);
         this.#finished.set(id, run.events);
         this.#log(task.project, `run.${status}`, task.id, { run: id, kind, cost_usd: cost, error });
+        try {
+          this.onRunFinished?.(this.get(task.project, task.id), kind);
+        } catch {
+          /* un observateur ne doit jamais casser le chantier */
+        }
       }
     })();
     this.#background.add(job);
@@ -577,8 +692,17 @@ export class TaskService {
     if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS);
   }
 
-  #storePlan(task: Task, out: PlanOutput): Plan {
+  #storePlan(task: Task, proposed: PlanOutput): Plan {
     const policy = new PolicyEngine({ mode: "plan", root: task.worktree! });
+    // Une commande interdite ne bloque pas tout le plan : elle est retirée, et c'est dit clairement.
+    const refused = policy.refusedCommands(proposed);
+    const out: PlanOutput = refused.length
+      ? {
+          ...proposed,
+          commands: proposed.commands.filter((c) => !refused.some((r) => r.cmd === c.cmd)),
+          assumptions: [...proposed.assumptions, ...refused.map((r) => `Commande retirée par le gardien : « ${r.cmd} » (${r.why}). Le développeur ne la lancera pas.`)],
+        }
+      : proposed;
     const base = {
       ...out,
       id: nextId(this.#db, task.project, "PL"),
@@ -632,6 +756,13 @@ export class TaskService {
   #update(task: Task, patch: Partial<Task> & { status?: TaskStatus }): Task {
     const next = Task.parse({ ...task, ...patch, updated_at: this.#clock.now() });
     this.#db.prepare("UPDATE tasks SET status = ?, data_json = ?, updated_at = ? WHERE project = ? AND id = ?").run(next.status, JSON.stringify(next), next.updated_at, next.project, next.id);
+    if (next.status !== task.status) {
+      try {
+        this.onStatus?.(next);
+      } catch {
+        /* un observateur ne doit jamais casser le chantier */
+      }
+    }
     return next;
   }
 

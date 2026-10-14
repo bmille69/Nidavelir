@@ -64,6 +64,20 @@ export const SynthesizedProposal = z.object({
   supersedes: z.array(ItemId).max(5),
   conflict_notes: z.array(z.string().max(400)).max(5),
   questions: z.array(z.string().max(300)).max(3),
+  /** Vrai choix : deux ou trois versions complètes, que vous choisissez d'un clic (ADR-23). */
+  options: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(4),
+        label: z.string().min(1).max(80),
+        statement: z.string().min(1).max(1500),
+        tradeoffs: z.string().max(300),
+      }),
+    )
+    .max(3)
+    .default([]),
+  /** Clé de l'option que le directeur recommande (vide s'il n'y a pas d'options). */
+  recommended_option: z.string().max(4).default(""),
   domain: z.array(z.string().max(40)).max(3),
 });
 export type SynthesizedProposal = z.infer<typeof SynthesizedProposal>;

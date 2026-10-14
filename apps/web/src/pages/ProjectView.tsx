@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useStudio } from "../studio/context.tsx";
+import { AUTONOMY } from "../studio/Autonomy.tsx";
+import { DirectorPanel } from "../studio/Choices.tsx";
+import { WorkshopPanel } from "../studio/Workshop.tsx";
 import { navigate } from "../App.tsx";
-import { api, type Item, type Job, type Message, type Project, type Thread } from "../api.ts";
+import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
 const TYPE_LABEL: Record<string, string> = {
   vision: "Vision",
@@ -21,7 +25,9 @@ const PAGE = 50;
 const sourceOf = (i: Item) => (i.source.kind === "file" ? i.source.ref.split("#")[0]! : "conversations");
 
 export function ProjectView({ slug, threadId }: { slug: string; threadId?: string }) {
-  const [project, setProject] = useState<Project | null>(null);
+  const autonomy = useStudio()?.projects.find((p) => p.slug === slug)?.autonomy ?? "supervised";
+  const auto = autonomy !== "supervised";
+  const workshop = autonomy === "workshop";
   const [threads, setThreads] = useState<Thread[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -34,11 +40,12 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   const [source, setSource] = useState("all");
   const [type, setType] = useState("all");
   const [onlyHint, setOnlyHint] = useState(false);
-  const [onlyNew, setOnlyNew] = useState(true);
+  const [onlyNewChoice, setOnlyNew] = useState(true);
   const [shown, setShown] = useState(PAGE);
+  // En autonomie, rien n'est « à trier » : on montre tout ce qui est noté.
+  const onlyNew = onlyNewChoice && !auto;
 
   useEffect(() => {
-    api.projects().then((ps) => setProject(ps.find((p) => p.slug === slug) ?? null));
     api.threads(slug).then(setThreads);
   }, [slug]);
 
@@ -63,7 +70,8 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   }, [refresh]);
 
   // Rafraîchit tant qu'une extraction ou un amorçage est en cours.
-  const busy = messages.some((m) => m.extraction === "pending") || jobs.some((j) => j.status === "running");
+  // En autonomie, le directeur peut écrire après coup (ex. « tâche confiée au développeur ») : on suit la discussion.
+  const busy = (auto && !!threadId) || messages.some((m) => m.extraction === "pending") || jobs.some((j) => j.status === "running");
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => refresh().catch(() => {}), 2500);
@@ -152,10 +160,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   return (
     <main className="project">
       <aside className="threads">
-        <a href="#/" className="muted small">
-          ← Projets
-        </a>
-        <h2>{project?.name ?? slug}</h2>
+        <h2>Discussions</h2>
         <button onClick={newThread}>Nouvelle discussion</button>
         <ul>
           {threads.map((t) => (
@@ -175,26 +180,39 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
 
       <section className="conversation">
         <div className="mode-bar">
-          <span className="badge mode">Exploration</span>
-          <span className="muted small">Pensez à voix haute : rien n'est validé sans vous.</span>
-          <a className="small" href={`#/p/${slug}/decisions`}>
-            Passer aux décisions →
-          </a>
+          <span className="badge mode">{auto ? AUTONOMY[autonomy].label : "Exploration"}</span>
+          <span className="muted small">
+            {workshop
+              ? "Dites ce que vous voulez ; le directeur propose, puis « go » lance le chantier."
+              : auto
+                ? "Le directeur propose et décide ce qui ne fait pas débat. Il vous consulte en cas de conflit ou de vrai choix."
+                : "Pensez à voix haute : rien n'est validé sans vous."}
+          </span>
+          {!auto && (
+            <a className="small" href={`#/p/${slug}/decisions`}>
+              Passer aux décisions →
+            </a>
+          )}
         </div>
         <div className="messages">
           {!threadId && messages.length === 0 && (
             <div className="empty">
               <p>
-                Parlez de votre jeu librement : intentions, envies, doutes, références. Le directeur reformule, relève les tensions et pose
-                quelques questions.
+                {workshop
+                  ? "Dites ce que vous voulez pour votre jeu, comme à un chef de projet : « les balles du perso font cheap », « je veux un boss au niveau 3 »… Le directeur connaît votre code et vous propose une solution concrète."
+                  : auto
+                  ? "Dites ce que vous voulez pour votre jeu. Le directeur vous propose une solution concrète et avance ; il ne vous demande que les vrais choix."
+                  : "Parlez de votre jeu librement : intentions, envies, doutes, références. Le directeur reformule, relève les tensions et pose quelques questions."}
               </p>
-              <p className="muted small">Ce qu'il retient apparaît à droite, à trier quand vous voulez.</p>
+              <p className="muted small">
+                {workshop ? "Quand la proposition vous va, dites « go » : il rédige la consigne et le Développeur se met au travail. Vous suivez l'avancement à droite." : auto ? "Ce qu'il retient entre dans la bible du jeu (onglet « Le jeu ») ; s'il a besoin de vous, il vous le demande à droite." : "Ce qu'il retient apparaît à droite, à trier quand vous voulez."}
+              </p>
             </div>
           )}
           {messages.map((m) => (
             <div key={m.id} className={`msg ${m.role}`}>
               <div className="who">{m.role === "human" ? "Vous" : "Directeur (IA)"}</div>
-              <div className="text">{m.text}</div>
+              <MessageText text={m.text} />
               {m.role === "human" && m.extraction === "pending" && <div className="muted small">analyse en cours…</div>}
               {m.role === "human" && m.extraction === "failed" && <div className="error small">l'analyse de ce message a échoué</div>}
             </div>
@@ -223,6 +241,11 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
         </div>
       </section>
 
+      {workshop ? (
+        <WorkshopPanel slug={slug} />
+      ) : auto ? (
+        <DirectorPanel slug={slug} job={runningJob} />
+      ) : (
       <aside className="panel">
         <div className="tabs">
           {threadId && (
@@ -231,7 +254,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
             </button>
           )}
           <button className={panel === "inbox" ? "tab active" : "tab"} onClick={() => setPanel("inbox")}>
-            À trier
+            {auto ? "Noté" : "À trier"}
           </button>
           <button className={panel === "canon" ? "tab active" : "tab"} onClick={() => setPanel("canon")}>
             Validé
@@ -272,22 +295,28 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
                 </option>
               ))}
             </select>
-            <label className="check small">
-              <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
-              Non triés seulement
-            </label>
+            {!auto && (
+              <label className="check small">
+                <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
+                Non triés seulement
+              </label>
+            )}
             <label className="check small">
               <input type="checkbox" checked={onlyHint} onChange={(e) => setOnlyHint(e.target.checked)} />
               « Décision existante ? » seulement
             </label>
             <div className="row">
               <span className="muted small grow">{visible.length} affiché(s) sur {items.length}</span>
-              <button className="small" disabled={!visible.some((i) => i.status === "captured")} onClick={() => triageAll("keep")}>
-                Retenir tout
-              </button>
-              <button className="small secondary" disabled={!batchable.length} onClick={() => triageAll("discard")}>
-                Écarter tout
-              </button>
+              {!auto && (
+                <>
+                  <button className="small" disabled={!visible.some((i) => i.status === "captured")} onClick={() => triageAll("keep")}>
+                    Retenir tout
+                  </button>
+                  <button className="small secondary" disabled={!batchable.length} onClick={() => triageAll("discard")}>
+                    Écarter tout
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -314,7 +343,14 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
                   « {i.source.quote} »<cite>{i.source.kind === "file" ? i.source.ref : "vous"}</cite>
                 </blockquote>
               )}
-              {panel !== "canon" && i.status === "captured" && (
+              {panel !== "canon" && i.status === "captured" && auto && (
+                <div className="row">
+                  <button className="link small" onClick={() => triage(i.id, "discard")} title="Le directeur ne s'en servira pas">
+                    Écarter cette idée
+                  </button>
+                </div>
+              )}
+              {panel !== "canon" && i.status === "captured" && !auto && (
                 <div className="row">
                   <button className="small" onClick={() => triage(i.id, "keep")}>
                     Retenir
@@ -335,6 +371,27 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
           ))}
         </ul>
       </aside>
+      )}
     </main>
+  );
+}
+
+const BRIEF_MARK = "§CONSIGNE§ ";
+
+/** Texte d'un message ; la consigne envoyée au développeur est repliée sous la réponse. */
+function MessageText({ text }: { text: string }) {
+  const at = text.indexOf(BRIEF_MARK);
+  if (at < 0) return <div className="text">{text}</div>;
+  const [title, ...rest] = text.slice(at + BRIEF_MARK.length).split("\n");
+  return (
+    <>
+      {text.slice(0, at).trim() && <div className="text">{text.slice(0, at).trim()}</div>}
+      <details className="brief">
+        <summary>
+          <span className="brief-label">Consigne envoyée au Développeur</span> {title}
+        </summary>
+        <div className="text small">{rest.join("\n").trim()}</div>
+      </details>
+    </>
   );
 }

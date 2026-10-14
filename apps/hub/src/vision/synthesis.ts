@@ -49,7 +49,8 @@ Règles :
    N'invente rien qui ne soit pas dans les éléments.
    "summary" : UNE ou DEUX phrases en langage courant, ce que ça change pour le joueur, SANS formule ni valeur technique (pas de « ×1,6 », « r100 », « 0,6/s »). Exemple : « Le joueur choisit une amélioration parmi trois à chaque niveau, en favorisant ce qu'il a déjà investi. » Les chiffres précis restent dans "statement".
 5. "rationale" : en une ou deux phrases, pourquoi ce groupe tient ensemble et ce qu'il apporte au jeu.
-6. Si des éléments du groupe se contredisent entre eux, ne tranche pas : formule la question dans "questions".
+6. Vrai choix : si des éléments se contredisent entre eux, ou s'il existe deux ou trois façons vraiment différentes et intéressantes de faire, remplis "options" : 2 ou 3 versions COMPLÈTES (clés "A", "B", "C" ; "label" de quelques mots ; "statement" = la règle entière si on choisit cette version ; "tradeoffs" = ce qu'on gagne et ce qu'on perd, en une phrase) et mets ta préférence dans "recommended_option". Le directeur créatif choisira d'un clic. "statement" reprend alors la version recommandée.
+   Ne pose PAS de question de détail : quand un choix raisonnable s'impose, fais-le dans "statement", sans options. "questions" ne sert qu'en dernier recours, pour une incertitude qu'aucune option ne résout. Une proposition sans options ni question pourra être décidée directement.
 7. Si le groupe contredit une décision VALIDÉE (liste <canon>), mets son identifiant dans "supersedes" et explique simplement l'écart dans "conflict_notes" (ancien → nouveau). Sinon, laisse ces listes vides.
 8. Les éléments marqués « décision existante ? » viennent de documents qui les présentent comme déjà décidés : regroupe-les normalement, leur validation sera simplement plus rapide.
 9. "left_out" : les éléments trop vagues, redondants ou hors sujet, avec une raison courte. Ne les mets dans aucun groupe.
@@ -65,6 +66,8 @@ export class SynthesisService {
   readonly #orchestrator: OrchestratorPort;
   readonly #jobs = new Map<string, SynthesisJob>();
   readonly #running = new Set<Promise<void>>();
+  /** Prévenu à la fin de chaque regroupement réussi (pilote automatique, ADR-20). */
+  onCompleted: ((job: SynthesisJob) => Promise<void> | void) | null = null;
 
   constructor(deps: { db: Db; clock: Clock; journal: Journal; vision: VisionService; orchestrator: OrchestratorPort }) {
     this.#db = deps.db;
@@ -141,6 +144,7 @@ export class SynthesisService {
           systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
           prompt,
           jsonSchema: SYNTHESIS_JSON_SCHEMA,
+          meta: { project: job.project, agent: "director" },
         });
         job.costUsd += costUsd ?? 0;
         const parsed = SynthesisResult.safeParse(data);
@@ -178,6 +182,8 @@ export class SynthesisService {
               supersedes,
               conflict_notes: supersedes.length ? p.conflict_notes : [],
               questions: p.questions,
+              options: p.options.length >= 2 ? p.options : [],
+              recommended_option: p.options.length >= 2 && p.options.some((o) => o.key === p.recommended_option) ? p.recommended_option : p.options.length >= 2 ? p.options[0]!.key : undefined,
             },
           });
           job.proposals.push(proposal.id);
@@ -198,6 +204,7 @@ export class SynthesisService {
       subject: job.id,
       payload: { proposals: job.proposals, candidates: job.candidates, corrections: job.corrections, error: job.error, cost_usd: job.costUsd },
     });
+    if (job.status === "done" && job.proposals.length) await this.onCompleted?.(job);
   }
 }
 

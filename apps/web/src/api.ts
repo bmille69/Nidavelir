@@ -16,7 +16,14 @@ export type Review = {
   escalations: Escalation[];
 };
 
-export type Project = { slug: string; name: string; root: string; engine: "godot" | "web" | "unknown"; created_at: string };
+export type Autonomy = "workshop" | "supervised" | "balanced" | "autonomous";
+export type Project = { slug: string; name: string; root: string; engine: "godot" | "web" | "unknown"; created_at: string; autonomy: Autonomy };
+export type UsageSnapshot = {
+  limits: { at: string; status: string; windows: Partial<Record<"five_hour" | "seven_day", { utilization: number; resetsAt: string }>> } | null;
+  today: { tokens: number; calls: number; costUsd: number };
+  week: { tokens: number; calls: number; costUsd: number };
+  byAgent: { agent: string; tokens: number; calls: number }[];
+};
 export type Analysis = {
   root: string;
   suggestedName: string;
@@ -50,6 +57,18 @@ export type SynthesisJob = {
 };
 export type Lineage = { item: ItemFrontmatter; ancestors: ItemFrontmatter[]; decidedBy: ItemFrontmatter[]; supersededBy: ItemFrontmatter | null; hash: string };
 export type DecideEdits = { title?: string; statement?: string; chosen_option?: string; exclude?: string[] };
+export type AgentId = "you" | "director" | "archivist" | "developer" | "qa" | "guardian";
+export type AgentState = "idle" | "working" | "waiting";
+export type Activity = { project: string; text: string; detail?: string; href: string; since?: string };
+export type HubEvent = { seq: number; at: string; project: string | null; actor: { kind: string; role?: string }; type: string; subject: string | null; payload: Record<string, unknown> };
+export type StudioSnapshot = {
+  at: string;
+  usage: UsageSnapshot;
+  agents: { id: AgentId; state: AgentState; activities: Activity[] }[];
+  projects: { slug: string; name: string; engine: Project["engine"]; autonomy: Autonomy; delegated: number; busy: boolean; waiting: number; decisions: number; proposals: number; tasks: number }[];
+  events: HubEvent[];
+};
+export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
 export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string };
 
 export class ApiError extends Error {
@@ -84,6 +103,10 @@ export const api = {
     return s;
   },
   projects: () => request<Project[]>("GET", "/projects"),
+  studio: () => request<StudioSnapshot>("GET", "/studio"),
+  refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
+  setAutonomy: (slug: string, level: Autonomy) => request<Project>("POST", `/projects/${slug}/autonomy`, { level }),
+  decidePending: (slug: string) => request<{ decided: string[]; left: number }>("POST", `/projects/${slug}/autonomy/decide-pending`, {}),
   suggestions: () => request<Suggestion[]>("GET", "/import/suggestions"),
   browse: () => request<{ path: string | null }>("POST", "/import/browse", {}),
   analyze: (path: string) => request<Analysis>("POST", "/import/analyze", { path }),
@@ -126,6 +149,9 @@ export const api = {
   merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
   requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
   abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
+  startPreview: (slug: string, task?: string) => request<Preview>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  stopPreview: (slug: string) => request<{ stopped: boolean }>("POST", `/projects/${slug}/preview/stop`, {}),
   pendingEscalations: (slug: string) => request<Escalation[]>("GET", `/projects/${slug}/escalations`),
   decideEscalation: (slug: string, id: string, allowed: boolean) => request<Escalation>("POST", `/projects/${slug}/escalations/${id}/decide`, { allowed }),
   jobs: (slug: string) => request<Job[]>("GET", `/projects/${slug}/jobs`),

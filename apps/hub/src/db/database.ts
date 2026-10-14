@@ -173,6 +173,31 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project, id)
   );
   `,
+  `
+  ALTER TABLE projects ADD COLUMN autonomy TEXT NOT NULL DEFAULT 'balanced';
+  CREATE TABLE usage_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    project TEXT,
+    agent TEXT NOT NULL,
+    model TEXT,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    cost_usd REAL
+  );
+  CREATE INDEX usage_log_at ON usage_log (at);
+  CREATE TABLE usage_limits (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    at TEXT NOT NULL,
+    data_json TEXT NOT NULL
+  );
+  `,
+  `
+  -- Mode atelier par défaut (ADR-24) : plus de fiches ni de décisions à gérer.
+  UPDATE projects SET autonomy = 'workshop' WHERE autonomy IN ('balanced', 'autonomous');
+  `,
 ];
 
 export function openDatabase(path: string): Db {

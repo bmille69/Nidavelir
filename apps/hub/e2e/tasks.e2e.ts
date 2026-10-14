@@ -43,6 +43,7 @@ beforeAll(async () => {
   sb.hub = hub;
   repo = sb.makeGameRepo("games/destiny", { "README.md": "# Destiny Survivor\n", "src/main.ts": "export {};\n" });
   await hub.projects.register(sb.human(), { path: repo, slug: P, name: "Destiny Survivor" });
+  hub.projects.setAutonomy(sb.human(), P, "supervised");
   hub.vision.capture(P, DIRECTOR, { type: "mechanic", title: "Boss à l'arène", statement: "Le boss surgit à l'entrée de son arène.", source: msg("m", "x") });
   const { proposal, hash } = hub.vision.submitProposal(P, DIRECTOR, {
     title: "Apparition des boss",
@@ -86,7 +87,7 @@ describe("phase 2 dans le navigateur", () => {
       }),
     );
     await page.goto(`${BASE}/#/p/${P}/vision`);
-    await page.getByRole("button", { name: "Faire implémenter" }).click();
+    await page.getByRole("button", { name: "Faire réaliser" }).click();
     await page.getByRole("heading", { name: "Apparition des boss" }).waitFor();
     await page.getByRole("button", { name: "Demander un plan au développeur" }).click();
     await page.getByRole("heading", { name: "Le plan proposé" }).waitFor({ timeout: 10_000 });

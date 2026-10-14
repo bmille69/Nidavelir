@@ -32,6 +32,8 @@ beforeEach(async () => {
   sb.hub = hub;
   repo = sb.makeGameRepo("jeu", { "README.md": "# Jeu\n", "src/main.ts": "export {};\n" });
   await hub.projects.register(sb.human(), { path: repo, slug: P, name: "Jeu" });
+  // Ces tests vérifient les demandes d'autorisation : mode « Je valide tout » (l'atelier les accorde seul).
+  hub.projects.setAutonomy(sb.human(), P, "supervised");
   // Une décision validée pour autoriser les tâches.
   hub.vision.capture(P, DIRECTOR, { type: "mechanic", title: "Boss à l'arène", statement: "Le boss surgit à l'entrée de son arène.", source: msg("m", "x") });
   const { proposal, hash } = hub.vision.submitProposal(P, DIRECTOR, {
@@ -108,7 +110,9 @@ describe("création et planification", () => {
   it("un plan qui vise des zones interdites ne peut pas être validé", async () => {
     const task = await planned(planOutput({ files_to_modify: ["studio/BRIEF.md"], commands: [{ cmd: "npm test && git push", purpose: "x" }] }));
     const plan = hub.tasks.plan(P, task.plan!);
-    expect(plan.problems).toHaveLength(2);
+    // La zone protégée bloque ; la commande interdite est simplement retirée du plan.
+    expect(plan.problems).toEqual(["Zone protégée (vision, Git ou réglages Claude) : studio/BRIEF.md"]);
+    expect(plan.commands).toEqual([]);
     expect(() => hub.tasks.approvePlan(sb.human(), P, task.id, plan.hash)).toThrow(/problèmes bloquants/);
   });
 

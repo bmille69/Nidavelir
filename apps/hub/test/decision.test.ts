@@ -32,7 +32,7 @@ function note(title: string, domain = "boss", type: "mechanic" | "idea" | "const
 }
 
 function group(partial: Partial<SynthesizedProposal> & Pick<SynthesizedProposal, "title" | "based_on">): SynthesizedProposal {
-  return { nature: "creative", summary: `En bref : ${partial.title}`, statement: `Règle : ${partial.title}`, rationale: "Cohérent.", supersedes: [], conflict_notes: [], questions: [], domain: ["boss"], ...partial };
+  return { nature: "creative", summary: `En bref : ${partial.title}`, statement: `Règle : ${partial.title}`, rationale: "Cohérent.", supersedes: [], conflict_notes: [], questions: [], options: [], recommended_option: "", domain: ["boss"], ...partial };
 }
 
 /** File une réponse de regroupement dans l'orchestrateur factice. */

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type SessionInfo } from "./api.ts";
-import { Dashboard } from "./pages/Dashboard.tsx";
 import { ImportFlow } from "./pages/ImportFlow.tsx";
 import { ProjectShell } from "./pages/ProjectShell.tsx";
+import { StudioProvider } from "./studio/context.tsx";
+import { Sidebar } from "./studio/Sidebar.tsx";
+import { StudioHome } from "./studio/StudioHome.tsx";
 
 export type Route =
   | { page: "dashboard" }
@@ -72,18 +74,15 @@ export function App() {
   if (!session) return <div className="centered muted">Connexion…</div>;
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <a href="#/" className="brand">
-          Game Studio Hub
-        </a>
-        <span className="muted small">
-          orchestrateur : {session.orchestrator} · jeux : {session.gamesRoot}
-        </span>
-      </header>
-      {route.page === "dashboard" && <Dashboard />}
-      {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
-      {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} />}
-    </div>
+    <StudioProvider>
+      <div className="app">
+        <Sidebar route={route} session={session} />
+        <div className="main">
+          {route.page === "dashboard" && <StudioHome />}
+          {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
+          {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} />}
+        </div>
+      </div>
+    </StudioProvider>
   );
 }

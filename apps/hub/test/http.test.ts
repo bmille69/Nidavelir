@@ -95,6 +95,8 @@ describe("parcours : import, conversation, tri", () => {
     fake.extractions.push([extracted({ type: "vision", title: "Survie par vagues", quote: "Un jeu de survie par vagues." })]);
     const imported = await post("/api/human/projects/import", { path: root, slug: "destiny", name: "Destiny", documents: ["README.md"] });
     expect(imported.statusCode).toBe(200);
+    // Ce parcours vérifie le tri des fiches, propre aux modes hors atelier.
+    sb.hub.projects.setAutonomy(sb.human(), "destiny", "balanced");
     await sb.hub.bootstrap.idle();
     expect((await get("/api/human/projects/destiny/jobs")).json()[0]).toMatchObject({ status: "done", created: 1 });
 

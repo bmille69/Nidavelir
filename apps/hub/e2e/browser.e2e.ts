@@ -32,6 +32,8 @@ beforeAll(async () => {
   sb = sandbox(fake);
   root = sb.makeGameRepo("games/destiny", { "README.md": "# Destiny Survivor\n", "package.json": "{}" });
   await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny Survivor" });
+  // Ce parcours vérifie le mode « Je valide tout » (onglet Décisions, validation à la main).
+  sb.hub.projects.setAutonomy(sb.human(), "destiny", "supervised");
   const notes = [
     ["Le boss surgit à l'approche de son arène", "boss"],
     ["Pas de boss au minuteur", "boss"],
@@ -77,14 +79,14 @@ describe("parcours navigateur", () => {
   it("connexion et liste des projets", async () => {
     await page.goto(`${BASE}/login?token=${sb.hub.sessions.createLoginToken()}`);
     await expect.poll(() => page.getByRole("heading", { name: "Vos projets" }).isVisible()).toBe(true);
-    await page.getByRole("link", { name: /Destiny Survivor/ }).waitFor();
+    await page.locator("main").getByRole("link", { name: /Destiny Survivor/ }).waitFor();
     await shot("1-projets");
   });
 
   it("discussion : le directeur répond et note ce qui compte", async () => {
     fake.replies.push("Si je comprends bien, tu veux un moment de calme avant chaque boss. Il dure combien de temps, à ton avis ?");
     fake.extractions.push([extracted({ title: "Respiration avant les boss", quote: "un moment de calme avant chaque boss" })]);
-    await page.getByRole("link", { name: /Destiny Survivor/ }).click();
+    await page.locator("main").getByRole("link", { name: /Destiny Survivor/ }).click();
     await page.getByPlaceholder(/Écrivez librement/).fill("J'aimerais un moment de calme avant chaque boss");
     await page.getByRole("button", { name: "Envoyer" }).click();
     await page.getByText("Il dure combien de temps", { exact: false }).waitFor({ timeout: 8_000 });
@@ -153,8 +155,8 @@ describe("parcours navigateur", () => {
     expect(sb.hub.vision.visionRev("destiny")).toBe(2);
   });
 
-  it("vision validée et « Pourquoi ? »", async () => {
-    await page.getByRole("link", { name: "Vision validée", exact: true }).click();
+  it("le jeu (bible) et « Pourquoi ? »", async () => {
+    await page.getByRole("link", { name: "Le jeu", exact: true }).click();
     await page.getByRole("heading", { name: "Apparition des boss" }).waitFor();
     await page.locator("article.decision", { hasText: "Apparition des boss" }).getByRole("button", { name: /Pourquoi/ }).click();
     await page.getByRole("heading", { name: "Pourquoi D-0001 ?" }).waitFor();

@@ -113,8 +113,9 @@ export const ItemId = z.string().regex(/^[A-Z]-\d{4,}$/, "identifiant d'item inv
 export const Link = z.object({ rel: LinkRel, to: ItemId });
 export type Link = z.infer<typeof Link>;
 
+/** « delegated » : décidé par le directeur dans le cadre de l'autonomie que vous lui avez donnée (ADR-20). */
 export const ValidatedBy = z.object({
-  kind: z.literal("human"),
+  kind: z.enum(["human", "delegated"]),
   at: z.string(),
   approval: z.string().regex(/^A-\d{4,}$/),
 });

@@ -26,7 +26,10 @@ export const Task = z.object({
   project: z.string(),
   title: z.string().min(1).max(160),
   goal: z.string().min(1).max(4000),
-  authorized_by: z.array(ItemId).min(1),
+  /** Décisions de la bible qui fondent la tâche ; vide pour un chantier lancé depuis une discussion (mode atelier). */
+  authorized_by: z.array(ItemId).default([]),
+  /** Discussion d'où vient le chantier (mode atelier, ADR-24) : le hub y donne les nouvelles. */
+  origin: z.object({ thread: z.string() }).nullable().default(null),
   status: TaskStatus,
   /** Commentaires de votre part transmis au prochain plan (demande de corrections). */
   feedback: z.array(z.string()).default([]),
@@ -107,6 +110,8 @@ export const ExecutionReportOutput = z.object({
   summary_simple: z.string().max(800),
   deviations: z.array(z.object({ what: z.string().max(300), why: z.string().max(300) })).max(10),
   open_issues: z.array(z.string().max(300)).max(10),
+  /** Pas à pas pour essayer le changement en jouant, écrit pour quelqu'un qui ne lit pas le code. */
+  how_to_test: z.array(z.string().max(300)).max(8).default([]),
 });
 export type ExecutionReportOutput = z.infer<typeof ExecutionReportOutput>;
 

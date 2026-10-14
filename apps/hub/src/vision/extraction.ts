@@ -84,6 +84,7 @@ export class ExtractionService {
       systemPrompt: EXTRACTION_SYSTEM_PROMPT,
       prompt,
       jsonSchema: EXTRACTION_JSON_SCHEMA,
+      meta: { project: input.project, agent: "archivist" },
     });
     const parsed = ExtractionResult.safeParse(data);
     if (!parsed.success) {

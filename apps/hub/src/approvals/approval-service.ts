@@ -5,6 +5,10 @@ import type { Db } from "../db/database.ts";
 import type { Journal } from "../journal/journal.ts";
 import { nextId } from "../util/ids.ts";
 
+/** Préfixe de session des validations déléguées au directeur. */
+export const DELEGATED = "delegation:";
+export const isDelegated = (a: { session: string }) => a.session.startsWith(DELEGATED);
+
 export class ApprovalError extends Error {
   constructor(message: string) {
     super(message);
@@ -70,6 +74,37 @@ export class ApprovalService {
       type: "approval.recorded",
       subject: approval.subject.id,
       payload: { approval: approval.id, kind: approval.subject.kind, verdict: approval.verdict, hash: approval.subject.hash },
+    });
+    return approval;
+  }
+
+  /**
+   * Validation déléguée : le directeur décide dans le cadre de l'autonomie que vous avez
+   * choisie pour ce projet (ADR-20). Jamais pour une fusion, une escalade ou un import.
+   */
+  recordDelegated(request: ApprovalRequest & { autonomy: string; run: string }): Approval {
+    if (!["proposal", "plan"].includes(request.subject.kind)) throw new ApprovalError(`Délégation impossible pour : ${request.subject.kind}`);
+    const approval = Approval.parse({
+      id: nextId(this.#db, request.project, "A"),
+      project: request.project,
+      subject: request.subject,
+      verdict: request.verdict,
+      note: request.note,
+      at: this.#clock.now(),
+      session: `${DELEGATED}${request.autonomy}`,
+    });
+    this.#db
+      .prepare(
+        `INSERT INTO approvals (id, project, subject_kind, subject_id, subject_hash, verdict, note, edits_json, at, session)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      )
+      .run(approval.id, approval.project, approval.subject.kind, approval.subject.id, approval.subject.hash, approval.verdict, approval.note ?? null, approval.at, approval.session);
+    this.#journal.append({
+      project: approval.project,
+      actor: { kind: "agent", role: "director", run: request.run },
+      type: "approval.delegated",
+      subject: approval.subject.id,
+      payload: { approval: approval.id, kind: approval.subject.kind, verdict: approval.verdict, autonomy: request.autonomy, note: request.note },
     });
     return approval;
   }

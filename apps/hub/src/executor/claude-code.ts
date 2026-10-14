@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertSafeArgs } from "../llm/claude-cli.ts";
+import { parseRateLimit, parseUsage, type RateLimits } from "../usage/usage-service.ts";
 import { ExecutorError, type ExecRequest, type ExecResult, type ExecutorPort } from "./port.ts";
 
 const BRIDGE = fileURLToPath(new URL("./bridge/", import.meta.url));
@@ -87,6 +88,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
       let buffer = "";
       let stderr = "";
       let final: Record<string, unknown> | null = null;
+      let limits: RateLimits | null = null;
       const onAbort = () => killTree(child.pid);
       req.signal.addEventListener("abort", onAbort, { once: true });
 
@@ -101,6 +103,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
           try {
             const msg = JSON.parse(line) as Record<string, unknown>;
             if (msg.type === "result") final = msg;
+            else if (msg.type === "rate_limit_event") limits = parseRateLimit(msg) ?? limits;
             else relay(msg, req.onEvent);
           } catch {
             /* ligne non JSON : conservée dans le journal brut */
@@ -119,6 +122,8 @@ export class ClaudeCodeExecutor implements ExecutorPort {
           structured: result.structured_output ?? null,
           text: String(result.result ?? ""),
           costUsd: typeof result.total_cost_usd === "number" ? result.total_cost_usd : null,
+          tokens: parseUsage(result),
+          limits,
         });
       });
       child.stdin.end(req.prompt, "utf8");

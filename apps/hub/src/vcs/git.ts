@@ -55,9 +55,20 @@ export class GitCli implements VcsPort {
     return this.#git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   }
 
-  async commitPaths(root: string, paths: string[], message: string): Promise<string | null> {
+  /** Une seule écriture Git à la fois par dépôt : deux enregistrements simultanés se gêneraient (index.lock). */
+  readonly #queues = new Map<string, Promise<unknown>>();
+
+  commitPaths(root: string, paths: string[], message: string): Promise<string | null> {
+    const key = root.toLowerCase();
+    const next = (this.#queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => this.#commitPaths(root, paths, message));
+    this.#queues.set(key, next);
+    return next;
+  }
+
+  async #commitPaths(root: string, paths: string[], message: string): Promise<string | null> {
     if (paths.length === 0) return null;
-    await this.#git(root, ["add", "--all", "--", ...paths]);
+    // Les fichiers temporaires d'une écriture en cours (« *.tmp ») ne sont jamais commités.
+    await this.#git(root, ["add", "--all", "--", ...paths, ":(exclude,glob)**/*.tmp"]);
     const staged = await this.#git(root, ["diff", "--cached", "--name-only", "--", ...paths]);
     if (!staged.trim()) return null;
     // `git commit -- <paths>` (mode --only) ignore tout ce qui est indexé hors de ces chemins.

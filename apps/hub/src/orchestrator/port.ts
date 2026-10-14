@@ -9,13 +9,16 @@
 export interface OrchestratorPort {
   readonly name: string;
   /** Un tour de conversation du directeur. */
-  reply(input: { systemPrompt: string; prompt: string }): Promise<{ text: string; costUsd: number | null }>;
+  reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */
-  structured(input: { systemPrompt: string; prompt: string; jsonSchema: object }): Promise<{
+  structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta }): Promise<{
     data: unknown;
     costUsd: number | null;
   }>;
 }
+
+/** Origine d'un appel, pour le compteur d'utilisation. */
+export type CallMeta = { project?: string | null; agent: string };
 
 export class OrchestratorError extends Error {
   constructor(message: string) {

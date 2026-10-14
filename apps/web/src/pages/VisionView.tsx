@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Item, type Lineage } from "../api.ts";
+import { api, type Item, type Lineage, type TaskRow } from "../api.ts";
 import { formatDate, STATUS_LABEL, TYPE_LABEL } from "./labels.ts";
 import { ImplementButton } from "./TasksView.tsx";
 
@@ -9,11 +9,14 @@ export function VisionView({ slug }: { slug: string }) {
   const [rev, setRev] = useState(0);
   const [why, setWhy] = useState<Lineage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [built, setBuilt] = useState<TaskRow[]>([]);
 
   const refresh = useCallback(async () => {
     const [c, all] = await Promise.all([api.items(slug, "canon"), api.items(slug, "all")]);
     setCanon(c.items);
     setRev(c.vision_rev);
+    setBuilt((await api.tasks(slug)).filter((t) => t.status === "merged").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1)));
     setPast(all.items.filter((i) => i.type === "decision" && (i.status === "superseded" || i.status === "abandoned")));
   }, [slug]);
 
@@ -43,56 +46,83 @@ export function VisionView({ slug }: { slug: string }) {
   const allDecisions = canon.filter((i) => i.type === "decision");
   const decisions = allDecisions.filter((d) => d.nature !== "technical");
   const technical = allDecisions.filter((d) => d.nature === "technical");
+  const q = query.trim().toLowerCase();
+  const shown = q ? decisions.filter((d) => `${d.title} ${d.statement} ${d.decision?.summary ?? ""}`.toLowerCase().includes(q)) : decisions;
+  const themes = groupByTheme(shown);
 
   return (
     <main className="vision-layout">
-      <section className="page wide">
+      <section className="page wide bible">
         <div className="page-head">
           <div>
-            <h1>Vision validée</h1>
+            <h1>Le jeu</h1>
             <p className="muted small">
-              Ce que vous avez décidé. C'est la seule référence que les agents considèrent comme officielle. Version {rev}.
+              La bible du jeu : tout ce qui est décidé, par vous ou par le directeur. C'est la seule référence que l'équipe suit. Pour changer un
+              point, dites-le simplement au directeur.
             </p>
           </div>
+          {decisions.length > 6 && <input className="bible-search" placeholder="Chercher dans la bible…" value={query} onChange={(e) => setQuery(e.target.value)} />}
         </div>
         {error && <p className="error">{error}</p>}
-        {allDecisions.length === 0 && <p className="muted">Aucune décision validée pour l'instant. Rendez-vous dans l'onglet « Décisions ».</p>}
-        <div className="decisions">
-          {decisions.map((d) => (
-            <article key={d.id} className={`card decision ${why?.item.id === d.id ? "focus" : ""}`}>
-              <div className="proposal-head">
-                <h2 className="grow">{d.title}</h2>
-                <span className="muted small">
-                  {d.id} · validée le {formatDate(d.validated_by?.at)}
-                </span>
-              </div>
-              {d.decision?.summary ? (
-                <>
-                  <p className="summary">{d.decision.summary}</p>
-                  <details>
-                    <summary className="small">Voir le détail</summary>
-                    <p className="statement">{d.statement}</p>
-                  </details>
-                </>
-              ) : (
-                <p className="statement">{d.statement}</p>
-              )}
-              <div className="row">
-                <button className="link small" onClick={() => showWhy(d.id)}>
-                  Pourquoi ? D'où vient cette décision
-                </button>
-                <ImplementButton slug={slug} decision={d.id} />
-                {d.decision?.human_edits && <span className="badge">modifiée par vous</span>}
-                {d.decision?.supersedes.length ? <span className="badge">remplace {d.decision.supersedes.join(", ")}</span> : null}
-              </div>
-            </article>
-          ))}
-        </div>
+        {built.length > 0 && (
+          <section className="theme">
+            <h2 className="theme-title">Réalisé dans le jeu</h2>
+            {built.slice(0, 10).map((t) => (
+              <article key={t.id} className="entry">
+                <h3>
+                  <a href={`#/p/${slug}/tasks/${t.id}`}>{t.title}</a>
+                </h3>
+                <p className="entry-text small">{t.goal.split("\n")[0]}</p>
+                <span className="muted small">fusionné le {formatDate(t.updated_at)}</span>
+              </article>
+            ))}
+          </section>
+        )}
+        {allDecisions.length === 0 && built.length === 0 && <p className="muted">Rien pour l'instant : parlez de votre jeu au directeur, puis dites « go ».</p>}
+        {themes.length > 1 && (
+          <nav className="toc">
+            {themes.map(([theme, list]) => (
+              <a key={theme} href={`#theme-${slugTheme(theme)}`} onClick={(e) => {
+                e.preventDefault();
+                document.getElementById(`theme-${slugTheme(theme)}`)?.scrollIntoView({ behavior: "smooth" });
+              }}>
+                {theme} <span className="muted">{list.length}</span>
+              </a>
+            ))}
+          </nav>
+        )}
+        {themes.map(([theme, list]) => (
+          <section key={theme} id={`theme-${slugTheme(theme)}`} className="theme">
+            <h2 className="theme-title">{theme}</h2>
+            <div className="decisions">
+              {list.map((d) => (
+                <article key={d.id} className={`entry decision ${why?.item.id === d.id ? "focus" : ""}`}>
+                  <h3>{d.title}</h3>
+                  <p className="entry-text">{d.decision?.summary ?? d.statement}</p>
+                  {d.decision?.summary && (
+                    <details>
+                      <summary className="small">Détail</summary>
+                      <p className="statement small">{d.statement}</p>
+                    </details>
+                  )}
+                  <div className="entry-actions">
+                    <span className="muted small">{d.validated_by?.kind === "delegated" ? "décidé par le directeur" : "décidé par vous"}</span>
+                    <button className="link small" onClick={() => showWhy(d.id)}>
+                      Pourquoi ?
+                    </button>
+                    <ImplementButton slug={slug} decision={d.id} />
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+        {q && shown.length === 0 && <p className="muted">Rien ne correspond à « {query} ».</p>}
 
         {technical.length > 0 && (
           <details className="card technical-section">
             <summary>
-              <strong>Règles techniques ({technical.length})</strong>
+              <strong>Règles du code ({technical.length})</strong>
               <span className="muted small"> — l'état actuel du code, dont vous avez pris acte.</span>
             </summary>
             <ul className="history">
@@ -109,7 +139,7 @@ export function VisionView({ slug }: { slug: string }) {
 
         {past.length > 0 && (
           <details className="card">
-            <summary>Historique : {past.length} décision(s) remplacée(s) ou abandonnée(s)</summary>
+            <summary>Historique : {past.length} point(s) remplacé(s) ou retiré(s)</summary>
             <ul className="history">
               {past.map((d) => (
                 <li key={d.id}>
@@ -142,7 +172,8 @@ export function VisionView({ slug }: { slug: string }) {
           <p className="small">{why.item.statement}</p>
           {why.item.validated_by && (
             <p className="muted small">
-              Validée par vous le {formatDate(why.item.validated_by.at)} (accord {why.item.validated_by.approval}).
+              {why.item.validated_by.kind === "delegated" ? "Décidée par le directeur, dans le cadre de l'autonomie que vous lui avez donnée," : "Validée par vous"} le{" "}
+              {formatDate(why.item.validated_by.at)} (accord {why.item.validated_by.approval}).
             </p>
           )}
           {why.supersededBy && (
@@ -172,7 +203,7 @@ export function VisionView({ slug }: { slug: string }) {
           )}
           {why.item.type === "decision" && why.item.status === "validated" && (
             <button className="secondary danger small" onClick={() => abandon(why)}>
-              Abandonner cette décision
+              Retirer de la bible
             </button>
           )}
         </aside>
@@ -180,3 +211,69 @@ export function VisionView({ slug }: { slug: string }) {
     </main>
   );
 }
+
+const THEMES: Record<string, string> = {
+  vision: "L'essentiel",
+  gameplay: "Gameplay",
+  combat: "Combat",
+  armes: "Armes",
+  arme: "Armes",
+  tir: "Armes",
+  ennemis: "Ennemis",
+  ennemi: "Ennemis",
+  boss: "Ennemis",
+  progression: "Progression",
+  butin: "Butin",
+  loot: "Butin",
+  narration: "Histoire",
+  histoire: "Histoire",
+  art: "Direction artistique",
+  visuel: "Direction artistique",
+  rendu: "Rendu et effets",
+  effets: "Rendu et effets",
+  vfx: "Rendu et effets",
+  audio: "Son",
+  son: "Son",
+  ui: "Interface",
+  interface: "Interface",
+  rythme: "Rythme",
+  économie: "Économie",
+  technique: "Technique",
+  "éléments": "Combat",
+  build: "Combat",
+  soins: "Combat",
+  "capacités": "Personnage et capacités",
+  mouvement: "Personnage et capacités",
+  super: "Personnage et capacités",
+  classes: "Personnage et capacités",
+  missions: "Missions",
+  mission: "Missions",
+  spawn: "Ennemis",
+  "légal": "Cadre du projet",
+  architecture: "Technique",
+  workflow: "Technique",
+  "méthode": "Technique",
+  "données": "Technique",
+  performance: "Technique",
+};
+
+function themeOf(d: Item): string {
+  for (const dom of d.domain) {
+    const key = dom.toLowerCase();
+    if (THEMES[key]) return THEMES[key];
+  }
+  const first = d.domain[0];
+  return first ? first.charAt(0).toUpperCase() + first.slice(1) : "Divers";
+}
+
+/** Regroupe les points de la bible par thème, « L'essentiel » d'abord, puis par taille. */
+function groupByTheme(list: Item[]): [string, Item[]][] {
+  const map = new Map<string, Item[]>();
+  for (const d of list) {
+    const t = themeOf(d);
+    map.set(t, [...(map.get(t) ?? []), d]);
+  }
+  return [...map.entries()].sort((a, b) => (a[0] === "L'essentiel" ? -1 : b[0] === "L'essentiel" ? 1 : b[1].length - a[1].length));
+}
+
+const slugTheme = (t: string) => t.normalize("NFD").replace(/[^a-zA-Z]+/g, "-").toLowerCase();

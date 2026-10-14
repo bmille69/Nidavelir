@@ -27,7 +27,12 @@ const hub = createHub({
   executor: new ClaudeCodeExecutor(process.env.STUDIO_MODEL_DEV ?? "sonnet"),
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
+  autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },
+  usageProbe: async () => {
+    await cli.call({ systemPrompt: "Réponds uniquement : ok", prompt: "ok", model: "haiku", tag: { agent: "compteur" } });
+  },
 });
+cli.observer = (e) => hub.usage.record(e);
 // Un run ne survit pas à un arrêt du hub : on le signale plutôt que de le laisser « en cours ».
 hub.tasks.recoverInterrupted();
 

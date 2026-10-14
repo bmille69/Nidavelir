@@ -12,7 +12,7 @@ import {
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
-import type { ApprovalService } from "../approvals/approval-service.ts";
+import { isDelegated, type ApprovalService } from "../approvals/approval-service.ts";
 import type { Clock } from "../clock.ts";
 import { transaction, type Db } from "../db/database.ts";
 import type { Journal } from "../journal/journal.ts";
@@ -266,7 +266,7 @@ export class VisionService {
       }
 
       const rev = this.visionRev(project) + 1;
-      const validatedBy: ValidatedBy = { kind: "human", at: now, approval: approval.id };
+      const validatedBy: ValidatedBy = { kind: isDelegated(approval) ? "delegated" : "human", at: now, approval: approval.id };
       const edits = approval.edits ?? {};
       const chosen = edits.chosen_option ?? (details.options.length ? details.recommended_option : undefined);
       const option = details.options.find((o) => o.key === chosen);
@@ -293,7 +293,8 @@ export class VisionService {
           ...details.supersedes.map((to) => ({ rel: "supersedes" as const, to })),
         ],
         decision: {
-          summary: edits.statement ? undefined : details.summary,
+          // Le résumé décrit la question posée : il ne vaut plus si vous avez réécrit le texte ou choisi une option.
+          summary: edits.statement || option ? undefined : details.summary,
           rationale: details.rationale,
           from_proposal: proposal.id,
           chosen_option: option?.key,
@@ -361,7 +362,9 @@ export class VisionService {
       ? `vision: ${decision.id} validée — ${decision.title} (${approval.id})`
       : `vision: ${proposal.id} refusée (${approval.id})`;
     const commit = await this.#vcs.commitPaths(this.#root(project), ["studio"], message);
-    this.#log(project, { kind: "human" }, decision ? "decision.validated" : "proposal.rejected", decision?.id ?? proposal.id, {
+    const actor: Author = isDelegated(approval) ? { kind: "agent", role: "director", run: approval.session } : { kind: "human" };
+    this.#log(project, actor, decision ? "decision.validated" : "proposal.rejected", decision?.id ?? proposal.id, {
+      delegated: isDelegated(approval),
       approval: approval.id,
       proposal: proposal.id,
       supersedes: details.supersedes,

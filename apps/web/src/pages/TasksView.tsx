@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { navigate } from "../App.tsx";
 import { api, type Escalation, type Review, type RunEvent, type TaskDetail, type TaskRow } from "../api.ts";
 import { formatDate } from "./labels.ts";
+import { TryButton } from "../studio/Preview.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
   draft: { label: "Brouillon", tone: "muted" },
@@ -39,8 +40,8 @@ export function TasksView({ slug, taskId }: { slug: string; taskId?: string }) {
   return (
     <main className="tasks-layout">
       <aside className="threads">
-        <h2>Tâches</h2>
-        <p className="muted small">Pour en créer une : onglet « Vision validée », bouton « Faire implémenter » sur une décision.</p>
+        <h2>Chantiers</h2>
+        <p className="muted small">Pour en lancer un : dites « go » au directeur dans la discussion, ou « Faire réaliser » sur un point de « Le jeu ».</p>
         {error && <p className="error small">{error}</p>}
         <ul>
           {tasks.map((t) => (
@@ -142,7 +143,14 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
           <StatusBadge status={task.status} />
         </div>
         <p className="muted small">
-          {task.id} · créée le {formatDate(task.created_at)} · autorisée par{" "}
+          {task.id} · créée le {formatDate(task.created_at)}
+          {task.origin && (
+            <>
+              {" "}· lancée depuis{" "}
+              <a href={`#/p/${slug}/t/${task.origin.thread}`}>la discussion</a>
+            </>
+          )}
+          {decisions.length > 0 && " · autorisée par "}
           {decisions.map((d) => (
             <span key={d.id} className="badge" title={d.statement}>
               {d.id} {d.title}
@@ -383,6 +391,23 @@ function ReviewCard(props: {
     <div className="card">
       <h2>{isReview ? "Le résultat, à relire" : "Résultat"}</h2>
       {review.report && <p className="statement">{review.report.summary_simple}</p>}
+      {(isReview || review.task.status === "merged") && (
+        <div className="how-to-test">
+          <div className="row">
+            <strong className="grow">Essayer en jouant</strong>
+            <TryButton slug={slug} task={isReview ? id : undefined} label={isReview ? "▶ Essayer cette version" : "▶ Lancer le jeu"} />
+          </div>
+          {review.report?.how_to_test?.length ? (
+            <ol className="small">
+              {review.report.how_to_test.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ol>
+          ) : (
+            <p className="muted small">Le jeu s'ouvre dans un nouvel onglet, avec les modifications de ce chantier, sans toucher à votre jeu.</p>
+          )}
+        </div>
+      )}
       {v && (
         <div className={`verdict verdict-${v.verdict}`}>
           <strong>
@@ -503,7 +528,7 @@ export function ImplementButton({ slug, decision }: { slug: string; decision: st
         }
       }}
     >
-      Faire implémenter
+      Faire réaliser
     </button>
   );
 }

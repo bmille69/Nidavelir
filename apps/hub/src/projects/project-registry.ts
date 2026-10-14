@@ -1,4 +1,4 @@
-import { ProjectManifest, ProjectSlug, type Engine } from "@studio/contracts";
+import { Autonomy, ProjectManifest, ProjectSlug, type Engine } from "@studio/contracts";
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { stringify } from "yaml";
@@ -15,7 +15,7 @@ export class ProjectError extends Error {
   }
 }
 
-export type Project = { slug: string; name: string; root: string; engine: Engine; created_at: string };
+export type Project = { slug: string; name: string; root: string; engine: Engine; created_at: string; autonomy: Autonomy };
 
 export type ProjectAnalysis = {
   root: string;
@@ -75,6 +75,16 @@ export class ProjectRegistry {
     const p = this.#db.prepare("SELECT * FROM projects WHERE slug = ?").get(slug) as Project | undefined;
     if (!p) throw new ProjectError(`Projet inconnu : ${slug}`);
     return p;
+  }
+
+  /** Votre choix du niveau d'autonomie du directeur pour ce projet (ADR-20). */
+  setAutonomy(session: HumanSession, slug: string, level: Autonomy): Project {
+    assertHumanSession(session);
+    const before = this.get(slug);
+    const autonomy = Autonomy.parse(level);
+    this.#db.prepare("UPDATE projects SET autonomy = ? WHERE slug = ?").run(autonomy, slug);
+    this.#journal.append({ project: slug, actor: { kind: "human" }, type: "project.autonomy_changed", subject: slug, payload: { from: before.autonomy, to: autonomy } });
+    return this.get(slug);
   }
 
   /** Raisons d'isolation qui empêcheraient l'import de ce dossier (synchrone, lecture seule). */
@@ -141,10 +151,10 @@ export class ProjectRegistry {
     const keep = join(root, "studio", "items", ".gitkeep");
     if (!existsSync(keep)) writeFileSync(keep, "", "utf8");
 
-    const project: Project = { slug, name: input.name, root, engine, created_at: this.#clock.now() };
+    const project: Project = { slug, name: input.name, root, engine, created_at: this.#clock.now(), autonomy: "workshop" };
     this.#db
-      .prepare("INSERT INTO projects (slug, name, root, engine, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(project.slug, project.name, project.root, project.engine, project.created_at);
+      .prepare("INSERT INTO projects (slug, name, root, engine, created_at, autonomy) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(project.slug, project.name, project.root, project.engine, project.created_at, project.autonomy);
     this.#db.prepare("INSERT OR IGNORE INTO vision_revs (project, rev) VALUES (?, 0)").run(slug);
 
     const sha = await this.#vcs.commitPaths(root, ["studio"], `studio: enregistrement du projet ${input.name} dans Game Studio Hub`);

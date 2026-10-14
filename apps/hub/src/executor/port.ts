@@ -1,3 +1,4 @@
+import type { RateLimits, TokenUsage } from "../usage/usage-service.ts";
 import type { Decision, RunMode } from "./policy-engine.ts";
 
 export type RunEvent = { seq: number; at: string; type: "text" | "tool" | "result" | "info" | "error"; text: string };
@@ -29,7 +30,7 @@ export type ExecRequest = {
   signal: AbortSignal;
 };
 
-export type ExecResult = { structured: unknown; text: string; costUsd: number | null };
+export type ExecResult = { structured: unknown; text: string; costUsd: number | null; tokens?: TokenUsage | null; limits?: RateLimits | null };
 
 /** Exécuteur de tâches (docs/ARCHITECTURE.md §3.5). */
 export interface ExecutorPort {

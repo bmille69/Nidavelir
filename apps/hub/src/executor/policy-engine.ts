@@ -90,6 +90,14 @@ export class PolicyEngine {
     return problems;
   }
 
+  /** Commandes du plan que le gardien refuse : elles sont retirées du plan au lieu de le bloquer. */
+  refusedCommands(plan: PlanOutput): { cmd: string; why: string }[] {
+    return plan.commands.flatMap((c) => {
+      const why = commandProblem(c.cmd.trim());
+      return why ? [{ cmd: c.cmd, why }] : [];
+    });
+  }
+
   #read(tool: string, input: Record<string, unknown>): Decision {
     const raw = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
     if (!raw) return tool === "Read" ? deny("chemin manquant") : allow("recherche dans le projet");

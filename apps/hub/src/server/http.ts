@@ -1,6 +1,6 @@
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { ApprovalEdits, ItemType, ProjectSlug } from "@studio/contracts";
+import { ApprovalEdits, Autonomy, ItemType, ProjectSlug } from "@studio/contracts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ import { suggestFolders } from "../projects/suggestions.ts";
 import { defaultDocNature } from "../projects/bootstrap.ts";
 import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
+import { studioSnapshot } from "../studio/activity.ts";
+import { PreviewError } from "../executor/preview.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -66,6 +68,7 @@ const Body = {
   decideBatch: z.object({ proposals: z.array(z.object({ id: z.string(), hash: z.string().length(64) })).min(1).max(50) }),
   note: z.object({ note: z.string().max(2000).optional() }),
   abandon: z.object({ hash: z.string().length(64), note: z.string().max(2000).optional() }),
+  autonomy: z.object({ level: Autonomy }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
 
@@ -109,6 +112,18 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
 
     // ── Projets et import ──
     api.get("/projects", async () => hub.projects.list());
+    api.get("/studio", async () => studioSnapshot(hub));
+    api.get("/usage", async () => hub.usage.snapshot());
+    api.post("/usage/refresh", async () => hub.usage.refresh());
+    api.post("/projects/:slug/autonomy", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.projects.setAutonomy(req.human!, slug, Body.autonomy.parse(req.body).level);
+    });
+    api.post("/projects/:slug/autonomy/decide-pending", async (req) => {
+      const { slug } = req.params as { slug: string };
+      if (!hub.autopilot) throw new ProjectError("Le pilote automatique n'est pas activé sur ce hub");
+      return hub.autopilot.decidePending(req.human!, slug);
+    });
     api.get("/import/suggestions", async () => suggestFolders(options.gamesRoot, hub.projects));
     api.post("/import/browse", async () => ({ path: await options.folderPicker.pick(options.gamesRoot) }));
     api.post("/import/analyze", async (req) => {
@@ -310,6 +325,23 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as TaskParams;
       return hub.tasks.abandon(req.human!, slug, id);
     });
+    // ── Essayer le jeu (ADR-25) ──
+    api.get("/projects/:slug/previews", async (req) => hub.previews.list((req.params as { slug: string }).slug));
+    api.post("/projects/:slug/preview", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.previews.start(slug, null, hub.projects.get(slug).root);
+    });
+    api.post("/projects/:slug/tasks/:id/preview", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      const task = hub.tasks.get(slug, id);
+      if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
+      return hub.previews.start(slug, id, task.worktree);
+    });
+    api.post("/projects/:slug/preview/stop", async (req) => {
+      const { slug } = req.params as { slug: string };
+      for (const p of hub.previews.list(slug)) await hub.previews.stop(p.key);
+      return { stopped: true };
+    });
     api.get("/projects/:slug/escalations", async (req) => {
       const { slug } = req.params as { slug: string };
       return hub.tasks.escalations(slug, { status: "pending" });
@@ -366,7 +398,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

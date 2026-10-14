@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type DecideEdits, type Item, type ProposalCard, type SynthesisJob } from "../api.ts";
 import { TYPE_LABEL } from "./labels.ts";
+import { DelegatedDigest } from "../studio/Autonomy.tsx";
+import { useStudio } from "../studio/context.tsx";
 
 export function DecisionsView({ slug }: { slug: string }) {
   const [cards, setCards] = useState<ProposalCard[]>([]);
@@ -9,6 +11,8 @@ export function DecisionsView({ slug }: { slug: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const autonomy = useStudio()?.projects.find((p) => p.slug === slug)?.autonomy ?? "supervised";
+  const auto = autonomy !== "supervised";
 
   const refresh = useCallback(async () => {
     const [c, n, j] = await Promise.all([api.proposals(slug), api.candidates(slug), api.synthesisJobs(slug)]);
@@ -58,6 +62,18 @@ export function DecisionsView({ slug }: { slug: string }) {
     }
   }
 
+  async function letDirectorDecide() {
+    if (!window.confirm("Laisser le directeur décider des propositions sans débat (sans conflit ni question) ? Vous pourrez revenir sur chacune.")) return;
+    setError(null);
+    try {
+      const r = await api.decidePending(slug);
+      setFlash(`Le directeur a décidé ${r.decided.length} proposition(s). ${r.left} vous attendent encore : conflits ou vrais choix.`);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function takeNote() {
     if (!window.confirm(`En prendre acte : les ${technical.length} règle(s) technique(s) seront enregistrées comme « l'état actuel du code ». Les assistants les respecteront et ne les changeront pas sans raison. Continuer ?`)) return;
     try {
@@ -100,9 +116,15 @@ export function DecisionsView({ slug }: { slug: string }) {
         <div>
           <h1>Décisions à prendre</h1>
           <p className="muted">
-            Le directeur regroupe les fiches notées par sujet et vous propose un résumé par groupe. Vous validez, modifiez ou refusez.
-            Rien ne devient officiel sans votre clic.
+            {auto
+              ? "Le directeur regroupe les idées et décide seul de ce qui ne fait pas débat. Ici ne restent que les conflits et les vrais choix, à trancher par vous."
+              : "Le directeur regroupe les fiches notées par sujet et vous propose un résumé par groupe. Vous validez, modifiez ou refusez. Rien ne devient officiel sans votre clic."}
           </p>
+          {auto && creative.length + technical.length > 0 && (
+            <button className="secondary small" onClick={letDirectorDecide}>
+              Laisser le directeur trancher ce qui ne fait pas débat
+            </button>
+          )}
         </div>
         <div className="hero-side">
           <div className="big">{pending}</div>
@@ -167,7 +189,9 @@ export function DecisionsView({ slug }: { slug: string }) {
         </div>
       )}
 
-      {creative.length > 0 && <h2 className="section-title">Vos décisions de créateur ({creative.length})</h2>}
+      {auto && <DelegatedDigest slug={slug} />}
+
+      {creative.length > 0 && <h2 className="section-title">{auto ? "À trancher par vous" : "Vos décisions de créateur"} ({creative.length})</h2>}
       {creative.length > 0 && (
         <div className="batch-bar">
           <label className="check">
