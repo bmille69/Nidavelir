@@ -266,7 +266,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/projects/:slug/tasks", async (req) => {
       const { slug } = req.params as { slug: string };
       const pending = hub.tasks.escalations(slug, { status: "pending" });
-      return hub.tasks.list(slug).map((t) => ({ ...t, pending_escalations: pending.filter((e) => e.task === t.id).length }));
+      return hub.tasks.list(slug).map((t) => ({
+        ...t,
+        pending_escalations: pending.filter((e) => e.task === t.id).length,
+        cost_usd: hub.tasks.runs(slug, t.id).reduce((n, r) => n + (r.cost_usd ?? 0), 0),
+      }));
     });
     api.post("/projects/:slug/tasks", async (req) => {
       const { slug } = req.params as { slug: string };

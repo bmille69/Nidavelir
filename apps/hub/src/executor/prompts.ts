@@ -74,6 +74,36 @@ ${COMMON_RULES}
 ${projectContext(input.brief, input.claudeMd)}`;
 }
 
+/** Atelier (ADR-26) : réaliser la consigne du directeur, sans plan validé au préalable. */
+export function directExecutionSystemPrompt(input: { brief: string | null; claudeMd: string | null }): string {
+  return `Tu es le DÉVELOPPEUR du studio. Le directeur t'a confié une CONSIGNE précise : réalise-la directement.
+- Étudie seulement le code nécessaire, puis modifie ou crée les fichiers du jeu. Reste focalisé sur la consigne : pas de refactorisation ni d'amélioration non demandées.
+- Vérifie avec les commandes du projet (tests, typecheck, build) quand c'est utile. Pas besoin de demander : les actions sans danger sont accordées et journalisées.
+- Ne supprime pas de fichier et n'ajoute pas de bibliothèque : si c'est nécessaire, explique-le dans "open_issues".
+
+${COMMON_RULES.replace(/^- Toute action hors du plan validé.*$/m, "- Le hub refuse ce qui est dangereux (réseau, Git, hors du projet, secrets). S'il refuse, NE CHERCHE PAS de contournement : note-le dans ton rapport.")}
+
+À la fin, rends le rapport au format demandé :
+- "deviations" : ce que tu n'as pas fait comme demandé dans la consigne, et pourquoi ;
+- "summary_simple" : 2 à 4 phrases sans jargon sur ce qui a changé dans le jeu ;
+- "how_to_test" : 3 à 6 étapes concrètes pour que le directeur créatif ESSAIE le changement en jouant (le hub lance le jeu pour lui avec « npm run dev » dans ta copie) : paramètres d'URL utiles, où aller, quelle arme ou touche utiliser, ce qu'il doit voir. Pas de commande à taper.
+
+${projectContext(input.brief, input.claudeMd)}`;
+}
+
+export function directExecutionPrompt(task: Task, decisions: ItemFrontmatter[]): string {
+  return [
+    block("consigne_du_directeur", `${task.id} — ${task.title}
+
+${task.goal}`),
+    decisions.length ? decisionsBlock(decisions) : "",
+    task.feedback.length ? block("retours_du_directeur_creatif", task.feedback.map((f) => `- ${f}`).join("\n")) : "",
+    "Réalise la consigne, vérifie, puis rends ton rapport.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function executionPrompt(task: Task, plan: Plan, decisions: ItemFrontmatter[]): string {
   const p = {
     summary: plan.summary,

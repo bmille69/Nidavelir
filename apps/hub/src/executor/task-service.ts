@@ -29,6 +29,8 @@ import { PolicyEngine, TOOLS_BY_MODE, type Decision, type RunMode } from "./poli
 import { linkSharedDirs, unlinkAllLinks } from "./shared-dirs.ts";
 import type { AgentBridge, ExecResult, ExecutorPort, RunEvent } from "./port.ts";
 import {
+  directExecutionPrompt,
+  directExecutionSystemPrompt,
   executionPrompt,
   executionSystemPrompt,
   planningPrompt,
@@ -359,6 +361,47 @@ export class TaskService {
     return why;
   }
 
+  /**
+   * Atelier (ADR-26) : pas de phase de plan séparée (elle relisait le code une deuxième fois pour
+   * un plan validé de toute façon automatiquement). La consigne du directeur tient lieu de plan ;
+   * le gardien refuse ce qui est dangereux et accorde le reste, journalisé ; vous relisez avant fusion.
+   */
+  async startDirect(project: string, id: string, autonomy: string): Promise<Task> {
+    if (autonomy !== "workshop") throw new TaskError("Exécution directe réservée au mode atelier");
+    let task = this.get(project, id);
+    if (task.status !== "draft") throw new TaskError(`Impossible de lancer depuis le statut « ${task.status} »`);
+    task = await this.#ensureWorktree(task);
+    const plan = this.#storePlan(task, {
+      summary: `Consigne du directeur, réalisée directement (atelier) : ${task.title}`,
+      summary_simple: task.goal.split("\n")[0]!.slice(0, 800),
+      acceptance_criteria: ["La consigne est réalisée", "Les tests du projet passent"],
+      steps: [{ description: "Réaliser la consigne du directeur", files: [] }],
+      files_to_create: [],
+      files_to_modify: [],
+      files_to_delete: [],
+      // Sans plan, les vérifications autorisées sont les scripts de test du projet (le testeur peut les lancer).
+      commands: verificationScripts(task.worktree!),
+      new_dependencies: [],
+      risks: [],
+      assumptions: [],
+      questions: [],
+    });
+    const approval = this.#approvals.recordDelegated({
+      project,
+      subject: { kind: "plan", id: plan.id, hash: plan.hash },
+      verdict: "approved",
+      autonomy,
+      run: "autopilot",
+      note: "Atelier : consigne réalisée directement",
+    });
+    transaction(this.#db, () => {
+      this.#approvals.consume(project, approval.id, { kind: "plan", id: plan.id, hash: plan.hash });
+      this.#db.prepare("UPDATE plans SET status = 'approved' WHERE project = ? AND id = ?").run(project, plan.id);
+    });
+    this.#update(task, { status: "approved", plan: plan.id, direct: true });
+    return this.#execute(project, id);
+  }
+
   async #execute(project: string, id: string): Promise<Task> {
     const task = this.get(project, id);
     if (task.status !== "approved" || !task.plan) throw new TaskError("Le plan doit être validé avant l'exécution");
@@ -369,8 +412,8 @@ export class TaskService {
     const ctx = this.#context(task);
 
     this.#spawn(running, "execute", new PolicyEngine({ mode: "execute", root: task.worktree!, plan }), {
-      systemPrompt: executionSystemPrompt(ctx),
-      prompt: executionPrompt(task, plan, decisions),
+      systemPrompt: task.direct ? directExecutionSystemPrompt(ctx) : executionSystemPrompt(ctx),
+      prompt: task.direct ? directExecutionPrompt(task, decisions) : executionPrompt(task, plan, decisions),
       jsonSchema: REPORT_SCHEMA,
       onResult: async (r) => {
         const parsed = ExecutionReportOutput.safeParse(r.structured);
@@ -536,7 +579,8 @@ export class TaskService {
     if (this.#projects.get(run.project).autonomy === "workshop") {
       const summary = this.#describe(run, tool, input);
       this.#log(run.project, "escalation.auto_allowed", run.task, { summary, reason: d.reason });
-      this.#event(run, "info", `Hors plan, autorisé automatiquement (atelier) : ${summary}`);
+      // En exécution directe il n'y a pas de plan : rien d'« hors plan » à signaler à chaque action.
+      if (!this.get(run.project, run.task).direct) this.#event(run, "info", `Hors plan, autorisé automatiquement (atelier) : ${summary}`);
       return { behavior: "allow" };
     }
 
@@ -627,7 +671,7 @@ export class TaskService {
           prompt: spec.prompt,
           jsonSchema: spec.jsonSchema,
           tools: TOOLS_BY_MODE[kind],
-          maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: 40 }[kind],
+          maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: 30 }[kind],
           bridge,
           bridgeUrl: `${this.#opts.agentBaseUrl()}/${id}`,
           token,
@@ -778,4 +822,23 @@ function summarizeInput(input: Record<string, unknown>): Record<string, unknown>
     out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}…` : v;
   }
   return out;
+}
+
+/** Scripts de vérification du projet (package.json), dans l'ordre du plus rapide au plus complet. */
+export function verificationScripts(root: string): { cmd: string; purpose: string }[] {
+  const pkg = join(root, "package.json");
+  if (!existsSync(pkg)) return [];
+  let scripts: Record<string, string> = {};
+  try {
+    scripts = (JSON.parse(readFileSync(pkg, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
+  } catch {
+    return [];
+  }
+  const out: { cmd: string; purpose: string }[] = [];
+  if (scripts.typecheck) out.push({ cmd: "npm run typecheck", purpose: "vérifier les types" });
+  if (scripts.lint) out.push({ cmd: "npm run lint", purpose: "vérifier le style du code" });
+  if (scripts.test) out.push({ cmd: "npm test", purpose: "tests du projet" });
+  if (scripts.build) out.push({ cmd: "npm run build", purpose: "construire le jeu" });
+  if (scripts.validate) out.push({ cmd: "npm run validate", purpose: "validation complète du projet" });
+  return out.slice(0, 10);
 }

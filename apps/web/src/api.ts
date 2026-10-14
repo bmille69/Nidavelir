@@ -1,7 +1,7 @@
 import type { Escalation, ItemFrontmatter, Message, Plan, Run, Task, Thread, VerificationOutput, ExecutionReportOutput } from "@studio/contracts";
 
 export type { ItemFrontmatter as Item, Message, Thread, Task, Plan, Escalation };
-export type TaskRow = Task & { pending_escalations: number };
+export type TaskRow = Task & { pending_escalations: number; cost_usd: number };
 export type RunInfo = Run & { result: { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string } | null };
 export type TaskDetail = { task: Task; plan: Plan | null; runs: RunInfo[]; escalations: Escalation[]; decisions: ItemFrontmatter[]; executor: string };
 export type RunEvent = { seq: number; at: string; type: "text" | "tool" | "result" | "info" | "error"; text: string };

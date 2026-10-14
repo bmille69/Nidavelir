@@ -229,6 +229,27 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
   - « ▶ Essayer » passe par une configuration d'enrobage, rangée dans les données du hub, qui reprend celle du jeu et autorise ce dossier. Résultat : 403 sans enrobage, 200 avec ;
   - le développeur et le testeur sont prévenus que ces 403 viennent de la copie et non du jeu.
 
+### ADR-26 : économies de consommation
+**Statut** : Retenue (14/10/2026). Demande du directeur créatif : « applique tout ce que tu juges optimal ».
+- **Analyse du 14/10** (équivalent API, à titre indicatif) :
+  - le hub a consommé 4,62 $ dans la journée : développeur 59 %, directeur 22 %, testeur 11 %, fiches 8 % (supprimées depuis l'atelier) ;
+  - un chantier coûtait de 0,72 à 1,47 $ ;
+  - la session de construction du hub elle-même (Claude Code, plus gros modèle, très longue) prend sur le même abonnement : c'est probablement la plus grosse part de la consommation de la journée.
+- **Exécution directe en atelier** : plus de phase « plan » séparée, qui relisait le code une seconde fois pour un plan validé de toute façon automatiquement.
+  - La consigne du directeur tient lieu de plan.
+  - Les commandes de vérification autorisées sont les scripts du projet : `typecheck`, `lint`, `test`, `build`, `validate`.
+  - Le gardien refuse toujours ce qui est dangereux ; le reste est accordé et journalisé, sans bruit dans le suivi.
+  - Le développeur ne supprime pas de fichier et n'ajoute pas de bibliothèque ; il le signale.
+- **Testeur sur un modèle plus léger** (`haiku` par défaut, variable `STUDIO_MODEL_QA`), avec 30 tours au plus.
+- **Historique compact du directeur** : une consigne déjà envoyée est réduite à son titre, un long message à 1 500 caractères.
+- **Cache vérifié** : d'un message à l'autre, le contexte stable (consignes du projet, fichiers) est relu depuis le cache. Les ratés venaient de l'ancien mode à fiches, dont le contexte changeait à chaque message.
+- **Coût affiché** par chantier : dans le panneau, sur la page du chantier et dans le compte rendu.
+- **Essai réel sur une copie de Destiny Survivor** (« ajoute au README les paramètres d'URL de test, go ») :
+  - 56 s de bout en bout, aucune demande d'autorisation, uniquement `README.md` modifié ;
+  - développeur 0,17 $, testeur 0,01 $, directeur environ 0,05 $ ;
+  - compte rendu avec « Pour essayer » ;
+  - défaut relevé puis corrigé : le testeur ne pouvait lancer aucun test sans plan.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

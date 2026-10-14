@@ -104,9 +104,24 @@ Réponds en français, de façon concise et chaleureuse (environ 150 mots, sauf 
 ${contextPack}`;
 }
 
+/** Marque de la consigne envoyée au développeur dans un message (voir conversation-service). */
+const BRIEF = "§CONSIGNE§ ";
+const MAX_HISTORY_CHARS = 1500;
+
+/**
+ * Historique compact (ADR-26) : une consigne déjà envoyée est réduite à son titre, et un long
+ * message (compte rendu de chantier…) à son début. Le coût d'un message n'enfle pas avec la discussion.
+ */
+function compact(text: string): string {
+  const at = text.indexOf(BRIEF);
+  let out = at < 0 ? text : `${text.slice(0, at).trim()}\n[consigne envoyée au développeur : ${text.slice(at + BRIEF.length).split("\n")[0]}]`;
+  if (out.length > MAX_HISTORY_CHARS) out = `${out.slice(0, MAX_HISTORY_CHARS)} […]`;
+  return out;
+}
+
 export function renderHistory(messages: Message[]): string {
   if (!messages.length) return "";
-  const rows = messages.map((m) => `<${m.role === "human" ? "directeur_creatif" : "toi"}>${esc(m.text)}</${m.role === "human" ? "directeur_creatif" : "toi"}>`);
+  const rows = messages.map((m) => `<${m.role === "human" ? "directeur_creatif" : "toi"}>${esc(m.role === "human" ? m.text : compact(m.text))}</${m.role === "human" ? "directeur_creatif" : "toi"}>`);
   return `<historique>\n${rows.join("\n")}\n</historique>\n\n`;
 }
 

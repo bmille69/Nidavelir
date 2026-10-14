@@ -49,6 +49,7 @@ export function WorkshopPanel({ slug }: { slug: string }) {
                 <span className="row">
                   <StatusBadge status={t.status} />
                   <span className="muted small">{ago(t.updated_at, now)}</span>
+                  {t.cost_usd > 0 && <span className="muted small" title="Équivalent API, pris sur votre abonnement">≈ {money(t.cost_usd)}</span>}
                 </span>
                 {todo && <span className="todo-label">→ {todo}</span>}
               </a>
@@ -110,3 +111,5 @@ function LiveLog({ slug, task }: { slug: string; task: string }) {
     </ul>
   );
 }
+
+export const money = (usd: number) => `${usd.toFixed(2).replace(".", ",")} $`;

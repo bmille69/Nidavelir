@@ -3,6 +3,7 @@ import { navigate } from "../App.tsx";
 import { api, type Escalation, type Review, type RunEvent, type TaskDetail, type TaskRow } from "../api.ts";
 import { formatDate } from "./labels.ts";
 import { TryButton } from "../studio/Preview.tsx";
+import { money } from "../studio/Workshop.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
   draft: { label: "Brouillon", tone: "muted" },
@@ -144,6 +145,9 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
         </div>
         <p className="muted small">
           {task.id} · créée le {formatDate(task.created_at)}
+          {detail.runs.some((r) => r.cost_usd) && (
+            <span title="Équivalent API, pris sur votre abonnement"> · coût ≈ {money(detail.runs.reduce((n, r) => n + (r.cost_usd ?? 0), 0))}</span>
+          )}
           {task.origin && (
             <>
               {" "}· lancée depuis{" "}

@@ -30,6 +30,8 @@ export const Task = z.object({
   authorized_by: z.array(ItemId).default([]),
   /** Discussion d'où vient le chantier (mode atelier, ADR-24) : le hub y donne les nouvelles. */
   origin: z.object({ thread: z.string() }).nullable().default(null),
+  /** Atelier (ADR-26) : le développeur réalise la consigne directement, sans phase de plan séparée. */
+  direct: z.boolean().default(false),
   status: TaskStatus,
   /** Commentaires de votre part transmis au prochain plan (demande de corrections). */
   feedback: z.array(z.string()).default([]),

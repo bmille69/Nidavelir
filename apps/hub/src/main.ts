@@ -24,7 +24,7 @@ const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
   registry: defaultRegistryOptions(hubRoot, dataDir),
   orchestrator,
-  executor: new ClaudeCodeExecutor(process.env.STUDIO_MODEL_DEV ?? "sonnet"),
+  executor: new ClaudeCodeExecutor({ default: process.env.STUDIO_MODEL_DEV ?? "sonnet", verify: process.env.STUDIO_MODEL_QA ?? "haiku" }),
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
   autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },

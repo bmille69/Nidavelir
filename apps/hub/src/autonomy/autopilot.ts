@@ -145,6 +145,8 @@ export class Autopilot {
     if (report?.deviations.length) lines.push("", "Écarts par rapport au plan :", ...report.deviations.slice(0, 4).map((d) => `  • ${d.what}`));
     if (report?.open_issues.length) lines.push("", "Reste à faire :", ...report.open_issues.slice(0, 4).map((x) => `  • ${x}`));
     if (report?.how_to_test.length) lines.push("", "Pour essayer :", ...report.how_to_test.map((s, k) => `  ${k + 1}. ${s}`));
+    const cost = runs.reduce((n, r) => n + (r.cost_usd ?? 0), 0);
+    if (cost > 0) lines.push("", `Coût de ce chantier : environ ${cost.toFixed(2).replace(".", ",")} $ (équivalent API, pris sur votre abonnement).`);
     lines.push(
       "",
       `Cliquez sur « ▶ Essayer » à droite pour lancer cette version du jeu, puis « Fusionner » si elle vous plaît${ok ? "" : ", ou dites-moi ce qu'il faut corriger"}.`,
@@ -179,8 +181,8 @@ export class Autopilot {
         // Atelier (ADR-24) : pas de fiches ; la consigne du directeur est le cahier des charges.
         const named = request.decisions.filter((id) => this.#isValidated(project, id));
         const task = this.#tasks.createFromConversation(project, { title: request.title, goal: request.goal, decisions: named }, thread);
-        await this.#tasks.startPlanning(project, task.id);
-        say(`→ Chantier ${task.id} « ${task.title} » lancé. Le développeur étudie le code et prépare son plan ; s'il est sans risque, il passe directement au travail. Je vous préviens ici quand c'est prêt à relire.`);
+        await this.#tasks.startDirect(project, task.id, level);
+        say(`→ Chantier ${task.id} « ${task.title} » lancé : le développeur est au travail (suivi en direct à droite). Je vous préviens ici quand c'est prêt à essayer.`);
         return;
       }
       await this.#flush(project, thread);

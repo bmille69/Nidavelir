@@ -40,3 +40,11 @@ describe("▶ Essayer", () => {
     await expect(previews.start("destiny", null, game({ dev: "vite" }, false))).rejects.toThrow(/npm install/);
   });
 });
+
+describe("chantier direct : vérifications autorisées", () => {
+  it("reprend les scripts de test du projet", async () => {
+    const { verificationScripts } = await import("../src/executor/task-service.ts");
+    const dir = game({ dev: "vite", test: "vitest run", typecheck: "tsc --noEmit", build: "vite build", "fetch:bungie": "node x.mjs" });
+    expect(verificationScripts(dir).map((c) => c.cmd)).toEqual(["npm run typecheck", "npm test", "npm run build"]);
+  });
+});

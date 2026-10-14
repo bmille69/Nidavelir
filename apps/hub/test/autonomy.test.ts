@@ -284,17 +284,28 @@ describe("atelier (par défaut)", () => {
     expect(report).toMatch(/« ▶ Essayer »/);
   });
 
-  it("un plan qui supprime un fichier attend votre accord, et la discussion le dit", async () => {
+  it("exécution directe : pas de phase de plan, la consigne va droit au développeur, le coût est indiqué", async () => {
     const { sb, hub, fake, exec } = await setup();
     hub.projects.setAutonomy(sb.human(), P, "workshop");
-    exec.scripts.plan.push(() => planOutput({ files_to_delete: ["README.md"] }));
+    exec.scripts.execute.push(async (t) => {
+      await t.write("src/boss.ts", "export {};\n");
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
     fake.replies.push(BRIEF);
     const t = hub.conversations.createThread(P, "Tirs");
     await hub.conversations.send(P, t.id, "go");
     await hub.conversations.idle();
     await hub.tasks.idle();
-    expect(hub.tasks.list(P)[0]!.status).toBe("plan_review");
-    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(/a besoin de votre accord : il supprime README.md/);
+
+    expect(exec.requests.map((r) => r.kind)).toEqual(["execute", "verify"]);
+    expect(exec.requests[0]!.prompt).toMatch(/<consigne_du_directeur>[\s\S]*sillage 0,12 s/);
+    expect(exec.requests[0]!.systemPrompt).toMatch(/réalise-la directement/);
+    const [task] = hub.tasks.list(P);
+    expect(task).toMatchObject({ direct: true, status: "review" });
+    const events = hub.tasks.events(hub.tasks.runs(P, task!.id)[0]!.id).map((e) => e.text);
+    expect(events.join("\n")).not.toMatch(/Hors plan/);
+    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(/Coût de ce chantier : environ 0,02 \$/);
   });
 });
 
@@ -334,5 +345,20 @@ describe("compteur d'utilisation", () => {
     expect(snap.today).toMatchObject({ tokens: 3559, calls: 2 });
     expect(snap.limits?.windows.seven_day?.utilization).toBe(0.68);
     expect(snap.byAgent[0]!.agent).toBe("director");
+  });
+});
+
+describe("historique compact du directeur", () => {
+  it("réduit une consigne envoyée à son titre et tronque les longs comptes rendus", async () => {
+    const { renderHistory } = await import("../src/conversation/prompts.ts");
+    const msg = (role: "human" | "director", text: string) => ({ id: "x", thread: "t", seq: 1, role, text, at: "", extraction: "none" as const, cost_usd: null });
+    const out = renderHistory([
+      msg("director", "Je propose un sillage.\n\n§CONSIGNE§ Balles lumineuses\nObjectif : très long détail…"),
+      msg("director", "✓ Chantier terminé. " + "x".repeat(3000)),
+    ]);
+    expect(out).toMatch(/\[consigne envoyée au développeur : Balles lumineuses\]/);
+    expect(out).not.toMatch(/très long détail/);
+    expect(out).toMatch(/x{1000} \[…\]/);
+    expect(out.length).toBeLessThan(2000);
   });
 });
