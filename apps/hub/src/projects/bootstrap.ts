@@ -11,7 +11,7 @@ export type BootstrapJob = {
   id: string;
   project: string;
   status: "running" | "done" | "failed";
-  documents: { path: string; status: "pending" | "running" | "done" | "failed" | "skipped"; created: number; note?: string }[];
+  documents: { path: string; nature: DocNature; status: "pending" | "running" | "done" | "failed" | "skipped"; created: number; note?: string }[];
   created: number;
   costUsd: number;
   started_at: string;
@@ -19,6 +19,13 @@ export type BootstrapJob = {
 };
 
 const MAX_DOC_BYTES = 200_000;
+
+export type DocNature = "creative" | "technical";
+/** Documents qui décrivent le code plutôt que le jeu (choix par défaut, modifiable à l'import). */
+const TECHNICAL_DOC = /(^|\/)(claude|agents|contributing|changelog)\.md$|archi|techni|convention|api|develop|dev-|code|setup|install|build|deploy/i;
+export function defaultDocNature(path: string): DocNature {
+  return TECHNICAL_DOC.test(path.replace(/\\/g, "/")) ? "technical" : "creative";
+}
 
 /**
  * Amorçage de la vision depuis les documents d'un projet importé
@@ -39,13 +46,17 @@ export class BootstrapService {
     this.#extraction = deps.extraction;
   }
 
-  start(project: string, documents: string[]): BootstrapJob {
+  start(project: string, documents: (string | { path: string; nature?: DocNature })[]): BootstrapJob {
     const root = this.#projects.get(project).root;
     const job: BootstrapJob = {
       id: randomUUID(),
       project,
       status: "running",
-      documents: documents.map((path) => ({ path, status: "pending", created: 0 })),
+      documents: documents.map((d) => {
+        const path = typeof d === "string" ? d : d.path;
+        const nature = (typeof d === "string" ? undefined : d.nature) ?? defaultDocNature(path);
+        return { path, nature, status: "pending" as const, created: 0 };
+      }),
       created: 0,
       costUsd: 0,
       started_at: this.#clock.now(),
@@ -97,6 +108,7 @@ export class BootstrapService {
               return line ? `${doc.path}#L${chunk.startLine + line - 1}` : doc.path;
             },
             untrusted: true,
+            nature: doc.nature,
           });
           doc.created += outcome.created.length;
           job.created += outcome.created.length;

@@ -63,6 +63,8 @@ export class ExtractionService {
     ref: (quote: string) => string;
     /** Marque le contenu comme non fiable (documents). */
     untrusted: boolean;
+    /** Nature imposée aux éléments (ex. document qui décrit le code = technique). */
+    nature?: "creative" | "technical";
   }): Promise<ExtractionOutcome> {
     const existing = this.#vision
       .list(input.project)
@@ -107,6 +109,7 @@ export class ExtractionService {
         confidence: x.confidence,
         links: x.refines ? [{ rel: "refines", to: x.refines }] : [],
         hint: x.looks_like_decision && input.kind === "file" ? "existing_decision" : undefined,
+        nature: input.nature,
       });
       created.push(item);
       known.add(item.id);

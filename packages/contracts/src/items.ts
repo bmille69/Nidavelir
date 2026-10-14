@@ -71,6 +71,10 @@ export const STATUSES_BY_TYPE: Record<ItemType, readonly string[]> = {
 };
 
 export const Tier = z.enum(["canon", "working"]);
+
+/** Créatif = ce que vit le joueur (votre domaine) ; technique = comment le code est fait (domaine de l'architecte). */
+export const Nature = z.enum(["creative", "technical"]);
+export type Nature = z.infer<typeof Nature>;
 export type Tier = z.infer<typeof Tier>;
 
 export const ROLES = ["director", "game_designer", "architect", "developer", "qa"] as const;
@@ -134,6 +138,8 @@ export const NewCanonItem = z.object({
 export type NewCanonItem = z.infer<typeof NewCanonItem>;
 
 export const ProposalDetails = z.object({
+  /** Résumé en langage courant, affiché en premier. */
+  summary: z.string().optional(),
   rationale: z.string().default(""),
   based_on: z.array(ItemId).default([]),
   supersedes: z.array(ItemId).default([]),
@@ -150,6 +156,7 @@ export const ProposalDetails = z.object({
 export type ProposalDetails = z.infer<typeof ProposalDetails>;
 
 export const DecisionDetails = z.object({
+  summary: z.string().optional(),
   rationale: z.string().default(""),
   from_proposal: ItemId.optional(),
   chosen_option: z.string().optional(),
@@ -182,6 +189,7 @@ export const ItemFrontmatter = z
     confidence: z.number().min(0).max(1).optional(),
     /** Indice d'aide au tri, jamais un statut : « ressemble à une décision déjà prise ». */
     hint: z.enum(["existing_decision"]).optional(),
+    nature: Nature.optional(),
     vision_rev: z.number().int().min(0),
     created_at: z.string(),
     updated_at: z.string(),

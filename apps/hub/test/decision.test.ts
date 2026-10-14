@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildServer, SESSION_COOKIE } from "../src/server/http.ts";
 import { chunkByDomain } from "../src/vision/synthesis.ts";
-import { FakeOrchestrator } from "./fake-orchestrator.ts";
+import { extracted, FakeOrchestrator } from "./fake-orchestrator.ts";
 import { cleanupSandboxes, DIRECTOR, git, msg, sandbox, type Sandbox } from "./helpers.ts";
 
 const P = "survivor";
@@ -32,7 +32,7 @@ function note(title: string, domain = "boss", type: "mechanic" | "idea" | "const
 }
 
 function group(partial: Partial<SynthesizedProposal> & Pick<SynthesizedProposal, "title" | "based_on">): SynthesizedProposal {
-  return { statement: `Règle : ${partial.title}`, rationale: "Cohérent.", supersedes: [], conflict_notes: [], questions: [], domain: ["boss"], ...partial };
+  return { nature: "creative", summary: `En bref : ${partial.title}`, statement: `Règle : ${partial.title}`, rationale: "Cohérent.", supersedes: [], conflict_notes: [], questions: [], domain: ["boss"], ...partial };
 }
 
 /** File une réponse de regroupement dans l'orchestrateur factice. */
@@ -103,6 +103,67 @@ describe("regroupement en propositions de synthèse", () => {
     const fake = (d: string, n: number) => Array.from({ length: n }, () => ({ domain: [d] }) as never);
     const chunks = chunkByDomain([...fake("boss", 70), ...fake("armes", 60), ...fake("ui", 10)], 120);
     expect(chunks.map((c) => c.length)).toEqual([70, 70]);
+  });
+});
+
+describe("séparation créatif / technique", () => {
+  it("chaque proposition porte sa nature, que la décision conserve", async () => {
+    note("Boss à l'arène");
+    sb.hub.vision.capture(P, DIRECTOR, { type: "constraint", title: "Simulation sans DOM", statement: "x", source: { kind: "file", ref: "CLAUDE.md#L9", quote: "x" } });
+    scriptSynthesis([
+      group({ title: "Apparition des boss", based_on: ["M-0001"], nature: "creative" }),
+      group({ title: "Architecture de la simulation", based_on: ["C-0001"], nature: "technical" }),
+    ]);
+    sb.hub.synthesis.start(P);
+    await sb.hub.synthesis.idle();
+    expect(sb.hub.vision.get(P, "P-0001").nature).toBe("creative");
+    expect(sb.hub.vision.get(P, "P-0002").nature).toBe("technical");
+    // Les éléments d'un document de code importé avant l'étiquetage sont signalés comme techniques au regroupeur.
+    expect(fake.calls.at(-1)!.prompt).toMatch(/\[C-0001\] \([^)]*document technique/);
+    const { post, get } = await login();
+    const cards = (await get(`/api/human/projects/${P}/proposals`)).json() as { proposal: { id: string }; hash: string }[];
+    await post(`/api/human/projects/${P}/proposals/decide-batch`, { proposals: cards.map((c) => ({ id: c.proposal.id, hash: c.hash })) });
+    expect(sb.hub.vision.list(P, { type: "decision" }).map((d) => d.nature)).toEqual(["creative", "technical"]);
+  });
+
+  it("refaire le regroupement : les propositions en attente reviennent au tri, rien de validé ne bouge", async () => {
+    note("A");
+    note("B");
+    scriptSynthesis([group({ title: "G1", based_on: ["M-0001", "M-0002"] })]);
+    sb.hub.synthesis.start(P);
+    await sb.hub.synthesis.idle();
+    scriptSynthesis([group({ title: "A seul", based_on: ["M-0001"] }), group({ title: "B seul", based_on: ["M-0002"], nature: "technical" })]);
+    const { post } = await login();
+    expect((await post(`/api/human/projects/${P}/synthesis/redo`)).statusCode).toBe(200);
+    await sb.hub.synthesis.idle();
+    expect(sb.hub.vision.get(P, "P-0001").status).toBe("returned");
+    expect(sb.hub.vision.list(P, { type: "proposal", status: "submitted" }).map((p) => [p.title, p.nature])).toEqual([
+      ["A seul", "creative"],
+      ["B seul", "technical"],
+    ]);
+    expect(sb.hub.vision.list(P, { tier: "canon" })).toEqual([]);
+  });
+
+  it("à l'import, CLAUDE.md et l'architecture sont « code » par défaut, modifiable par document", async () => {
+    const { post } = await login();
+    const game = sb.makeGameRepo("autre-jeu", { "README.md": "# Jeu\nUn jeu de pirates.", "CLAUDE.md": "# Code\nTypeScript strict.", "docs/architecture.md": "# Archi" });
+    const analysis = (await post("/api/human/import/analyze", { path: game })).json();
+    expect(analysis.document_natures).toEqual({ "README.md": "creative", "CLAUDE.md": "technical", "docs/architecture.md": "technical" });
+    fake.extractions.push(() => [extracted({ title: "Pirates", quote: "Un jeu de pirates." })], () => [extracted({ title: "TS strict", quote: "TypeScript strict." })]);
+    await post("/api/human/projects/import", {
+      path: game,
+      slug: "pirates",
+      name: "Pirates",
+      documents: [
+        { path: "README.md", nature: "creative" },
+        { path: "CLAUDE.md", nature: "technical" },
+      ],
+    });
+    await sb.hub.bootstrap.idle();
+    expect(sb.hub.vision.list("pirates").map((i) => [i.title, i.nature])).toEqual([
+      ["Pirates", "creative"],
+      ["TS strict", "technical"],
+    ]);
   });
 });
 

@@ -41,8 +41,37 @@ export function DecisionsView({ slug }: { slug: string }) {
     }
   }
 
+  // Créatif = vos décisions ; technique = règles du code, rangées à part (l'architecte s'en chargera).
+  const creative = cards.filter((c) => c.proposal.nature !== "technical");
+  const technical = cards.filter((c) => c.proposal.nature === "technical");
+  const unsorted = cards.filter((c) => !c.proposal.nature).length;
+
+  async function redo() {
+    if (!window.confirm("Refaire le regroupement ? Les propositions en attente reviendront au tri et seront regroupées à nouveau, en séparant créatif et technique. Rien de validé ne change.")) return;
+    setError(null);
+    setFlash(null);
+    try {
+      await api.redoSynthesis(slug);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function takeNote() {
+    if (!window.confirm(`En prendre acte : les ${technical.length} règle(s) technique(s) seront enregistrées comme « l'état actuel du code ». Les assistants les respecteront et ne les changeront pas sans raison. Continuer ?`)) return;
+    try {
+      const { results } = await api.decideBatch(slug, technical.map((c) => ({ id: c.proposal.id, hash: c.hash })));
+      const ok = results.filter((r) => r.decision).length;
+      setFlash(`${ok} règle(s) technique(s) enregistrée(s).`);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function validateSelected() {
-    const list = cards.filter((c) => selected.has(c.proposal.id));
+    const list = creative.filter((c) => selected.has(c.proposal.id));
     if (!list.length) return;
     if (!window.confirm(`Valider telles quelles les ${list.length} proposition(s) cochées ? Elles deviendront la vision officielle du jeu.`)) return;
     try {
@@ -81,6 +110,11 @@ export function DecisionsView({ slug }: { slug: string }) {
           <button onClick={prepare} disabled={!pending || !!running}>
             {running ? "Regroupement en cours…" : "Préparer des propositions"}
           </button>
+          {cards.length > 0 && !running && (
+            <button className="link small" onClick={redo}>
+              Refaire le regroupement
+            </button>
+          )}
         </div>
       </section>
 
@@ -123,19 +157,29 @@ export function DecisionsView({ slug }: { slug: string }) {
       )}
       {error && <p className="error">{error}</p>}
       {flash && <p className="notice">{flash}</p>}
+      {unsorted > 0 && !running && (
+        <div className="notice">
+          Ces propositions ont été préparées <strong>avant</strong> la séparation entre décisions de créateur et règles techniques.{" "}
+          <button className="link" onClick={redo}>
+            Refaire le regroupement
+          </button>{" "}
+          pour les trier et les réécrire en langage clair (environ 30 centimes, valeur indicative).
+        </div>
+      )}
 
-      {cards.length > 0 && (
+      {creative.length > 0 && <h2 className="section-title">Vos décisions de créateur ({creative.length})</h2>}
+      {creative.length > 0 && (
         <div className="batch-bar">
           <label className="check">
             <input
               type="checkbox"
-              checked={selected.size === cards.length}
-              onChange={(e) => setSelected(e.target.checked ? new Set(cards.map((c) => c.proposal.id)) : new Set())}
+              checked={selected.size > 0 && selected.size === creative.length}
+              onChange={(e) => setSelected(e.target.checked ? new Set(creative.map((c) => c.proposal.id)) : new Set())}
             />
             Tout cocher
           </label>
           <span className="muted small grow">
-            {cards.length} proposition(s) en attente · {selected.size} cochée(s)
+            {creative.length} proposition(s) en attente · {selected.size} cochée(s)
           </span>
           <button disabled={!selected.size} onClick={validateSelected}>
             Valider les {selected.size || ""} cochée(s)
@@ -148,7 +192,7 @@ export function DecisionsView({ slug }: { slug: string }) {
       )}
 
       <div className="proposals">
-        {cards.map((c) => (
+        {creative.map((c) => (
           <Proposal
             key={c.proposal.id}
             slug={slug}
@@ -163,6 +207,38 @@ export function DecisionsView({ slug }: { slug: string }) {
           />
         ))}
       </div>
+
+      {technical.length > 0 && (
+        <details className="card technical-section">
+          <summary>
+            <strong>Règles techniques existantes ({technical.length})</strong>
+            <span className="muted small"> — comment le code est construit aujourd'hui. Pas besoin de les lire en détail.</span>
+          </summary>
+          <p className="small">
+            Elles viennent des documents écrits pour le code (par exemple CLAUDE.md). « En prendre acte » veut dire : c'est l'état actuel, les
+            assistants le respectent et ne le changent pas sans raison. Plus tard, c'est l'architecte qui s'en occupera.
+          </p>
+          <div className="row">
+            <button onClick={takeNote}>En prendre acte ({technical.length})</button>
+          </div>
+          <div className="proposals">
+            {technical.map((c) => (
+              <Proposal
+                key={c.proposal.id}
+                slug={slug}
+                card={c}
+                selected={false}
+                onToggle={() => {}}
+                onDone={(msg) => {
+                  setFlash(msg);
+                  void refresh();
+                }}
+                onError={setError}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </main>
   );
 }
@@ -235,8 +311,14 @@ function Proposal(props: {
         </div>
       )}
 
+      {details.summary && !editing && <p className="summary">{details.summary}</p>}
       {editing ? (
         <textarea rows={Math.min(14, Math.max(4, statement.split("\n").length + 1))} value={statement} onChange={(e) => setStatement(e.target.value)} />
+      ) : details.summary ? (
+        <details>
+          <summary className="small">Voir le détail (règles précises et chiffres)</summary>
+          <p className="statement">{statement}</p>
+        </details>
       ) : (
         <p className="statement">{statement}</p>
       )}

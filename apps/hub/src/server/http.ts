@@ -13,6 +13,7 @@ import { OrchestratorError } from "../orchestrator/port.ts";
 import type { FolderPicker } from "../projects/folder-picker.ts";
 import { ProjectError } from "../projects/project-registry.ts";
 import { suggestFolders } from "../projects/suggestions.ts";
+import { defaultDocNature } from "../projects/bootstrap.ts";
 import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
 
@@ -40,7 +41,10 @@ const Body = {
     slug: ProjectSlug,
     name: z.string().min(1).max(120),
     initGit: z.boolean().default(false),
-    documents: z.array(z.string()).max(50).default([]),
+    documents: z
+      .array(z.union([z.string(), z.object({ path: z.string(), nature: z.enum(["creative", "technical"]) })]))
+      .max(50)
+      .default([]),
   }),
   createProject: z.object({ slug: ProjectSlug, name: z.string().min(1).max(120) }),
   thread: z.object({ title: z.string().max(120).default("") }),
@@ -107,7 +111,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/projects", async () => hub.projects.list());
     api.get("/import/suggestions", async () => suggestFolders(options.gamesRoot, hub.projects));
     api.post("/import/browse", async () => ({ path: await options.folderPicker.pick(options.gamesRoot) }));
-    api.post("/import/analyze", async (req) => hub.projects.analyze(Body.analyze.parse(req.body).path));
+    api.post("/import/analyze", async (req) => {
+      const a = await hub.projects.analyze(Body.analyze.parse(req.body).path);
+      // Nature proposée par défaut pour chaque document (modifiable à l'écran avant import).
+      return { ...a, document_natures: Object.fromEntries(a.documents.map((d) => [d, defaultDocNature(d)])) };
+    });
     api.post("/projects/import", async (req) => {
       const body = Body.importProject.parse(req.body);
       const project = await hub.projects.register(req.human!, body);
@@ -166,6 +174,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug } = req.params as { slug: string };
       hub.projects.get(slug);
       return hub.synthesis.start(slug, Body.synthesis.parse(req.body ?? {}));
+    });
+    api.post("/projects/:slug/synthesis/redo", async (req) => {
+      const { slug } = req.params as { slug: string };
+      hub.projects.get(slug);
+      return hub.synthesis.redo(slug, { kind: "human" });
     });
     api.get("/projects/:slug/synthesis", async (req) => hub.synthesis.list((req.params as { slug: string }).slug));
     api.get("/projects/:slug/synthesis/candidates", async (req) => {

@@ -693,3 +693,20 @@ pre.code .hunk { color: var(--accent); }
 @media (max-width: 1000px) {
   .tasks-layout { grid-template-columns: minmax(0, 1fr); overflow: auto; }
 }
+
+/* Séparation créatif / technique */
+.section-title {
+  margin: 1.2rem 0 0.6rem;
+}
+.technical-section > summary {
+  cursor: pointer;
+}
+.technical-section .proposals {
+  margin-top: 0.6rem;
+}
+
+.summary {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}

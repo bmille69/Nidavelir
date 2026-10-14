@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ItemId } from "./items.ts";
+import { ItemId, Nature } from "./items.ts";
 
 export const ThreadMode = z.enum(["exploration", "decision"]);
 export type ThreadMode = z.infer<typeof ThreadMode>;
@@ -52,7 +52,11 @@ export type ExtractionResult = z.infer<typeof ExtractionResult>;
 /** Un groupe d'éléments résumé en une proposition (docs/VISION_ENGINE.md §2.2). */
 export const SynthesizedProposal = z.object({
   title: z.string().min(1).max(100),
-  /** La règle qui serait décidée, en langage simple. */
+  /** Un groupe est entièrement créatif ou entièrement technique, jamais mélangé. */
+  nature: Nature,
+  /** Une ou deux phrases sans chiffres techniques : ce que ça change pour le joueur. */
+  summary: z.string().min(1).max(400),
+  /** La règle détaillée qui serait décidée (chiffres compris). */
   statement: z.string().min(1).max(1500),
   rationale: z.string().max(800),
   based_on: z.array(ItemId).min(1).max(60),

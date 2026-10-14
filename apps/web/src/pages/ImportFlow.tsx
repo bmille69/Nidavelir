@@ -11,6 +11,7 @@ export function ImportFlow({ gamesRoot }: { gamesRoot: string }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [docs, setDocs] = useState<Set<string>>(new Set());
+  const [natures, setNatures] = useState<Record<string, "creative" | "technical">>({});
   const [initGit, setInitGit] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +31,7 @@ export function ImportFlow({ gamesRoot }: { gamesRoot: string }) {
       setName(a.suggestedName);
       setSlug(a.suggestedSlug);
       setDocs(new Set(a.documents));
+      setNatures(a.document_natures ?? {});
       setInitGit(false);
     } catch (e) {
       setError((e as Error).message);
@@ -56,7 +58,13 @@ export function ImportFlow({ gamesRoot }: { gamesRoot: string }) {
     setBusy("Import…");
     setError(null);
     try {
-      const { project } = await api.importProject({ path: analysis.root, slug, name, initGit, documents: [...docs] });
+      const { project } = await api.importProject({
+        path: analysis.root,
+        slug,
+        name,
+        initGit,
+        documents: [...docs].map((d) => ({ path: d, nature: natures[d] ?? "creative" })),
+      });
       navigate({ page: "project", slug: project.slug });
     } catch (e) {
       setError((e as Error).message);
@@ -168,15 +176,26 @@ export function ImportFlow({ gamesRoot }: { gamesRoot: string }) {
                 <>
                   <p className="muted small">
                     Le directeur lira les documents cochés et proposera des éléments <strong>à trier</strong>. Rien ne sera validé sans vous,
-                    et les documents ne seront pas modifiés.
+                    et les documents ne seront pas modifiés. Indiquez pour chacun s'il <strong>décrit le jeu</strong> (vos décisions de
+                    créateur) ou <strong>décrit le code</strong> (règles techniques, rangées à part).
                   </p>
                   <ul className="checklist">
                     {analysis.documents.map((d) => (
                       <li key={d}>
-                        <label className="check">
-                          <input type="checkbox" checked={docs.has(d)} onChange={() => toggleDoc(d)} />
-                          <code>{d}</code>
-                        </label>
+                        <div className="row">
+                          <label className="check grow">
+                            <input type="checkbox" checked={docs.has(d)} onChange={() => toggleDoc(d)} />
+                            <code>{d}</code>
+                          </label>
+                          <select
+                            value={natures[d] ?? "creative"}
+                            disabled={!docs.has(d)}
+                            onChange={(e) => setNatures((n) => ({ ...n, [d]: e.target.value as "creative" | "technical" }))}
+                          >
+                            <option value="creative">Décrit le jeu</option>
+                            <option value="technical">Décrit le code</option>
+                          </select>
+                        </div>
                       </li>
                     ))}
                   </ul>

@@ -45,11 +45,13 @@ export type CaptureInput = {
   confidence?: number;
   links?: Link[];
   hint?: "existing_decision";
+  nature?: "creative" | "technical";
 };
 
 export type ProposalInput = {
   title: string;
   statement: string;
+  nature?: "creative" | "technical";
   domain?: string[];
   source: Source;
   details: z.input<typeof ProposalDetails>;
@@ -158,6 +160,7 @@ export class VisionService {
       links: input.links ?? [],
       confidence: input.confidence,
       hint: input.hint,
+      nature: input.nature,
       created_at: now,
       updated_at: now,
     });
@@ -222,6 +225,7 @@ export class VisionService {
         ...details.supersedes.map((to) => ({ rel: "supersedes" as const, to })),
       ],
       proposal: details,
+      nature: input.nature,
       created_at: now,
       updated_at: now,
     });
@@ -280,6 +284,7 @@ export class VisionService {
         title: edits.title ?? proposal.title,
         statement: edits.statement ?? option?.statement ?? proposal.statement,
         domain: proposal.domain,
+        nature: proposal.nature,
         source: { kind: "item", ref: proposal.id },
         authored_by: proposal.authored_by,
         validated_by: validatedBy,
@@ -288,6 +293,7 @@ export class VisionService {
           ...details.supersedes.map((to) => ({ rel: "supersedes" as const, to })),
         ],
         decision: {
+          summary: edits.statement ? undefined : details.summary,
           rationale: details.rationale,
           from_proposal: proposal.id,
           chosen_option: option?.key,
@@ -324,6 +330,7 @@ export class VisionService {
             title: created.title,
             statement: created.statement,
             domain: created.domain,
+            nature: proposal.nature,
             source: { kind: "item", ref: proposal.id },
             authored_by: proposal.authored_by,
             validated_by: validatedBy,

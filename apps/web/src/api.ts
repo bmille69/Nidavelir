@@ -25,6 +25,7 @@ export type Analysis = {
   isGitRepo: boolean;
   hasStudio: boolean;
   documents: string[];
+  document_natures: Record<string, "creative" | "technical">;
   problems: string[];
 };
 export type Suggestion = { path: string; name: string; registered: string | null; problems: string[] };
@@ -86,7 +87,7 @@ export const api = {
   suggestions: () => request<Suggestion[]>("GET", "/import/suggestions"),
   browse: () => request<{ path: string | null }>("POST", "/import/browse", {}),
   analyze: (path: string) => request<Analysis>("POST", "/import/analyze", { path }),
-  importProject: (body: { path: string; slug: string; name: string; initGit: boolean; documents: string[] }) =>
+  importProject: (body: { path: string; slug: string; name: string; initGit: boolean; documents: { path: string; nature: "creative" | "technical" }[] }) =>
     request<{ project: Project; job: Job | null }>("POST", "/projects/import", body),
   createProject: (body: { slug: string; name: string }) => request<{ project: Project }>("POST", "/projects/create", body),
   items: (slug: string, view: "inbox" | "canon" | "all", thread?: string) =>
@@ -101,6 +102,7 @@ export const api = {
   candidates: (slug: string) => request<{ count: number }>("GET", `/projects/${slug}/synthesis/candidates`),
   synthesize: (slug: string, scope: { thread?: string; source?: string } = {}) =>
     request<SynthesisJob>("POST", `/projects/${slug}/synthesis`, scope),
+  redoSynthesis: (slug: string) => request<SynthesisJob>("POST", `/projects/${slug}/synthesis/redo`, {}),
   synthesisJobs: (slug: string) => request<SynthesisJob[]>("GET", `/projects/${slug}/synthesis`),
   proposals: (slug: string) => request<ProposalCard[]>("GET", `/projects/${slug}/proposals`),
   decide: (slug: string, id: string, body: { hash: string; verdict: "approved" | "rejected"; edits?: DecideEdits; note?: string }) =>

@@ -40,7 +40,9 @@ export function VisionView({ slug }: { slug: string }) {
     }
   }
 
-  const decisions = canon.filter((i) => i.type === "decision");
+  const allDecisions = canon.filter((i) => i.type === "decision");
+  const decisions = allDecisions.filter((d) => d.nature !== "technical");
+  const technical = allDecisions.filter((d) => d.nature === "technical");
 
   return (
     <main className="vision-layout">
@@ -54,7 +56,7 @@ export function VisionView({ slug }: { slug: string }) {
           </div>
         </div>
         {error && <p className="error">{error}</p>}
-        {decisions.length === 0 && <p className="muted">Aucune décision validée pour l'instant. Rendez-vous dans l'onglet « Décisions ».</p>}
+        {allDecisions.length === 0 && <p className="muted">Aucune décision validée pour l'instant. Rendez-vous dans l'onglet « Décisions ».</p>}
         <div className="decisions">
           {decisions.map((d) => (
             <article key={d.id} className={`card decision ${why?.item.id === d.id ? "focus" : ""}`}>
@@ -64,7 +66,17 @@ export function VisionView({ slug }: { slug: string }) {
                   {d.id} · validée le {formatDate(d.validated_by?.at)}
                 </span>
               </div>
-              <p className="statement">{d.statement}</p>
+              {d.decision?.summary ? (
+                <>
+                  <p className="summary">{d.decision.summary}</p>
+                  <details>
+                    <summary className="small">Voir le détail</summary>
+                    <p className="statement">{d.statement}</p>
+                  </details>
+                </>
+              ) : (
+                <p className="statement">{d.statement}</p>
+              )}
               <div className="row">
                 <button className="link small" onClick={() => showWhy(d.id)}>
                   Pourquoi ? D'où vient cette décision
@@ -76,6 +88,24 @@ export function VisionView({ slug }: { slug: string }) {
             </article>
           ))}
         </div>
+
+        {technical.length > 0 && (
+          <details className="card technical-section">
+            <summary>
+              <strong>Règles techniques ({technical.length})</strong>
+              <span className="muted small"> — l'état actuel du code, dont vous avez pris acte.</span>
+            </summary>
+            <ul className="history">
+              {technical.map((d) => (
+                <li key={d.id}>
+                  <button className="link" onClick={() => showWhy(d.id)}>
+                    {d.id} — {d.title}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
         {past.length > 0 && (
           <details className="card">

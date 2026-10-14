@@ -102,6 +102,8 @@ describe("parcours navigateur", () => {
       proposals: [
         {
           title: "Apparition des boss",
+          nature: "creative",
+          summary: "En bref : une règle simple pour le joueur.",
           statement: "Les boss n'arrivent jamais sur un minuteur : chacun surgit quand le joueur approche de son arène.",
           rationale: "Le joueur choisit le moment de l'affrontement.",
           based_on: ["M-0001", "M-0002", "M-0003"],
@@ -112,6 +114,8 @@ describe("parcours navigateur", () => {
         },
         {
           title: "Rythme des niveaux",
+          nature: "creative",
+          summary: "En bref : une règle simple pour le joueur.",
           statement: "Chaque niveau compte trois vagues, suivies d'un moment de calme avant le boss.",
           rationale: "Respiration avant le pic d'intensité.",
           based_on: ["M-0004", "I-0001"],
