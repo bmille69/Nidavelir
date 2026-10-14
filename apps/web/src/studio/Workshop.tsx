@@ -20,12 +20,17 @@ export function WorkshopPanel({ slug }: { slug: string }) {
     return () => clearInterval(t);
   }, [load]);
 
-  const active = tasks.filter((t) => ACTIVE.has(t.status)).sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
+  // En cours d'abord (le plus récent en haut), puis les chantiers prêts à lancer, dans l'ordre prévu.
+  const active = tasks
+    .filter((t) => ACTIVE.has(t.status))
+    .sort((a, b) => (a.status === "draft") !== (b.status === "draft") ? (a.status === "draft" ? 1 : -1) : a.status === "draft" ? (a.id > b.id ? 1 : -1) : b.updated_at > a.updated_at ? 1 : -1);
   const done = tasks.filter((t) => t.status === "merged").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1)).slice(0, 5);
   const action = (t: TaskRow) =>
     t.pending_escalations > 0
       ? "Une autorisation vous attend"
-      : t.status === "review"
+      : t.status === "draft"
+        ? "Prêt à lancer"
+        : t.status === "review"
         ? "À relire et fusionner"
         : t.status === "plan_review"
           ? "Plan à valider"
@@ -55,6 +60,7 @@ export function WorkshopPanel({ slug }: { slug: string }) {
                 {todo && <span className="todo-label">→ {todo}</span>}
               </a>
               {["planning", "approved", "running"].includes(t.status) && <LiveLog slug={slug} task={t.id} />}
+              {t.status === "draft" && <StartButton slug={slug} task={t.id} onStarted={load} />}
               {t.status === "review" && (
                 <div className="row review-actions">
                   <TryButton slug={slug} task={t.id} small />
@@ -117,3 +123,31 @@ function LiveLog({ slug, task }: { slug: string; task: string }) {
 }
 
 export const money = (usd: number) => `${usd.toFixed(2).replace(".", ",")} $`;
+
+function StartButton({ slug, task, onStarted }: { slug: string; task: string; onStarted: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="row review-actions">
+      <button
+        className="small"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await api.startTask(slug, task);
+            await onStarted();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "Lancement…" : "▶ Lancer ce chantier"}
+      </button>
+      {error && <span className="error small">{error}</span>}
+    </div>
+  );
+}

@@ -209,6 +209,30 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project, task)
   );
   `,
+  `
+  -- Conceptions : nouveau projet ou grosse fonctionnalité (ADR-28).
+  CREATE TABLE conceptions (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('project', 'feature')),
+    project TEXT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE conception_messages (
+    id TEXT PRIMARY KEY,
+    conception TEXT NOT NULL REFERENCES conceptions (id),
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    data_json TEXT,
+    cost_usd REAL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX conception_messages_c ON conception_messages (conception, seq);
+  `,
 ];
 
 export function openDatabase(path: string): Db {

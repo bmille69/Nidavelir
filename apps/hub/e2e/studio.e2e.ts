@@ -118,7 +118,7 @@ describe("vue Studio", () => {
     }
     // Une proposition attend votre arbitrage.
     await page.locator(".agent-card.agent-you.state-waiting").getByText("1 proposition(s) à arbitrer").waitFor();
-    expect(await page.locator(".org-links path.link-base").count()).toBe(5);
+    expect(await page.locator(".org-links path.link-base").count()).toBe(6);
     await page.screenshot({ path: join(shots, "studio-1-repos.png") });
   });
 

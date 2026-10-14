@@ -1,5 +1,6 @@
 import type { Route } from "../App.tsx";
-import type { SessionInfo } from "../api.ts";
+import { useEffect, useState } from "react";
+import { api, type Conception, type SessionInfo } from "../api.ts";
 import { useStudio } from "./context.tsx";
 import { UsageMeter } from "./UsageMeter.tsx";
 
@@ -7,6 +8,11 @@ const ORCHESTRATOR: Record<string, string> = { "direct-claude": "Claude (direct)
 
 export function Sidebar({ route, session }: { route: Route; session: SessionInfo }) {
   const snap = useStudio();
+  const [conceptions, setConceptions] = useState<Conception[]>([]);
+  useEffect(() => {
+    api.conceptions().then((cs) => setConceptions(cs.filter((c) => c.status !== "done")), () => {});
+    // L'activité du studio change à chaque tour du Concepteur : on suit son rythme.
+  }, [snap?.at, route]);
   const active = route.page === "project" ? route.slug : null;
   const working = snap?.agents.some((a) => a.id !== "you" && a.state !== "idle") ?? false;
   const forYou = snap?.agents.find((a) => a.id === "you")?.activities.length ?? 0;
@@ -25,6 +31,9 @@ export function Sidebar({ route, session }: { route: Route; session: SessionInfo
           {working && <span className="live-dot" title="Des agents travaillent" />}
           {forYou > 0 && <span className="count warn">{forYou}</span>}
         </a>
+        <a href="#/concevoir" className={route.page === "conceive" && !route.project ? "active" : ""}>
+          <span className="nav-icon">✦</span> Nouveau projet
+        </a>
         <a href="#/qualite" className={route.page === "quality" ? "active" : ""}>
           <span className="nav-icon">◔</span> Qualité
         </a>
@@ -32,6 +41,20 @@ export function Sidebar({ route, session }: { route: Route; session: SessionInfo
           <span className="nav-icon">＋</span> Importer un jeu
         </a>
       </nav>
+      {conceptions.length > 0 && (
+        <>
+          <p className="side-title">Conceptions en cours</p>
+          <nav className="side-projects">
+            {conceptions.map((c) => (
+              <a key={c.id} href={`#/c/${c.id}`} className={route.page === "conception" && route.id === c.id ? "active" : ""}>
+                <span className="proj-initial concept">✦</span>
+                <span className="proj-name">{c.title}</span>
+                {c.status === "thinking" ? <span className="live-dot" title="Le Concepteur travaille" /> : c.data.questions.length ? <span className="count warn">?</span> : null}
+              </a>
+            ))}
+          </nav>
+        </>
+      )}
       <p className="side-title">Projets</p>
       <nav className="side-projects">
         {snap?.projects.map((p) => (

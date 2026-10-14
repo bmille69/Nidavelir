@@ -11,7 +11,16 @@ export interface OrchestratorPort {
   /** Un tour de conversation du directeur. */
   reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */
-  structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta }): Promise<{
+  structured(input: {
+    systemPrompt: string;
+    prompt: string;
+    jsonSchema: object;
+    meta?: CallMeta;
+    /** Outils web en lecture seule (Concepteur, ADR-28). */
+    tools?: string[];
+    /** « concept » : modèle dédié à la conception (plus puissant, appels rares). */
+    tier?: "concept";
+  }): Promise<{
     data: unknown;
     costUsd: number | null;
   }>;

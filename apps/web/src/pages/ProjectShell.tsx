@@ -53,6 +53,9 @@ export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; v
           <span className="crumb-sep">/</span>
           <h1>{project?.name ?? slug}</h1>
           {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
+          <a className="concevoir-btn" href={`#/p/${slug}/concevoir`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
+            ✦ Concevoir
+          </a>
         </div>
         <div className="team-strip" aria-label="Agents au travail sur ce projet">
           {team.length === 0 ? (

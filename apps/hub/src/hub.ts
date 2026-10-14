@@ -18,6 +18,7 @@ import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
+import { ConceptionService } from "./conception/conception-service.ts";
 
 export type HubOptions = {
   databasePath: string;
@@ -35,6 +36,8 @@ export type HubOptions = {
   autopilot?: AutopilotOptions;
   /** Appel minimal à Claude Code pour rafraîchir vos limites d'abonnement (ADR-21). */
   usageProbe?: () => Promise<void>;
+  /** Le Concepteur peut chercher sur le web (lecture seule). Défaut : oui (choix du 14/10). */
+  conceptWeb?: boolean;
 };
 
 export type Hub = {
@@ -55,6 +58,7 @@ export type Hub = {
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
+  conceptions: ConceptionService;
   close(): void;
 };
 
@@ -131,6 +135,7 @@ export function createHub(options: HubOptions): Hub {
     autopilot,
     previews,
     quality: new QualityService({ db, clock, journal, projects, tasks }),
+    conceptions: new ConceptionService({ db, clock, journal, projects, tasks, conversations, vision, vcs, orchestrator, web: options.conceptWeb ?? true }),
     close: () => {
       if (closed) return;
       closed = true;

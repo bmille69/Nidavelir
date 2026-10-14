@@ -7,6 +7,12 @@ export const AGENTS: Record<AgentId, { name: string; role: string; tagline: stri
     tagline: "Vous décidez. Rien n'entre dans le jeu sans votre accord.",
     idle: "Rien ne vous attend. Profitez-en pour lancer une idée.",
   },
+  concepteur: {
+    name: "Le Concepteur",
+    role: "Game design · conception",
+    tagline: "Transforme une idée floue en dossier de conception et en premiers chantiers.",
+    idle: "Prêt pour un nouveau projet.",
+  },
   director: {
     name: "Le Directeur",
     role: "Chef d'équipe IA",
@@ -87,6 +93,10 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       return p.delegated
         ? { agent: "director", text: `Le directeur a décidé ${e.subject ?? ""} (sans débat)`, tone: "ok" }
         : { agent: "you", text: `Vous avez validé ${e.subject ?? "une décision"}`, tone: "ok" };
+    case "conception.started":
+      return { agent: "concepteur", text: "Nouvelle conception" };
+    case "conception.done":
+      return { agent: "concepteur", text: "Conception terminée : chantiers prêts", tone: "ok" };
     case "project.autonomy_changed":
       return { agent: "you", text: `Autonomie du directeur : ${AUTONOMY_LABEL[String(p.to)] ?? String(p.to)}` };
     case "autopilot.failed":

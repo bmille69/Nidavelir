@@ -18,6 +18,8 @@ const cli = new ClaudeCli(join(dataDir, "claude-work"));
 const orchestrator = new DirectClaudeOrchestrator(cli, {
   chat: process.env.STUDIO_MODEL_CHAT ?? "sonnet",
   structured: process.env.STUDIO_MODEL_STRUCTURED ?? "sonnet",
+  // La conception est rare et décisive : modèle le plus capable par défaut (ADR-28).
+  concept: process.env.STUDIO_MODEL_CONCEPT ?? "opus",
 });
 
 const hub = createHub({

@@ -19,6 +19,7 @@ import { TaskError } from "../executor/task-service.ts";
 import { studioSnapshot } from "../studio/activity.ts";
 import { PreviewError } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
+import { ConceptionError } from "../conception/conception-service.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -70,6 +71,7 @@ const Body = {
   note: z.object({ note: z.string().max(2000).optional() }),
   abandon: z.object({ hash: z.string().length(64), note: z.string().max(2000).optional() }),
   autonomy: z.object({ level: Autonomy }),
+  conception: z.object({ kind: z.enum(["project", "feature"]), project: z.string().optional(), idea: z.string().min(1).max(8000) }),
   rating: z.object({ rating: z.enum(["up", "down"]), note: z.string().max(500).optional() }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
@@ -332,6 +334,29 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as TaskParams;
       return hub.tasks.abandon(req.human!, slug, id);
     });
+    // ── Conception (ADR-28) ──
+    api.get("/conceptions", async () => hub.conceptions.list());
+    api.post("/conceptions", async (req) => hub.conceptions.start(req.human!, Body.conception.parse(req.body)));
+    api.get("/conceptions/:id", async (req) => {
+      const { id } = req.params as { id: string };
+      return { conception: hub.conceptions.get(id), messages: hub.conceptions.messages(id) };
+    });
+    api.post("/conceptions/:id/reply", async (req) => {
+      const { id } = req.params as { id: string };
+      return hub.conceptions.reply(req.human!, id, Body.message.parse(req.body).text);
+    });
+    api.post("/conceptions/:id/create-project", async (req) => {
+      const { id } = req.params as { id: string };
+      return hub.conceptions.createProject(req.human!, id, options.gamesRoot);
+    });
+    api.post("/conceptions/:id/add-to-project", async (req) => {
+      const { id } = req.params as { id: string };
+      return hub.conceptions.addToProject(req.human!, id);
+    });
+    api.post("/projects/:slug/tasks/:id/start", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.tasks.startDirectByHuman(req.human!, slug, id);
+    });
     // ── Qualité du workflow (ADR-27) ──
     api.get("/quality", async (req) => hub.quality.report(z.object({ project: z.string().optional() }).parse(req.query).project));
     api.post("/projects/:slug/tasks/:id/rating", async (req) => {
@@ -412,7 +437,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

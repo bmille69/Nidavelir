@@ -5,9 +5,9 @@ import { OrchestratorError, type CallMeta, type OrchestratorPort } from "./port.
 export class DirectClaudeOrchestrator implements OrchestratorPort {
   readonly name = "direct-claude";
   readonly #cli: ClaudeCli;
-  readonly #models: { chat: string; structured: string };
+  readonly #models: { chat: string; structured: string; concept?: string };
 
-  constructor(cli: ClaudeCli, models: { chat: string; structured: string }) {
+  constructor(cli: ClaudeCli, models: { chat: string; structured: string; concept?: string }) {
     this.#cli = cli;
     this.#models = models;
   }
@@ -18,14 +18,15 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
     return { text: r.text.trim(), costUsd: r.costUsd };
   }
 
-  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta }) {
+  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta; tools?: string[]; tier?: "concept" }) {
     const r = await this.#cli.call({
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
       jsonSchema: input.jsonSchema,
-      model: this.#models.structured,
-      timeoutMs: 240_000,
+      model: input.tier === "concept" ? (this.#models.concept ?? this.#models.structured) : this.#models.structured,
+      timeoutMs: input.tools?.length ? 480_000 : 240_000,
       tag: input.meta,
+      tools: input.tools,
     });
     if (r.structured == null) throw new OrchestratorError("Aucune sortie structurée reçue");
     return { data: r.structured, costUsd: r.costUsd };

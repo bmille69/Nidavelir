@@ -18,11 +18,19 @@ export type ClaudeCall = {
   /** JSON Schema de la sortie structurée, si attendue. */
   jsonSchema?: object;
   timeoutMs?: number;
+  /**
+   * Outils en lecture seule autorisés pour cet appel (ex. recherche web du Concepteur, ADR-28).
+   * Seuls ceux de WEB_TOOLS sont acceptés ; par défaut, aucun outil.
+   */
+  tools?: string[];
   /** Pour le compteur d'utilisation : projet et agent à l'origine de l'appel. */
   tag?: { project?: string | null; agent: string };
 };
 
 export type ClaudeResult = { text: string; structured: unknown; costUsd: number | null };
+
+/** Les seuls outils qu'un appel conversationnel peut recevoir : chercher et lire des pages web. */
+export const WEB_TOOLS = ["WebSearch", "WebFetch"];
 
 /** Options interdites en toutes circonstances (docs/SECURITY.md §7). */
 const FORBIDDEN_ARGS = [/^--dangerously-skip-permissions$/, /^--allow-dangerously-skip-permissions$/, /^bypassPermissions$/, /^acceptEdits$/, /^auto$/];
@@ -39,7 +47,7 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
     "--safe-mode",
     "--strict-mcp-config",
     "--tools",
-    "",
+    (call.tools ?? []).join(","),
     "--no-session-persistence",
     "--output-format",
     "stream-json",
@@ -50,6 +58,12 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
     systemPromptFile,
   ];
   if (call.jsonSchema) args.push("--json-schema", JSON.stringify(call.jsonSchema));
+  if (call.tools?.length) {
+    const bad = call.tools.filter((t) => !WEB_TOOLS.includes(t));
+    if (bad.length) throw new ClaudeCliError(`Outil non autorisé pour un appel conversationnel : ${bad.join(", ")}`);
+    // Lecture du web uniquement : aucun accès aux fichiers ni au terminal.
+    args.push("--allowedTools", call.tools.join(","), "--max-turns", "16");
+  }
   assertSafeArgs(args);
   return args;
 }

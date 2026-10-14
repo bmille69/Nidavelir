@@ -3,6 +3,7 @@ import type { AgentId, AgentState } from "../api.ts";
 
 const GLYPHS: Record<AgentId, string[]> = {
   you: ["★", "✦", "★"],
+  concepteur: ["✎", "◇", "?"],
   director: ["✦", "?", "✦"],
   archivist: ["✎", "¶", "✎"],
   developer: ["</>", "{ }", ";"],
@@ -90,6 +91,12 @@ function Bot({ agent }: { agent: AgentId }) {
             <circle cx="52" cy="59" r="2.6" className="a-dark" />
           </>
         )}
+        {agent === "concepteur" && (
+          <>
+            <ellipse cx="57" cy="27" rx="18" ry="6" className="a-dark" />
+            <circle cx="57" cy="20.5" r="2.2" className="a-dark" />
+          </>
+        )}
         {agent === "archivist" && (
           <g className="a-glasses">
             <circle cx="52.75" cy="42" r="6.2" />
@@ -127,6 +134,12 @@ function Bot({ agent }: { agent: AgentId }) {
           <rect x="12" y="80" width="20" height="10" rx="1.5" className="a-paper" />
           <rect x="14" y="76" width="20" height="10" rx="1.5" className="a-paper" />
           <rect x="13" y="72" width="20" height="10" rx="1.5" className="a-paper flying" />
+        </g>
+      )}
+      {agent === "concepteur" && (
+        <g className="blueprint">
+          <rect x="84" y="74" width="24" height="16" rx="1.5" className="a-blueprint" />
+          <path d="M88 86 L96 78 L104 86" className="a-blueprint-line" />
         </g>
       )}
       {agent === "qa" && (

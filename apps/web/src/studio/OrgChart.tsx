@@ -6,13 +6,14 @@ import { useNow } from "./context.tsx";
 
 /** Qui rend compte à qui : vous, le directeur, puis l'équipe ; le gardien surveille le développeur. */
 const EDGES: [AgentId, AgentId][] = [
+  ["you", "concepteur"],
   ["you", "director"],
   ["director", "archivist"],
   ["director", "developer"],
   ["director", "qa"],
   ["developer", "guardian"],
 ];
-const ROWS: AgentId[][] = [["you"], ["director"], ["archivist", "developer", "qa"], ["guardian"]];
+const ROWS: AgentId[][] = [["you"], ["concepteur", "director"], ["archivist", "developer", "qa"], ["guardian"]];
 
 type Path = { d: string; state: AgentState; key: string };
 
@@ -132,7 +133,7 @@ function AgentCard(props: {
           {shown.map((a, k) => (
             <li key={k}>
               <a href={a.href}>
-                {props.projectNames && <span className="proj-tag">{props.projectNames.get(a.project) ?? a.project}</span>}
+                {props.projectNames && <span className="proj-tag">{props.projectNames.get(a.project) ?? (a.project || "Nouveau projet")}</span>}
                 <span className="act-text">{a.text}</span>
                 {(a.detail || a.since) && (
                   <span className="act-detail">

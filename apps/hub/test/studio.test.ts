@@ -23,6 +23,7 @@ describe("vue Studio", () => {
     const idle = studioSnapshot(sb.hub);
     expect(idle.agents.map((a) => [a.id, a.state])).toEqual([
       ["you", "idle"],
+      ["concepteur", "idle"],
       ["director", "idle"],
       ["archivist", "idle"],
       ["developer", "idle"],

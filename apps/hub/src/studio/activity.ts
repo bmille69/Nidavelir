@@ -2,7 +2,7 @@ import type { HubEvent } from "@studio/contracts";
 import type { Hub } from "../hub.ts";
 import type { UsageSnapshot } from "../usage/usage-service.ts";
 
-export type AgentId = "you" | "director" | "archivist" | "developer" | "qa" | "guardian";
+export type AgentId = "you" | "concepteur" | "director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
 export type Activity = { project: string; text: string; detail?: string; href: string; since?: string };
 export type AgentSnapshot = { id: AgentId; state: AgentState; activities: Activity[] };
@@ -23,7 +23,7 @@ const RUN_TEXT = { plan: "Prépare un plan", execute: "Travaille", verify: "Vér
  * Lecture seule : ne déclenche rien, ne modifie rien.
  */
 export function studioSnapshot(hub: Hub): StudioSnapshot {
-  const acts: Record<AgentId, Activity[]> = { you: [], director: [], archivist: [], developer: [], qa: [], guardian: [] };
+  const acts: Record<AgentId, Activity[]> = { you: [], concepteur: [], director: [], archivist: [], developer: [], qa: [], guardian: [] };
   const waiting: Partial<Record<AgentId, boolean>> = {};
   const projects = hub.projects.list();
   const names = new Map(projects.map((p) => [p.slug, p.name]));
@@ -34,6 +34,13 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
     counts.set(project, (counts.get(project) ?? 0) + n);
   };
 
+  for (const c of hub.conceptions.activity()) {
+    acts.concepteur.push({ project: c.project ?? "", text: `Conçoit « ${c.title} »`, href: `#/c/${c.id}`, since: c.since });
+    if (c.project) busy.add(c.project);
+  }
+  for (const c of hub.conceptions.list().filter((x) => x.status === "open" && x.data.questions.length)) {
+    acts.you.push({ project: c.project ?? "", text: `Le Concepteur attend vos réponses : ${c.title}`, href: `#/c/${c.id}` });
+  }
   const conv = hub.conversations.activity();
   for (const r of conv.replying) {
     acts.director.push({ project: r.project, text: `Vous répond dans « ${r.title} »`, href: `#/p/${r.project}/t/${r.thread}`, since: r.since });

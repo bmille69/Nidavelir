@@ -402,6 +402,14 @@ export class TaskService {
     return this.#execute(project, id);
   }
 
+  /** « ▶ Lancer » un chantier en attente (préparé par le Concepteur), en atelier. */
+  async startDirectByHuman(session: HumanSession, project: string, id: string): Promise<Task> {
+    assertHumanSession(session);
+    const level = this.#projects.get(project).autonomy;
+    if (level !== "workshop") return this.startPlanning(project, id);
+    return this.startDirect(project, id, level);
+  }
+
   async #execute(project: string, id: string): Promise<Task> {
     const task = this.get(project, id);
     if (task.status !== "approved" || !task.plan) throw new TaskError("Le plan doit être validé avant l'exécution");

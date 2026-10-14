@@ -6,17 +6,23 @@ import { StudioProvider } from "./studio/context.tsx";
 import { Sidebar } from "./studio/Sidebar.tsx";
 import { StudioHome } from "./studio/StudioHome.tsx";
 import { QualityView } from "./studio/Quality.tsx";
+import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
 
 export type Route =
   | { page: "dashboard" }
   | { page: "import" }
   | { page: "quality" }
+  | { page: "conceive"; project?: string }
+  | { page: "conception"; id: string }
   | { page: "project"; slug: string; thread?: string; task?: string; view?: "discussion" | "decisions" | "vision" | "tasks" };
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "import") return { page: "import" };
   if (parts[0] === "qualite") return { page: "quality" };
+  if (parts[0] === "concevoir") return { page: "conceive" };
+  if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
+  if (parts[0] === "p" && parts[1] && parts[2] === "concevoir") return { page: "conceive", project: parts[1] };
   if (parts[0] === "p" && parts[1]) {
     if (parts[2] === "decisions" || parts[2] === "vision") return { page: "project", slug: parts[1], view: parts[2] };
     if (parts[2] === "tasks") return { page: "project", slug: parts[1], view: "tasks", task: parts[3] };
@@ -28,6 +34,8 @@ function parse(hash: string): Route {
 export function href(route: Route): string {
   if (route.page === "import") return "#/import";
   if (route.page === "quality") return "#/qualite";
+  if (route.page === "conceive") return route.project ? `#/p/${encodeURIComponent(route.project)}/concevoir` : "#/concevoir";
+  if (route.page === "conception") return `#/c/${route.id}`;
   if (route.page === "project") {
     const base = `#/p/${encodeURIComponent(route.slug)}`;
     if (route.view === "decisions" || route.view === "vision") return `${base}/${route.view}`;
@@ -85,6 +93,8 @@ export function App() {
           {route.page === "dashboard" && <StudioHome />}
           {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
           {route.page === "quality" && <QualityView />}
+          {route.page === "conceive" && <ConceptionStart project={route.project} />}
+          {route.page === "conception" && <ConceptionView key={route.id} id={route.id} />}
           {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} />}
         </div>
       </div>

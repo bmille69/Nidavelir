@@ -90,7 +90,7 @@ export type SynthesisJob = {
 };
 export type Lineage = { item: ItemFrontmatter; ancestors: ItemFrontmatter[]; decidedBy: ItemFrontmatter[]; supersededBy: ItemFrontmatter | null; hash: string };
 export type DecideEdits = { title?: string; statement?: string; chosen_option?: string; exclude?: string[] };
-export type AgentId = "you" | "director" | "archivist" | "developer" | "qa" | "guardian";
+export type AgentId = "you" | "concepteur" | "director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
 export type Activity = { project: string; text: string; detail?: string; href: string; since?: string };
 export type HubEvent = { seq: number; at: string; project: string | null; actor: { kind: string; role?: string }; type: string; subject: string | null; payload: Record<string, unknown> };
@@ -101,6 +101,29 @@ export type StudioSnapshot = {
   projects: { slug: string; name: string; engine: Project["engine"]; autonomy: Autonomy; delegated: number; busy: boolean; waiting: number; decisions: number; proposals: number; tasks: number }[];
   events: HubEvent[];
 };
+export type ConceptQuestion = { question: string; why: string; options: { label: string; detail: string }[]; recommended: string };
+export type ConceptTurn = {
+  reply: string;
+  questions: ConceptQuestion[];
+  title: string;
+  engine: string;
+  dossier: string;
+  chantiers: { title: string; goal: string }[];
+  ready: boolean;
+  claude_md: string;
+  sources: { title: string; url: string }[];
+};
+export type Conception = {
+  id: string;
+  kind: "project" | "feature";
+  project: string | null;
+  title: string;
+  status: "thinking" | "open" | "done";
+  data: Omit<ConceptTurn, "reply"> & { error?: string };
+  created_at: string;
+  updated_at: string;
+};
+export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
 export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
 export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string };
 
@@ -182,6 +205,13 @@ export const api = {
   merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
   requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
   abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  conceptions: () => request<Conception[]>("GET", "/conceptions"),
+  startConception: (body: { kind: "project" | "feature"; project?: string; idea: string }) => request<Conception>("POST", "/conceptions", body),
+  conception: (id: string) => request<{ conception: Conception; messages: ConceptionMessage[] }>("GET", `/conceptions/${id}`),
+  replyConception: (id: string, text: string) => request<Conception>("POST", `/conceptions/${id}/reply`, { text }),
+  createFromConception: (id: string) => request<{ project: Project; tasks: string[] }>("POST", `/conceptions/${id}/create-project`, {}),
+  addConceptionToProject: (id: string) => request<{ tasks: string[] }>("POST", `/conceptions/${id}/add-to-project`, {}),
+  startTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/start`, {}),
   quality: (project?: string) => request<QualityReport>("GET", `/quality${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   rateTask: (slug: string, id: string, rating: "up" | "down", note?: string) => request<Rating>("POST", `/projects/${slug}/tasks/${id}/rating`, { rating, note }),
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),

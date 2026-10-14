@@ -200,6 +200,7 @@
 .proj-tag { align-self: flex-start; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--agent); }
 .agent-acts .more { font-size: 0.75rem; color: var(--muted); padding-left: 0.6rem; }
 .agent-you { --agent: var(--c-you); }
+.agent-concepteur { --agent: var(--c-concepteur); }
 .agent-director { --agent: var(--c-director); }
 .agent-archivist { --agent: var(--c-archivist); }
 .agent-developer { --agent: var(--c-developer); }
@@ -535,6 +536,53 @@
 .pct-bar { display: inline-flex; align-items: center; gap: 0.5rem; }
 .pct-track { width: 80px; height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .pct-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+
+/* Concepteur */
+.a-blueprint { fill: #1e3a5f; stroke: #7dd3fc; stroke-width: 1; }
+.a-blueprint-line { fill: none; stroke: #7dd3fc; stroke-width: 1.2; }
+.state-working .blueprint { animation: guard 2.4s ease-in-out infinite; }
+.proj-initial.concept { --c1: #fb923c; --c2: #f472b6; color: #1b0d05; }
+.concevoir-btn { margin-left: 0.4rem; padding: 0.3rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; color: var(--c-concepteur); border: 1px solid color-mix(in srgb, var(--c-concepteur) 45%, transparent); background: color-mix(in srgb, var(--c-concepteur) 10%, transparent); }
+.concevoir-btn:hover { background: color-mix(in srgb, var(--c-concepteur) 18%, transparent); }
+.concept-hero { display: flex; align-items: center; gap: 1.25rem; }
+.concept-hero .eyebrow { color: var(--c-concepteur); }
+.idea { font-size: 1rem; line-height: 1.6; }
+.conception-start .chips { margin-top: 0.75rem; }
+.start-row { margin-top: 1rem; align-items: center; }
+.conception { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 0.9fr); }
+.concept-chat { display: flex; flex-direction: column; min-height: 0; overflow: auto; padding: 1.25rem 1.5rem; gap: 0.9rem; }
+.concept-head { display: flex; align-items: center; gap: 0.9rem; }
+.concept-head .eyebrow { color: var(--c-concepteur); margin: 0; }
+.concept-head h1 { font-size: 1.4rem; }
+.concept-messages { display: flex; flex-direction: column; gap: 0.75rem; }
+.msg.thinking { border-style: dashed; }
+.answers { display: flex; flex-direction: column; gap: 0.7rem; padding: 0.9rem; border-radius: 14px; background: linear-gradient(160deg, color-mix(in srgb, var(--c-concepteur) 8%, transparent), transparent 50%), var(--surface); border: 1px solid color-mix(in srgb, var(--c-concepteur) 35%, transparent); }
+.answer-card { display: flex; flex-direction: column; gap: 0.35rem; }
+.answer-q { margin: 0; font-weight: 600; }
+.answer-card .muted { margin: 0; }
+.answer-options { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.answer-opt { display: flex; flex-direction: column; align-items: flex-start; text-align: left; max-width: 280px; padding: 0.45rem 0.7rem; font-weight: 600; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); box-shadow: none; }
+.answer-opt small { font-weight: 400; font-size: 0.74rem; color: var(--muted); }
+.answer-opt:hover:not(:disabled) { border-color: var(--c-concepteur); box-shadow: none; transform: none; }
+.answer-opt.rec { border-color: color-mix(in srgb, var(--gold) 50%, transparent); }
+.answer-opt.on { border-color: var(--c-concepteur); background: color-mix(in srgb, var(--c-concepteur) 16%, transparent); }
+.answer-opt .star { color: var(--gold); font-size: 0.74rem; }
+.concept-doc { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--bg-2); }
+.concept-doc-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.ready { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.6rem; border-radius: 999px; background: var(--surface-3); color: var(--muted); }
+.ready.on { background: var(--ok-bg); color: var(--ok); }
+.concept-doc-body { flex: 1; overflow: auto; padding: 1rem 1.25rem; }
+.md h2 { font-size: 1.3rem; margin: 0 0 0.6rem; }
+.md h3 { font-size: 1rem; margin: 1.1rem 0 0.35rem; color: var(--c-concepteur); }
+.md h4 { font-size: 0.92rem; margin: 0.8rem 0 0.3rem; }
+.md p { margin: 0.3rem 0; line-height: 1.6; }
+.md ul, .md ol { margin: 0.3rem 0; padding-left: 1.2rem; line-height: 1.55; }
+.concept-chantiers { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.concept-chantiers .text { white-space: pre-wrap; margin-top: 0.3rem; }
+.concept-sources { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; word-break: break-all; }
+.concept-finish { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.9rem 1rem; border-top: 1px solid var(--border); }
+.concept-finish button { align-self: flex-start; }
+@media (max-width: 1000px) { .conception { grid-template-columns: minmax(0, 1fr); overflow: auto; } .concept-doc { border-left: none; border-top: 1px solid var(--border); } }
 
 @media (max-width: 1100px) {
   .studio-columns { grid-template-columns: minmax(0, 1fr); }
