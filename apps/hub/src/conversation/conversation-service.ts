@@ -54,6 +54,8 @@ export class ConversationService {
   readonly #replying = new Map<string, { project: string; thread: string; title: string; since: string }>();
   readonly #extracting = new Map<string, { project: string; since: string }>();
   readonly #pendingImplement = new Map<string, ImplementRequest>();
+  /** Compétences ajoutées aux consignes du directeur (ADR-29). */
+  skills: { promptBlock(agent: "director", project: string): string } | null = null;
   /**
    * Pilote automatique (ADR-20) : prévenu après chaque échange, une fois les idées notées.
    * Absent = comportement « je valide tout », sans extraction des réponses du directeur.
@@ -172,9 +174,9 @@ export class ConversationService {
         .slice(-60),
     });
     const { text: raw, costUsd } = await this.#orchestrator.reply({
-      systemPrompt: directorSystemPrompt(code ? `${pack}
-
-${renderCodeContext(code)}` : pack, p.autonomy),
+      systemPrompt: [directorSystemPrompt(code ? `${pack}\n\n${renderCodeContext(code)}` : pack, p.autonomy), this.skills?.promptBlock("director", project) ?? ""]
+        .filter(Boolean)
+        .join("\n\n"),
       prompt: directorTurnPrompt(history, body),
       meta: { project, agent: "director" },
     });

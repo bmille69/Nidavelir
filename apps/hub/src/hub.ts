@@ -19,6 +19,7 @@ import { UsageService } from "./usage/usage-service.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
+import { SkillService } from "./skills/skill-service.ts";
 
 export type HubOptions = {
   databasePath: string;
@@ -59,6 +60,7 @@ export type Hub = {
   previews: PreviewService;
   quality: QualityService;
   conceptions: ConceptionService;
+  skills: SkillService;
   close(): void;
 };
 
@@ -103,6 +105,11 @@ export function createHub(options: HubOptions): Hub {
     },
   });
   const usage = new UsageService(db, clock, options.usageProbe);
+  // Compétences (ADR-29) : données aux agents, et leçons apprises de vos avis et corrections.
+  const skills = new SkillService({ db, clock, journal, projects, orchestrator });
+  skills.attach(tasks);
+  tasks.skills = skills;
+  conversations.skills = skills;
   const previews = new PreviewService({ workDir: options.dataDir ?? dirname(options.databasePath) });
   tasks.usage = usage;
   let autopilot: Autopilot | null = null;
@@ -116,6 +123,18 @@ export function createHub(options: HubOptions): Hub {
     tasks.onRunFinished = (task, kind) => pilot.onRunFinished(task, kind);
     autopilot = pilot;
   }
+  const statusHook = tasks.onStatus;
+  tasks.onStatus = (task) => {
+    statusHook?.(task);
+    skills.onTaskStatus(task);
+  };
+  const quality = new QualityService({ db, clock, journal, projects, tasks });
+  quality.onRated = (project, task, r) => {
+    // Un 👍 sans un mot n'apprend rien ; un 👎 ou un commentaire, si.
+    if (r.rating === "down" || r.note) skills.learn(project, task, `Avis du directeur créatif : ${r.rating === "up" ? "👍 réussi" : "👎 pas ce qu'il voulait"}${r.note ? ` — « ${r.note} »` : ""}`);
+  };
+  const conceptions = new ConceptionService({ db, clock, journal, projects, tasks, conversations, vision, vcs, orchestrator, web: options.conceptWeb ?? true });
+  conceptions.skills = skills;
   let closed = false;
   return {
     db,
@@ -134,8 +153,9 @@ export function createHub(options: HubOptions): Hub {
     usage,
     autopilot,
     previews,
-    quality: new QualityService({ db, clock, journal, projects, tasks }),
-    conceptions: new ConceptionService({ db, clock, journal, projects, tasks, conversations, vision, vcs, orchestrator, web: options.conceptWeb ?? true }),
+    quality,
+    conceptions,
+    skills,
     close: () => {
       if (closed) return;
       closed = true;

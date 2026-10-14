@@ -37,6 +37,9 @@ export function Sidebar({ route, session }: { route: Route; session: SessionInfo
         <a href="#/qualite" className={route.page === "quality" ? "active" : ""}>
           <span className="nav-icon">◔</span> Qualité
         </a>
+        <a href="#/competences" className={route.page === "skills" ? "active" : ""}>
+          <span className="nav-icon">❖</span> Compétences
+        </a>
         <a href="#/import" className={route.page === "import" ? "active" : ""}>
           <span className="nav-icon">＋</span> Importer un jeu
         </a>

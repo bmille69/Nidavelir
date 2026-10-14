@@ -21,6 +21,8 @@ export type ExecRequest = {
   jsonSchema: object;
   tools: string[];
   maxTurns: number;
+  /** Plugin portant les compétences du studio pour ce run (ADR-29), chargé par --plugin-dir. */
+  pluginDir?: string;
   /** Pour les exécuteurs en processus (tests). */
   bridge: AgentBridge;
   /** Pour Claude Code : URL de base des routes /api/agent/runs/:id et jeton du run. */

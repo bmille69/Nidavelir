@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createHub, type Hub } from "../src/hub.ts";
 import { buildServer } from "../src/server/http.ts";
 import { FakeOrchestrator } from "../test/fake-orchestrator.ts";
@@ -59,6 +59,13 @@ beforeAll(async () => {
     if (r.status() >= 500) pageErrors.push(`${r.status()} ${r.url()} ${await r.text().catch(() => "")}`);
   });
   await page.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
+});
+
+afterEach(async (ctx) => {
+  if (ctx.task.result?.state === "fail" && page) {
+    if (pageErrors.length) console.error(`Erreurs du navigateur :\n${pageErrors.join("\n")}`);
+    await page.screenshot({ path: join(shots, `ECHEC-atelier-${ctx.task.name.slice(0, 25).replace(/[^\w]+/g, "_")}.png`) });
+  }
 });
 
 afterAll(async () => {
@@ -130,6 +137,19 @@ describe("atelier", () => {
     await page.locator(".kpi", { hasText: "Votre avis" }).getByText(/1 👍/).waitFor();
     await page.locator(".qtable", { hasText: "Balles lumineuses du fusil auto" }).waitFor();
     await page.screenshot({ path: join(shots, "qualite.png") });
+    expect(pageErrors).toEqual([]);
+  });
+
+  it("compétences : leçons du projet et bibliothèque à activer agent par agent", async () => {
+    await page.locator(".side-nav a", { hasText: "Compétences" }).click();
+    await page.getByRole("heading", { name: "Compétences" }).waitFor();
+    await page.locator(".skill h3", { hasText: "Leçons — Destiny Survivor" }).waitFor();
+    const feel = page.locator(".skill", { hasText: "game-feel" });
+    await feel.getByRole("checkbox", { name: /Activer game-feel/ }).check();
+    await feel.locator(".agent-chip", { hasText: "Testeur" }).click();
+    await expect.poll(() => hub.skills.list().find((s) => s.name === "game-feel")).toMatchObject({ enabled: true, agents: ["director", "concepteur", "developer", "qa"] });
+    await feel.getByRole("button", { name: /Voir le contenu/ }).click();
+    await page.screenshot({ path: join(shots, "competences.png") });
     expect(pageErrors).toEqual([]);
   });
 });

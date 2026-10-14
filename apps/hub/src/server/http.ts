@@ -20,6 +20,7 @@ import { studioSnapshot } from "../studio/activity.ts";
 import { PreviewError } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
+import { SkillError } from "../skills/skill-service.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -72,6 +73,14 @@ const Body = {
   abandon: z.object({ hash: z.string().length(64), note: z.string().max(2000).optional() }),
   autonomy: z.object({ level: Autonomy }),
   conception: z.object({ kind: z.enum(["project", "feature"]), project: z.string().optional(), idea: z.string().min(1).max(8000) }),
+  skill: z.object({
+    id: z.string().optional(),
+    name: z.string().min(1).max(60),
+    description: z.string().max(400),
+    body: z.string().max(12000),
+    agents: z.array(z.enum(["director", "concepteur", "developer", "qa"])).max(4),
+    enabled: z.boolean(),
+  }),
   rating: z.object({ rating: z.enum(["up", "down"]), note: z.string().max(500).optional() }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
@@ -334,6 +343,17 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as TaskParams;
       return hub.tasks.abandon(req.human!, slug, id);
     });
+    // ── Compétences (ADR-29) ──
+    api.get("/skills", async (req) => {
+      const { project } = z.object({ project: z.string().optional() }).parse(req.query);
+      if (project) hub.skills.lessons(project);
+      return hub.skills.list(project);
+    });
+    api.post("/skills", async (req) => hub.skills.save(req.human!, Body.skill.parse(req.body)));
+    api.post("/skills/:id/delete", async (req) => {
+      hub.skills.remove(req.human!, (req.params as { id: string }).id);
+      return { deleted: true };
+    });
     // ── Conception (ADR-28) ──
     api.get("/conceptions", async () => hub.conceptions.list());
     api.post("/conceptions", async (req) => hub.conceptions.start(req.human!, Body.conception.parse(req.body)));
@@ -437,7 +457,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

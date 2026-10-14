@@ -65,6 +65,8 @@ export class QualityService {
   readonly #journal: Journal;
   readonly #projects: ProjectRegistry;
   readonly #tasks: TaskService;
+  /** Prévenu de chaque avis (la mémoire des leçons en apprend, ADR-29). */
+  onRated: ((project: string, task: string, rating: Rating) => void) | null = null;
 
   constructor(deps: { db: Db; clock: Clock; journal: Journal; projects: ProjectRegistry; tasks: TaskService }) {
     this.#db = deps.db;
@@ -86,6 +88,7 @@ export class QualityService {
       )
       .run(project, task, r.rating, r.note, r.at);
     this.#journal.append({ project, actor: { kind: "human" }, type: "task.rated", subject: task, payload: { rating, note: r.note } });
+    this.onRated?.(project, task, r);
     return r;
   }
 

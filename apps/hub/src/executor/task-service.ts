@@ -1,3 +1,4 @@
+import type { SkillService } from "../skills/skill-service.ts";
 import type { UsageService } from "../usage/usage-service.ts";
 import {
   ExecutionReportOutput,
@@ -99,6 +100,8 @@ export class TaskService {
   onStatus: ((task: Task) => void) | null = null;
   /** Prévenu quand un run est terminé et enregistré (son résultat est alors lisible). */
   onRunFinished: ((task: Task, kind: RunMode) => void) | null = null;
+  /** Bibliothèque de compétences (ADR-29). */
+  skills: SkillService | null = null;
   /** Compteur d'utilisation (jetons et limites rapportés par Claude Code). */
   usage: UsageService | null = null;
   readonly #finished = new Map<string, RunEvent[]>();
@@ -670,15 +673,24 @@ export class TaskService {
       let cost: number | null = null;
       let outcome: RunOutcome | null = null;
       try {
+        const runDir = join(this.#opts.dataDir, "runs", id);
+        // Compétences du studio (ADR-29) : un plugin propre au run, seules ces skills sont permises.
+        const plugin = this.skills?.pluginFor(kind === "verify" ? "qa" : "developer", task.project, runDir) ?? null;
+        if (plugin) this.#event(run, "info", `Compétences disponibles : ${plugin.names.map((n) => n.split(":")[1]).join(", ")}`);
         const result = await this.#executor.run({
           kind,
           runId: id,
           cwd: task.worktree!,
-          runDir: join(this.#opts.dataDir, "runs", id),
-          systemPrompt: spec.systemPrompt,
+          runDir,
+          systemPrompt: plugin
+            ? `${spec.systemPrompt}
+
+Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. Consulte celles qui concernent ta tâche avant de commencer, en particulier les leçons du projet si elles existent.`
+            : spec.systemPrompt,
           prompt: spec.prompt,
           jsonSchema: spec.jsonSchema,
-          tools: TOOLS_BY_MODE[kind],
+          tools: plugin ? [...TOOLS_BY_MODE[kind], "Skill"] : TOOLS_BY_MODE[kind],
+          pluginDir: plugin?.dir,
           maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: 30 }[kind],
           bridge,
           bridgeUrl: `${this.#opts.agentBaseUrl()}/${id}`,

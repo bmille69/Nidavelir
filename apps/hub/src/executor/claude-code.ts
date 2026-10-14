@@ -9,7 +9,7 @@ import { ExecutorError, type ExecRequest, type ExecResult, type ExecutorPort } f
 const BRIDGE = fileURLToPath(new URL("./bridge/", import.meta.url));
 
 /** Arguments d'un run Claude Code contrôlé par le hub (ADR-04, ADR-15). Exporté pour les tests. */
-export function buildExecArgs(req: Pick<ExecRequest, "tools" | "maxTurns" | "jsonSchema">, files: { settings: string; mcp: string; system: string }, model: string): string[] {
+export function buildExecArgs(req: Pick<ExecRequest, "tools" | "maxTurns" | "jsonSchema" | "pluginDir">, files: { settings: string; mcp: string; system: string }, model: string): string[] {
   const args = [
     "-p",
     "--permission-mode",
@@ -37,6 +37,7 @@ export function buildExecArgs(req: Pick<ExecRequest, "tools" | "maxTurns" | "jso
     "--model",
     model,
   ];
+  if (req.pluginDir) args.push("--plugin-dir", req.pluginDir);
   assertSafeArgs(args);
   if (args.includes("Bash(*)") || req.tools.some((t) => /\(\*\)|\*\*/.test(t))) throw new ExecutorError("Motif d'outil trop large");
   return args;

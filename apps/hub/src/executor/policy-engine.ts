@@ -12,6 +12,9 @@ export type PolicyInput = {
   plan?: Pick<PlanOutput, "files_to_create" | "files_to_modify" | "files_to_delete" | "commands">;
 };
 
+/** Nom du plugin qui porte les compétences fournies par le hub à un run. */
+export const STUDIO_PLUGIN = "studio-skills";
+
 /** Outils intégrés que l'agent peut recevoir (vérifié : ADR-15). */
 export const TOOLS_BY_MODE: Record<RunMode, string[]> = {
   plan: ["Read", "Grep", "Glob", "Bash"],
@@ -66,6 +69,10 @@ export class PolicyEngine {
   }
 
   evaluate(tool: string, input: Record<string, unknown>): Decision {
+    // Compétences (ADR-29) : seulement celles que le hub a fournies, jamais les skills intégrées de Claude Code.
+    if (tool === "Skill") {
+      return String(input.skill ?? "").startsWith(`${STUDIO_PLUGIN}:`) ? allow("compétence du studio") : deny("seules les compétences du studio sont permises");
+    }
     // Outil interne de Claude Code pour rendre la réponse au format --json-schema : aucun effet (constaté le 14/10/2026).
     if (tool === "StructuredOutput") return allow("rendu du résultat final");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);

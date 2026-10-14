@@ -233,6 +233,21 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX conception_messages_c ON conception_messages (conception, seq);
   `,
+  `
+  -- Compétences des agents (ADR-29).
+  CREATE TABLE skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    body TEXT NOT NULL,
+    agents_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    project TEXT,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX skills_name ON skills (name);
+  `,
 ];
 
 export function openDatabase(path: string): Db {

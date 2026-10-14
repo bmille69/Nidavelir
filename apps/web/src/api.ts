@@ -124,6 +124,18 @@ export type Conception = {
   updated_at: string;
 };
 export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
+export type SkillAgent = "director" | "concepteur" | "developer" | "qa";
+export type Skill = {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  agents: SkillAgent[];
+  enabled: boolean;
+  source: "starter" | "user" | "lessons";
+  project: string | null;
+  updated_at: string;
+};
 export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
 export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string };
 
@@ -205,6 +217,9 @@ export const api = {
   merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
   requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
   abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  skills: (project?: string) => request<Skill[]>("GET", `/skills${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  saveSkill: (s: { id?: string; name: string; description: string; body: string; agents: SkillAgent[]; enabled: boolean }) => request<Skill>("POST", "/skills", s),
+  deleteSkill: (id: string) => request<{ deleted: boolean }>("POST", `/skills/${id}/delete`, {}),
   conceptions: () => request<Conception[]>("GET", "/conceptions"),
   startConception: (body: { kind: "project" | "feature"; project?: string; idea: string }) => request<Conception>("POST", "/conceptions", body),
   conception: (id: string) => request<{ conception: Conception; messages: ConceptionMessage[] }>("GET", `/conceptions/${id}`),

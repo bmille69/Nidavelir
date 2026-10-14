@@ -56,6 +56,8 @@ export class ConceptionService {
   readonly #orchestrator: OrchestratorPort;
   readonly #web: boolean;
   readonly #background = new Set<Promise<void>>();
+  /** Compétences ajoutées aux consignes du Concepteur (ADR-29). */
+  skills: { promptBlock(agent: "concepteur", project: string | null): string } | null = null;
 
   constructor(deps: {
     db: Db;
@@ -219,7 +221,7 @@ export class ConceptionService {
         "Réponds au dernier message du directeur créatif, mets le dossier à jour, puis pose les questions les plus utiles (ou aucune).",
       ].join("\n\n");
       const { data, costUsd } = await this.#orchestrator.structured({
-        systemPrompt: conceptSystemPrompt(c.kind, context),
+        systemPrompt: [conceptSystemPrompt(c.kind, context), this.skills?.promptBlock("concepteur", c.project) ?? ""].filter(Boolean).join("\n\n"),
         prompt,
         jsonSchema: CONCEPT_SCHEMA,
         meta: { project: c.project, agent: "concepteur" },

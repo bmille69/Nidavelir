@@ -288,6 +288,24 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
   - 6 chantiers centrés sur le plus gros risque, le plaisir du combat.
   - Estimation : environ 27 chantiers, de 15 à 35 $.
 
+### ADR-29 : compétences des agents et mémoire des leçons
+**Statut** : Retenue (14/10/2026, « vas-y » du directeur créatif).
+- Jusqu'ici, les agents ne voyaient aucune skill, et c'était voulu : mode verrouillé, réglages ignorés. Le hub fournit désormais lui-même des **compétences choisies**, agent par agent, depuis la page « Compétences ».
+- **Comment elles arrivent aux agents** :
+  - **Développeur et testeur** : de vraies skills, dans un plugin écrit dans le dossier du run (`studio-skills`) et chargé avec `--plugin-dir`, plus l'outil `Skill`. Le gardien n'autorise **que** `studio-skills:*` : les skills intégrées de Claude Code (« schedule », « run »…) sont refusées.
+  - **Directeur et Concepteur**, qui n'ont pas d'outils : la compétence est ajoutée à leurs consignes, dans la limite de 9 000 caractères.
+- **Leçons du projet** :
+  - une compétence propre à chaque projet, lue par le directeur, le Concepteur et le développeur ;
+  - elle s'apprend de **vos** signaux : un 👎, un mot laissé avec un avis, une correction demandée, un abandon. Un 👍 sans mot n'apprend rien. Les « échecs » du testeur ne sont pas retenus, car ils peuvent venir de l'environnement ;
+  - elle est réécrite par le modèle en 25 leçons concrètes au plus (« À faire », « À éviter », « Goûts du directeur créatif ») ;
+  - elle reste modifiable à la main.
+- **Compétences de départ**, livrées désactivées : `game-feel` (directeur, Concepteur, développeur), `testeur-joueur` (testeur), `perf-web-3d` (développeur). Vous pouvez aussi ajouter les vôtres ou coller un SKILL.md. Une compétence ajoutée arrive désactivée, avec un avertissement : un texte écrit par d'autres doit être relu. Le hub ne télécharge jamais rien seul.
+- **Essai réel sur une copie de Destiny Survivor** :
+  - leçon « toute nouvelle section du README commence par 🎮 » ;
+  - le directeur l'a reprise dans sa consigne, et la section créée s'appelle « 🎮 Remerciements » ;
+  - 52 s, environ 0,19 $ ;
+  - le chargement d'une skill par `--plugin-dir` et son utilisation via l'outil `Skill` ont été vérifiés séparément.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)
