@@ -1,7 +1,40 @@
 import type { Escalation, ItemFrontmatter, Message, Plan, Run, Task, Thread, VerificationOutput, ExecutionReportOutput } from "@studio/contracts";
 
 export type { ItemFrontmatter as Item, Message, Thread, Task, Plan, Escalation };
-export type TaskRow = Task & { pending_escalations: number; cost_usd: number };
+export type Rating = { rating: "up" | "down"; note: string | null; at: string };
+export type TaskRow = Task & { pending_escalations: number; cost_usd: number; rating: Rating | null };
+export type QualityStats = {
+  launched: number;
+  merged: number;
+  first_try: number;
+  abandoned: number;
+  in_progress: number;
+  success_rate: number | null;
+  first_try_rate: number | null;
+  cost_usd: number;
+  cost_per_merged: number | null;
+  median_agent_minutes: number | null;
+  interventions_per_chantier: number | null;
+  qa_fail_rate: number | null;
+  up: number;
+  down: number;
+};
+export type ChantierRow = {
+  project: string;
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  merged_at: string | null;
+  first_try: boolean;
+  corrections: number;
+  interventions: number;
+  cost_usd: number;
+  agent_minutes: number;
+  qa: "pass" | "pass_with_notes" | "fail" | null;
+  rating: Rating | null;
+};
+export type QualityReport = { overall: QualityStats; weeks: (QualityStats & { week: string; label: string })[]; chantiers: ChantierRow[] };
 export type RunInfo = Run & { result: { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string } | null };
 export type TaskDetail = { task: Task; plan: Plan | null; runs: RunInfo[]; escalations: Escalation[]; decisions: ItemFrontmatter[]; executor: string };
 export type RunEvent = { seq: number; at: string; type: "text" | "tool" | "result" | "info" | "error"; text: string };
@@ -149,6 +182,8 @@ export const api = {
   merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
   requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
   abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  quality: (project?: string) => request<QualityReport>("GET", `/quality${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  rateTask: (slug: string, id: string, rating: "up" | "down", note?: string) => request<Rating>("POST", `/projects/${slug}/tasks/${id}/rating`, { rating, note }),
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   startPreview: (slug: string, task?: string) => request<Preview>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
   stopPreview: (slug: string) => request<{ stopped: boolean }>("POST", `/projects/${slug}/preview/stop`, {}),

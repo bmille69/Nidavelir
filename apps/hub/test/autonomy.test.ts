@@ -362,3 +362,44 @@ describe("historique compact du directeur", () => {
     expect(out.length).toBeLessThan(2000);
   });
 });
+
+describe("tableau Qualité", () => {
+  it("réussite, premier coup, coût par fusionné, interventions et votre avis", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    const brief = (title: string) => `Proposition.\n[[CHANTIER: ${title}]]\nObjectif : ${title}.\n[[/CHANTIER]]`;
+    for (const name of ["a.ts", "b.ts"]) {
+      exec.scripts.execute.push(async (t) => {
+        await t.write(`src/${name}`, "export {};\n");
+        return REPORT;
+      });
+      exec.scripts.verify.push(() => VERIFIED);
+    }
+    fake.replies.push(brief("Premier"), brief("Second"));
+    const t = hub.conversations.createThread(P, "x");
+    await hub.conversations.send(P, t.id, "go");
+    await hub.conversations.idle();
+    await hub.tasks.idle();
+    const first = hub.tasks.list(P).find((x) => x.title === "Premier")!;
+    expect(() => hub.quality.rate(sb.human(), P, first.id, "up")).not.toThrow();
+    await hub.tasks.merge(sb.human(), P, first.id, (await hub.tasks.review(P, first.id)).head!);
+    hub.quality.rate(sb.human(), P, first.id, "up", "exactement ça");
+
+    await hub.conversations.send(P, t.id, "go");
+    await hub.conversations.idle();
+    await hub.tasks.idle();
+    const second = hub.tasks.list(P).find((x) => x.title === "Second")!;
+    await hub.tasks.abandon(sb.human(), P, second.id);
+
+    const draft = hub.tasks.create(sb.human(), P, { decisions: ["D-0001"] });
+    expect(() => hub.quality.rate(sb.human(), P, draft.id, "down")).toThrow(/terminé/);
+
+    const { overall, weeks, chantiers } = hub.quality.report(P);
+    expect(overall).toMatchObject({ launched: 3, merged: 1, abandoned: 1, first_try: 1, success_rate: 0.5, first_try_rate: 0.5, up: 1, down: 0 });
+    // Le chantier abandonné compte aussi : 2 chantiers × 2 étapes × 0,01 $ pour 1 fusionné.
+    expect(overall.cost_per_merged).toBeCloseTo(0.04, 5);
+    expect(overall.interventions_per_chantier).toBe(0);
+    expect(weeks).toHaveLength(1);
+    expect(chantiers.find((c) => c.id === first.id)).toMatchObject({ first_try: true, rating: { rating: "up", note: "exactement ça" }, qa: "pass" });
+  });
+});

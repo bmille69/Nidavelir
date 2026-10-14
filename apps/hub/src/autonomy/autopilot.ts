@@ -118,7 +118,7 @@ export class Autopilot {
     if (!task.origin) return;
     const text: Record<string, string> = {
       failed: `✗ Chantier ${task.id} « ${task.title} » : le travail a échoué. Le détail est dans « Chantiers » ; dites-moi si on relance autrement.`,
-      merged: `Chantier ${task.id} fusionné dans votre jeu.`,
+      merged: `Chantier ${task.id} fusionné dans votre jeu. Un mot pour la suite : 👍 ou 👎 à droite, ça aide à juger le studio (onglet « Qualité »).`,
     };
     if (text[task.status]) this.conversations?.notify(task.project, task.origin.thread, text[task.status]!);
   }

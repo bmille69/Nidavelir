@@ -25,6 +25,9 @@ export function Sidebar({ route, session }: { route: Route; session: SessionInfo
           {working && <span className="live-dot" title="Des agents travaillent" />}
           {forYou > 0 && <span className="count warn">{forYou}</span>}
         </a>
+        <a href="#/qualite" className={route.page === "quality" ? "active" : ""}>
+          <span className="nav-icon">◔</span> Qualité
+        </a>
         <a href="#/import" className={route.page === "import" ? "active" : ""}>
           <span className="nav-icon">＋</span> Importer un jeu
         </a>

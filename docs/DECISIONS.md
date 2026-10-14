@@ -250,6 +250,25 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
   - compte rendu avec « Pour essayer » ;
   - défaut relevé puis corrigé : le testeur ne pouvait lancer aucun test sans plan.
 
+### ADR-27 : juger le workflow, votre avis et le tableau « Qualité »
+**Statut** : Retenue (14/10/2026). Question du directeur créatif : « comment juger si mon workflow est optimal, et comment l'améliorer ? »
+- Un bon workflow se juge sur la durée, avec cinq critères :
+  - **réussite** : fusionnés parmi les chantiers terminés, et part fusionnée du premier coup ;
+  - **qualité** : avis du testeur ;
+  - **vitesse** : travail des agents, en médiane ;
+  - **coût par chantier fusionné** : il inclut les abandons, c'est le vrai prix d'un résultat ;
+  - **votre effort** : plans validés à la main, autorisations et corrections, par chantier.
+- **Votre avis** (👍 / 👎 et un mot facultatif) : sur la page du chantier dès qu'il est à relire, et dans « Fusionnés récemment ». Le message de fusion vous y invite. C'est le signal le plus important : un chantier peut être réussi techniquement sans être ce que vous vouliez. Stocké dans `task_ratings`, journalisé (`task.rated`).
+- **Page « Qualité »**, depuis la barre latérale :
+  - six chiffres clés, chacun expliqué au survol ;
+  - un tableau semaine par semaine ;
+  - le détail par chantier ;
+  - un filtre par projet ;
+  - une alerte si le testeur trouve des problèmes dans plus de 30 % des chantiers.
+- **Étape suivante** prévue, après 10 à 20 vrais chantiers :
+  - un banc d'essai de chantiers de référence, rejoués sur une copie à chaque changement important (modèle, consignes), pour comparer avec des chiffres ;
+  - une mémoire des leçons du projet, utilisée par le directeur.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

@@ -512,6 +512,30 @@
 .live-log li:last-child::after { content: "▍"; margin-left: 2px; animation: blinkdot 1s steps(2) infinite; color: var(--ok); }
 .review-actions { margin-top: 0.4rem; align-items: center; }
 
+/* Votre avis et tableau Qualité */
+.rating { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.rating-q { font-size: 0.86rem; font-weight: 600; }
+.rate { padding: 0.15rem 0.5rem; font-size: 1rem; line-height: 1.2; background: var(--surface-2); border: 1px solid var(--border-strong); box-shadow: none; filter: grayscale(0.8); opacity: 0.75; }
+.rate:hover:not(:disabled) { box-shadow: none; filter: none; opacity: 1; }
+.rate.on { filter: none; opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
+.rating.compact .rate { padding: 0 0.35rem; font-size: 0.85rem; }
+.rating-note { display: inline-flex; gap: 0.35rem; align-items: center; }
+.rating-note input { width: 240px; padding: 0.3rem 0.5rem; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 0.75rem; }
+.kpi { cursor: help; gap: 0.1rem; }
+.kpi b { font-size: 1.7rem; }
+.kpi > span:first-child { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.kpi-hint { font-size: 0.72rem; color: var(--muted); }
+.table-wrap { overflow-x: auto; margin-top: 0.75rem; }
+.qtable { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.qtable th { text-align: left; font-size: 0.72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-strong); white-space: nowrap; }
+.qtable td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.qtable td:first-child { white-space: normal; }
+.qtable tr:hover td { background: rgba(255, 255, 255, 0.02); }
+.pct-bar { display: inline-flex; align-items: center; gap: 0.5rem; }
+.pct-track { width: 80px; height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.pct-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+
 @media (max-width: 1100px) {
   .studio-columns { grid-template-columns: minmax(0, 1fr); }
 }

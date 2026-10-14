@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type RunEvent, type TaskRow } from "../api.ts";
 import { TryButton } from "./Preview.tsx";
+import { RatingBox } from "./Rating.tsx";
 import { StatusBadge } from "../pages/TasksView.tsx";
 import { ago } from "./agents.ts";
 import { useNow } from "./context.tsx";
@@ -72,7 +73,10 @@ export function WorkshopPanel({ slug }: { slug: string }) {
           <ul>
             {done.map((t) => (
               <li key={t.id}>
-                <a href={`#/p/${slug}/tasks/${t.id}`}>{t.title}</a>
+                <span className="row">
+                  <a className="grow" href={`#/p/${slug}/tasks/${t.id}`}>{t.title}</a>
+                  <RatingBox slug={slug} task={t.id} initial={t.rating} compact />
+                </span>
                 <span className="muted small">{ago(t.updated_at, now)}</span>
               </li>
             ))}

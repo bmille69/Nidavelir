@@ -118,4 +118,18 @@ describe("atelier", () => {
     expect(fake.calls.filter((c) => c.kind === "structured")).toHaveLength(0);
     expect(pageErrors).toEqual([]);
   });
+
+  it("votre avis après fusion, puis le tableau Qualité", async () => {
+    await page.locator(".rating").getByRole("button", { name: "Avis positif" }).click();
+    await page.locator(".rating .rate.up.on").waitFor();
+    expect(hub.quality.rating(P, "T-0001")).toMatchObject({ rating: "up" });
+
+    await page.locator(".side-nav a", { hasText: "Qualité" }).click();
+    await page.getByRole("heading", { name: "Qualité" }).waitFor();
+    await page.locator(".kpi", { hasText: "Réussite" }).getByText("100 %").waitFor();
+    await page.locator(".kpi", { hasText: "Votre avis" }).getByText(/1 👍/).waitFor();
+    await page.locator(".qtable", { hasText: "Balles lumineuses du fusil auto" }).waitFor();
+    await page.screenshot({ path: join(shots, "qualite.png") });
+    expect(pageErrors).toEqual([]);
+  });
 });

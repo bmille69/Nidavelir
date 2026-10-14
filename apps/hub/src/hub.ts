@@ -17,6 +17,7 @@ import { VisionService } from "./vision/vision-service.ts";
 import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { PreviewService } from "./executor/preview.ts";
+import { QualityService } from "./quality/quality-service.ts";
 
 export type HubOptions = {
   databasePath: string;
@@ -53,6 +54,7 @@ export type Hub = {
   usage: UsageService;
   autopilot: Autopilot | null;
   previews: PreviewService;
+  quality: QualityService;
   close(): void;
 };
 
@@ -128,6 +130,7 @@ export function createHub(options: HubOptions): Hub {
     usage,
     autopilot,
     previews,
+    quality: new QualityService({ db, clock, journal, projects, tasks }),
     close: () => {
       if (closed) return;
       closed = true;

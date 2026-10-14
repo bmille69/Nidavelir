@@ -198,6 +198,17 @@ const MIGRATIONS: string[] = [
   -- Mode atelier par défaut (ADR-24) : plus de fiches ni de décisions à gérer.
   UPDATE projects SET autonomy = 'workshop' WHERE autonomy IN ('balanced', 'autonomous');
   `,
+  `
+  -- Votre avis sur chaque chantier (ADR-27).
+  CREATE TABLE task_ratings (
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+    note TEXT,
+    at TEXT NOT NULL,
+    PRIMARY KEY (project, task)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

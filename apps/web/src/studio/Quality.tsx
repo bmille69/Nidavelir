@@ -1,0 +1,178 @@
+import { useEffect, useState } from "react";
+import { api, type QualityReport, type QualityStats } from "../api.ts";
+import { formatDate } from "../pages/labels.ts";
+import { StatusBadge } from "../pages/TasksView.tsx";
+import { useStudio } from "./context.tsx";
+import { money } from "./Workshop.tsx";
+
+const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)} %`);
+const num = (v: number | null, digits = 1) => (v === null ? "—" : v.toFixed(digits).replace(".", ","));
+
+/**
+ * Tableau « Qualité » (ADR-27) : est-ce que le workflow marche ? Réussite, coût par résultat,
+ * temps, vos interventions et votre avis, au global et semaine par semaine.
+ */
+export function QualityView() {
+  const snap = useStudio();
+  const [project, setProject] = useState<string | undefined>(undefined);
+  const [report, setReport] = useState<QualityReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setReport(null);
+    api.quality(project).then(setReport, (e: Error) => setError(e.message));
+  }, [project]);
+
+  const names = new Map((snap?.projects ?? []).map((p) => [p.slug, p.name]));
+  const o = report?.overall;
+
+  return (
+    <main className="studio-page quality">
+      <header className="studio-hero">
+        <div>
+          <h1>Qualité</h1>
+          <p className="hero-sub">
+            Est-ce que le studio travaille bien ? Ces chiffres se lisent sur la durée : après 10 à 20 chantiers, ils montrent où le travail coince.
+          </p>
+        </div>
+        {(snap?.projects.length ?? 0) > 1 && (
+          <div className="chips">
+            <button className={`chip ${!project ? "on" : ""}`} onClick={() => setProject(undefined)}>
+              Tous les projets
+            </button>
+            {snap!.projects.map((p) => (
+              <button key={p.slug} className={`chip ${project === p.slug ? "on" : ""}`} onClick={() => setProject(p.slug)}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
+
+      {error && <p className="error">{error}</p>}
+      {!report && !error && <p className="muted">Calcul…</p>}
+      {o && o.launched === 0 && <p className="muted">Aucun chantier pour l'instant : dites « go » au directeur dans une discussion.</p>}
+
+      {o && o.launched > 0 && (
+        <>
+          <section className="kpis">
+            <Kpi label="Réussite" value={pct(o.success_rate)} hint={`${o.merged} fusionné(s) sur ${o.merged + o.abandoned} terminé(s)`} explain="Chantiers fusionnés parmi ceux qui sont terminés (fusionnés ou abandonnés)." />
+            <Kpi label="Du premier coup" value={pct(o.first_try_rate)} hint={`${o.first_try} sans correction`} explain="Fusionnés sans que vous ayez eu à demander de correction." />
+            <Kpi label="Coût par chantier fusionné" value={o.cost_per_merged === null ? "—" : money(o.cost_per_merged)} hint={`${money(o.cost_usd)} au total`} explain="Équivalent API, pris sur votre abonnement. Compte aussi les chantiers abandonnés : c'est le vrai prix d'un résultat." />
+            <Kpi label="Travail des agents" value={o.median_agent_minutes === null ? "—" : `${num(o.median_agent_minutes)} min`} hint="médiane par chantier" explain="Temps cumulé de travail du développeur et du testeur, pour un chantier typique." />
+            <Kpi label="Vos interventions" value={num(o.interventions_per_chantier)} hint="par chantier" explain="Plans validés à la main, autorisations et corrections demandées. Plus c'est bas, plus le studio est autonome." />
+            <Kpi label="Votre avis" value={`${o.up} 👍  ${o.down} 👎`} hint={o.up + o.down < o.merged ? `${o.merged - o.up - o.down} fusionné(s) sans avis` : "merci !"} explain="Le signal le plus important : un chantier peut être réussi techniquement sans être ce que vous vouliez." />
+          </section>
+          {o.qa_fail_rate !== null && o.qa_fail_rate > 0.3 && (
+            <p className="notice small">
+              ⚠ Le testeur trouve des problèmes dans {pct(o.qa_fail_rate)} des chantiers. Si ces problèmes ne sont pas réels, ses consignes sont à revoir ; s'ils le sont, les consignes du directeur
+              manquent de précision.
+            </p>
+          )}
+
+          <section className="panel-card">
+            <h2>Semaine par semaine</h2>
+            <div className="table-wrap">
+              <table className="qtable">
+                <thead>
+                  <tr>
+                    <th>Semaine</th>
+                    <th>Lancés</th>
+                    <th>Fusionnés</th>
+                    <th>Réussite</th>
+                    <th>Du premier coup</th>
+                    <th>Coût / fusionné</th>
+                    <th>Interventions</th>
+                    <th>Avis</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.weeks.map((w) => (
+                    <tr key={w.week}>
+                      <td>{w.label}</td>
+                      <td>{w.launched}</td>
+                      <td>{w.merged}</td>
+                      <td>
+                        <Bar value={w.success_rate} />
+                      </td>
+                      <td>{pct(w.first_try_rate)}</td>
+                      <td>{w.cost_per_merged === null ? "—" : money(w.cost_per_merged)}</td>
+                      <td>{num(w.interventions_per_chantier)}</td>
+                      <td>
+                        {w.up} 👍 {w.down} 👎
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel-card">
+            <h2>Chantiers</h2>
+            <div className="table-wrap">
+              <table className="qtable">
+                <thead>
+                  <tr>
+                    <th>Chantier</th>
+                    <th>État</th>
+                    <th>Corrections</th>
+                    <th>Testeur</th>
+                    <th>Agents</th>
+                    <th>Coût</th>
+                    <th>Avis</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.chantiers.map((c) => (
+                    <tr key={`${c.project}/${c.id}`}>
+                      <td>
+                        <a href={`#/p/${c.project}/tasks/${c.id}`}>{c.title}</a>
+                        <span className="muted small">
+                          {" "}
+                          · {!project && names.get(c.project) ? `${names.get(c.project)} · ` : ""}
+                          {formatDate(c.created_at)}
+                        </span>
+                      </td>
+                      <td>
+                        <StatusBadge status={c.status} />
+                      </td>
+                      <td>{c.corrections}</td>
+                      <td>{c.qa === "fail" ? "⚠ problèmes" : c.qa ? "✓" : "—"}</td>
+                      <td>{c.agent_minutes ? `${num(c.agent_minutes)} min` : "—"}</td>
+                      <td>{c.cost_usd ? money(c.cost_usd) : "—"}</td>
+                      <td title={c.rating?.note ?? undefined}>{c.rating ? (c.rating.rating === "up" ? "👍" : "👎") + (c.rating.note ? " …" : "") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+    </main>
+  );
+}
+
+function Kpi({ label, value, hint, explain }: { label: string; value: string; hint: string; explain: string }) {
+  return (
+    <div className="stat kpi" title={explain}>
+      <span>{label}</span>
+      <b>{value}</b>
+      <span className="kpi-hint">{hint}</span>
+    </div>
+  );
+}
+
+/** Barre de pourcentage (une seule série : la couleur ne porte aucune autre information). */
+function Bar({ value }: { value: QualityStats["success_rate"] }) {
+  if (value === null) return <span className="muted">—</span>;
+  return (
+    <span className="pct-bar" title={pct(value)}>
+      <span className="pct-track">
+        <span className="pct-fill" style={{ width: `${Math.round(value * 100)}%` }} />
+      </span>
+      <span>{pct(value)}</span>
+    </span>
+  );
+}

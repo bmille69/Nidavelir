@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { navigate } from "../App.tsx";
-import { api, type Escalation, type Review, type RunEvent, type TaskDetail, type TaskRow } from "../api.ts";
+import { api, type Rating, type Escalation, type Review, type RunEvent, type TaskDetail, type TaskRow } from "../api.ts";
 import { formatDate } from "./labels.ts";
 import { TryButton } from "../studio/Preview.tsx";
+import { RatingBox } from "../studio/Rating.tsx";
 import { money } from "../studio/Workshop.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
@@ -86,11 +87,13 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [rating, setRating] = useState<Rating | null>(null);
   const eventsRun = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const d = await api.task(slug, id);
     setDetail(d);
+    api.tasks(slug).then((rows) => setRating(rows.find((r) => r.id === id)?.rating ?? null), () => {});
     const last = d.runs.at(-1);
     if (last) {
       if (eventsRun.current !== last.id) {
@@ -231,7 +234,7 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
         </div>
       )}
 
-      {review && <ReviewCard review={review} busy={busy} slug={slug} id={id} act={act} note={note} setNote={setNote} />}
+      {review && <ReviewCard review={review} busy={busy} slug={slug} id={id} act={act} note={note} setNote={setNote} rating={rating} />}
 
       {plan && task.status !== "plan_review" && (
         <details className="card">
@@ -386,6 +389,7 @@ function ReviewCard(props: {
   act: (fn: () => Promise<unknown>, confirmText?: string) => Promise<void>;
   note: string;
   setNote: (s: string) => void;
+  rating: Rating | null;
 }) {
   const { review, busy, slug, id, act } = props;
   const v = review.verification;
@@ -481,6 +485,7 @@ function ReviewCard(props: {
         </>
       )}
       {review.task.status === "merged" && <p className="notice">✓ Fusionné dans votre jeu. Annulable avec un « git revert » du commit de fusion.</p>}
+      {["review", "merged"].includes(review.task.status) && <RatingBox slug={slug} task={id} initial={props.rating} />}
     </div>
   );
 }
