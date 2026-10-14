@@ -248,6 +248,27 @@ const MIGRATIONS: string[] = [
   );
   CREATE UNIQUE INDEX skills_name ON skills (name);
   `,
+  `
+  -- Téléphone : appareils connectés, réglages, abonnements aux notifications (ADR-30).
+  CREATE TABLE devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    cookie_hash TEXT NOT NULL,
+    csrf TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen TEXT NOT NULL
+  );
+  CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    device TEXT,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

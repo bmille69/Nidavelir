@@ -40,6 +40,9 @@ export function Sidebar({ route, session }: { route: Route; session: SessionInfo
         <a href="#/competences" className={route.page === "skills" ? "active" : ""}>
           <span className="nav-icon">❖</span> Compétences
         </a>
+        <a href="#/telephone" className={route.page === "phone" ? "active" : ""}>
+          <span className="nav-icon">▯</span> Téléphone
+        </a>
         <a href="#/import" className={route.page === "import" ? "active" : ""}>
           <span className="nav-icon">＋</span> Importer un jeu
         </a>

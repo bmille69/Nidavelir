@@ -610,15 +610,97 @@
 @media (max-width: 1100px) {
   .studio-columns { grid-template-columns: minmax(0, 1fr); }
 }
+/* Barre du haut et menu : seulement sur petit écran */
+.mobile-bar, .menu-backdrop { display: none; }
+
+/* Page Téléphone */
+.phone .step h2 { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.step-n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 0.85rem; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+.phone .panel-card { display: flex; flex-direction: column; gap: 0.6rem; }
+.phone .panel-card button { align-self: flex-start; }
+.remote-url { font-size: 1.05rem; }
+.remote-url a { font-weight: 700; word-break: break-all; }
+.pair-code { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+.pair-code b { font: 800 2.6rem/1 ui-monospace, "Cascadia Code", Consolas, monospace; letter-spacing: 0.08em; color: var(--text); }
+.device-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.device-list li { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.device-list strong { display: flex; gap: 0.5rem; align-items: center; }
+.device-list .grow { display: flex; flex-direction: column; }
+
+/* ═══ Téléphone (≤ 860 px) : menu repliable, un panneau à la fois, cibles tactiles ═══ */
 @media (max-width: 860px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0.5rem 0.75rem; border-right: none; border-bottom: 1px solid var(--border); }
-  .brand { padding: 0.25rem; }
-  .brand small, .side-title, .side-foot { display: none; }
-  .side-nav, .side-projects { flex-direction: row; flex-wrap: wrap; }
-  .studio-page { padding: 1rem; }
-  .agent-card, .agent-card.agent-you { width: 100%; max-width: 360px; }
+  .mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: calc(0.5rem + env(safe-area-inset-top)) 0.9rem 0.5rem;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+  .menu-btn { width: 42px; height: 42px; padding: 0; font-size: 1.3rem; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); box-shadow: none; }
+  .mobile-brand { font-weight: 700; color: var(--text); }
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 320px);
+    z-index: 50;
+    transform: translateX(-102%);
+    transition: transform 0.25s ease;
+    box-shadow: 20px 0 60px rgba(0, 0, 0, 0.5);
+    padding-top: calc(1rem + env(safe-area-inset-top));
+  }
+  .menu-open .sidebar { transform: none; }
+  .menu-open .menu-backdrop { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.55); }
+  .main { min-height: 0; }
+  .studio-page { padding: 1rem 0.9rem 2rem; }
+  .studio-hero h1 { font-size: 1.8rem; }
+  .agent-card, .agent-card.agent-you { width: 100%; max-width: 420px; }
   .org { gap: 1.5rem; }
+  .org-row { gap: 1rem; }
+
+  /* Projet : en-tête compact, onglets défilants, panneaux empilés */
+  .project-head { padding: 0.7rem 0.9rem 0.4rem; }
+  .project-title { flex-wrap: wrap; row-gap: 0.4rem; }
+  .project-title h1 { font-size: 1.15rem; }
+  .crumb, .crumb-sep, .team-strip { display: none; }
+  .autonomy { margin-left: 0; }
+  .autonomy-menu { position: fixed; left: 0.75rem; right: 0.75rem; top: 7rem; width: auto; }
+  .project-tabs { overflow-x: auto; padding: 0 0.9rem; scrollbar-width: none; }
+  .project-tabs a { white-space: nowrap; }
+  .project { display: flex; flex-direction: column; overflow: auto; }
+  .project > * { flex: none; }
+  .threads { order: 0; padding: 0.6rem 0.9rem; gap: 0.5rem; border-bottom: 1px solid var(--border); }
+  .threads h2 { display: none; }
+  .threads ul { display: flex; gap: 0.4rem; overflow-x: auto; scrollbar-width: none; }
+  .threads li a { white-space: nowrap; border: 1px solid var(--border-strong); border-radius: 999px; padding: 0.35rem 0.8rem; }
+  .conversation { order: 1; min-height: 65vh; }
+  .panel { order: 2; }
+  .mode-bar { padding: 0.5rem 0.9rem; }
+  .messages { padding: 0.75rem; }
+  .msg { max-width: 100%; }
+  .composer { position: sticky; bottom: 0; background: var(--bg); padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom)); }
+  .composer textarea { font-size: 16px; }
+  .tasks-layout .threads { max-height: 35vh; overflow: auto; }
+  .page, .page.wide { padding: 1rem 0.9rem; }
+  .vision-layout .why { width: auto; }
+  .conception { display: flex; flex-direction: column; overflow: auto; }
+  .concept-chat { padding: 1rem 0.9rem; overflow: visible; }
+  .concept-doc { border-left: none; border-top: 1px solid var(--border); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi b { font-size: 1.35rem; }
+  .hero-stats { width: 100%; }
+  .hero-stats .stat { flex: 1 1 40%; min-width: 0; }
+
+  /* Cibles tactiles : 40 px au moins ; 16 px dans les champs (pas de zoom automatique sur iPhone) */
+  button, .side-nav a, .side-projects a, .project-tabs a { min-height: 40px; }
+  button.link, .rate { min-height: 0; }
+  input, textarea, select { font-size: 16px; }
+  .answer-opt { max-width: 100%; flex: 1 1 100%; }
+  .pair-code b { font-size: 2.2rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

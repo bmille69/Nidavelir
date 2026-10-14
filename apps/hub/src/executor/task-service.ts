@@ -98,6 +98,8 @@ export class TaskService {
   onPlanSubmitted: ((project: string, id: string) => Promise<unknown> | void) | null = null;
   /** Prévenu à chaque changement de statut d'une tâche (nouvelles dans la discussion d'origine, ADR-24). */
   onStatus: ((task: Task) => void) | null = null;
+  /** Prévenu quand une action attend votre autorisation (notification, ADR-30). */
+  onEscalation: ((esc: Escalation) => void) | null = null;
   /** Prévenu quand un run est terminé et enregistré (son résultat est alors lisible). */
   onRunFinished: ((task: Task, kind: RunMode) => void) | null = null;
   /** Bibliothèque de compétences (ADR-29). */
@@ -612,6 +614,11 @@ export class TaskService {
       .prepare("INSERT INTO escalations (id, project, task, run, status, data_json, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
       .run(esc.id, esc.project, esc.task, esc.run, JSON.stringify(esc), esc.created_at);
     this.#log(run.project, "escalation.requested", run.task, { escalation: esc.id, summary: esc.summary, reason: d.reason });
+    try {
+      this.onEscalation?.(esc);
+    } catch {
+      /* un observateur ne doit jamais casser le chantier */
+    }
     this.#event(run, "info", `En attente de votre accord : ${esc.summary}`);
 
     const allowed = await new Promise<boolean>((resolve) => {

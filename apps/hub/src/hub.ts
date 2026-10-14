@@ -20,6 +20,9 @@ import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { SkillService } from "./skills/skill-service.ts";
+import { NotificationService } from "./remote/notifications.ts";
+import { RemoteService, type Runner } from "./remote/tailscale.ts";
+import type { DeviceRecord, DeviceStore } from "./auth/human-session.ts";
 
 export type HubOptions = {
   databasePath: string;
@@ -37,6 +40,11 @@ export type HubOptions = {
   autopilot?: AutopilotOptions;
   /** Appel minimal à Claude Code pour rafraîchir vos limites d'abonnement (ADR-21). */
   usageProbe?: () => Promise<void>;
+  /** Port du hub : nécessaire pour publier le hub dans Tailscale (ADR-30). */
+  remotePort?: number;
+  tailscaleRunner?: Runner;
+  pushSubject?: string;
+  pushFetch?: typeof fetch;
   /** Le Concepteur peut chercher sur le web (lecture seule). Défaut : oui (choix du 14/10). */
   conceptWeb?: boolean;
 };
@@ -61,6 +69,11 @@ export type Hub = {
   quality: QualityService;
   conceptions: ConceptionService;
   skills: SkillService;
+  notifications: NotificationService;
+  /** Accès depuis le téléphone via Tailscale (null si le port du hub n'est pas connu, ex. tests). */
+  remote: RemoteService | null;
+  /** Noms d'hôte acceptés en plus de ceux du serveur (ex. « mon-pc.tail1234.ts.net »). */
+  extraHosts: Set<string>;
   close(): void;
 };
 
@@ -81,6 +94,7 @@ export function createHub(options: HubOptions): Hub {
   const vcs = options.vcs ?? new GitCli();
   const orchestrator = options.orchestrator ?? noOrchestrator;
   const db = openDatabase(options.databasePath);
+  const sessions = new HumanSessions(deviceStore(db));
   const journal = new Journal(db, clock);
   const approvals = new ApprovalService(db, journal, clock);
   const projects = new ProjectRegistry(db, journal, clock, vcs, options.registry);
@@ -135,12 +149,37 @@ export function createHub(options: HubOptions): Hub {
   };
   const conceptions = new ConceptionService({ db, clock, journal, projects, tasks, conversations, vision, vcs, orchestrator, web: options.conceptWeb ?? true });
   conceptions.skills = skills;
+  // Téléphone (ADR-30) : notifications sur vos appareils pour ce qui vous attend.
+  const notifications = new NotificationService({ db, clock, journal, subject: options.pushSubject, fetch: options.pushFetch });
+  const projectName = (slug: string) => {
+    try {
+      return projects.get(slug).name;
+    } catch {
+      return slug;
+    }
+  };
+  const notifyHook = tasks.onStatus;
+  tasks.onStatus = (task) => {
+    notifyHook?.(task);
+    const at = `#/p/${task.project}/tasks/${task.id}`;
+    if (task.status === "review") notifications.notify({ title: "✓ Chantier prêt à essayer", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
+    if (task.status === "failed") notifications.notify({ title: "✗ Chantier en échec", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
+    if (task.status === "plan_review") notifications.notify({ title: "Un plan attend votre accord", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
+  };
+  tasks.onEscalation = (esc) =>
+    notifications.notify({ title: "✋ Autorisation demandée", body: `${esc.summary} — ${projectName(esc.project)}`, url: `#/p/${esc.project}/tasks/${esc.task}`, tag: esc.id });
+  conceptions.onTurn = (c) => {
+    if (c.data.questions.length) notifications.notify({ title: "✦ Le Concepteur attend vos réponses", body: c.title, url: `#/c/${c.id}`, tag: c.id });
+    else if (c.data.ready) notifications.notify({ title: "✦ Conception prête", body: `${c.title} : vous pouvez créer le projet`, url: `#/c/${c.id}`, tag: c.id });
+  };
+  const extraHosts = new Set<string>();
+  const remote = options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
   let closed = false;
   return {
     db,
     clock,
     journal,
-    sessions: new HumanSessions(),
+    sessions,
     approvals,
     projects,
     vision,
@@ -156,6 +195,9 @@ export function createHub(options: HubOptions): Hub {
     quality,
     conceptions,
     skills,
+    notifications,
+    remote,
+    extraHosts,
     close: () => {
       if (closed) return;
       closed = true;
@@ -163,5 +205,18 @@ export function createHub(options: HubOptions): Hub {
       autopilot?.close();
       db.close();
     },
+  };
+}
+
+/** Les téléphones connectés survivent à un redémarrage du hub (ADR-30). */
+function deviceStore(db: Db): DeviceStore {
+  return {
+    load: () => db.prepare("SELECT * FROM devices").all() as DeviceRecord[],
+    save: (r) =>
+      db
+        .prepare("INSERT INTO devices (id, name, cookie_hash, csrf, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(r.id, r.name, r.cookie_hash, r.csrf, r.created_at, r.last_seen),
+    remove: (id) => db.prepare("DELETE FROM devices WHERE id = ?").run(id),
+    touch: (id, at) => db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(at, id),
   };
 }

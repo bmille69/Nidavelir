@@ -56,6 +56,8 @@ export class ConceptionService {
   readonly #orchestrator: OrchestratorPort;
   readonly #web: boolean;
   readonly #background = new Set<Promise<void>>();
+  /** Prévenu à la fin de chaque tour (notification, ADR-30). */
+  onTurn: ((c: Conception) => void) | null = null;
   /** Compétences ajoutées aux consignes du Concepteur (ADR-29). */
   skills: { promptBlock(agent: "concepteur", project: string | null): string } | null = null;
 
@@ -234,6 +236,7 @@ export class ConceptionService {
       this.#insert(id, "concepteur", turn.reply, turn, costUsd);
       const { reply: _r, ...rest } = turn;
       this.#update(id, { status: "open", title: turn.title, data: { ...rest, claude_md: c.kind === "project" ? turn.claude_md : "" } });
+      this.onTurn?.(this.get(id));
     } catch (err) {
       this.#insert(id, "concepteur", `Je n'ai pas pu terminer ma réponse : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null, null);
       this.#update(id, { status: "open", data: { ...c.data, error: (err as Error).message.slice(0, 300) } });

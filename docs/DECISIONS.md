@@ -306,6 +306,34 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
   - 52 s, environ 0,19 $ ;
   - le chargement d'une skill par `--plugin-dir` et son utilisation via l'outil `Skill` ont été vérifiés séparément.
 
+### ADR-30 : le hub sur le téléphone (Tailscale, code de connexion, notifications)
+**Statut** : **Validée** le 14/10/2026 : Tailscale, notifications ; pas de lancement automatique au démarrage du PC.
+- **Principe** : le PC reste le studio (agents, Claude Code, jeux), et le téléphone devient une télécommande. Le PC doit rester allumé, sans veille, avec le hub lancé.
+- **Accès** : le hub écoute toujours sur `127.0.0.1` seulement. Depuis la page « Téléphone », `tailscale serve --bg --https=443 http://127.0.0.1:<port>` le publie en **HTTPS dans votre réseau Tailscale uniquement**, jamais `funnel`, donc jamais sur Internet.
+  - L'adresse `https://<pc>.<réseau>.ts.net` est acceptée dynamiquement comme hôte et comme origine.
+  - HTTPS est indispensable aux notifications et à l'installation sur l'écran d'accueil.
+  - La première fois, Tailscale peut demander d'autoriser HTTPS sur votre réseau : le hub ouvre le lien.
+- **Connexion d'un téléphone** :
+  - un **code à 6 chiffres**, affiché par le PC : valable 5 minutes, un seul à la fois, 5 essais au plus ;
+  - le téléphone le saisit sur `/login` et reçoit une **session durable de 90 jours** qui survit aux redémarrages ;
+  - seul un hachage du cookie est conservé ;
+  - la liste des appareils (« vu il y a… ») permet de **déconnecter** un téléphone ;
+  - le téléphone ne voit pas les réglages réservés au PC.
+- **Notifications** : le Web Push est implémenté sans dépendance, avec le chiffrement RFC 8291 (vérifié au caractère près contre l'exemple de la RFC) et la signature VAPID RFC 8292. Elles partent quand :
+  - un chantier est prêt à essayer, ou en échec ;
+  - un plan attend votre accord ;
+  - une autorisation est demandée ;
+  - le Concepteur attend vos réponses, ou sa conception est prête.
+
+  Le service de notification du téléphone (Google, Apple) achemine des messages qu'il ne peut pas lire. Sur iPhone, il faut d'abord ajouter le hub à l'écran d'accueil.
+- **Application installable** : manifeste, icônes, service worker (notifications seulement, pas de cache hors ligne).
+- **Affichage mobile** (860 px et moins) :
+  - barre du haut et menu qui se replie ;
+  - en-tête de projet compact et onglets défilants ;
+  - discussion, chantiers et conception empilés ;
+  - cibles tactiles d'au moins 40 px, champs en 16 px (pas de zoom automatique sur iPhone), aucun défilement horizontal.
+- **Non vérifié automatiquement** : le vrai Tailscale (absent de ce PC au moment de l'écriture ; son état et ses commandes sont testés par simulation) et la réception d'une notification sur un vrai téléphone. Le chiffrement et l'envoi sont testés de bout en bout avec un faux service de notification.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

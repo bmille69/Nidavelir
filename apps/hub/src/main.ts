@@ -30,6 +30,8 @@ const hub = createHub({
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
   autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },
+  // Téléphone (ADR-30) : publication du hub dans votre réseau Tailscale, à la demande.
+  remotePort: port,
   usageProbe: async () => {
     await cli.call({ systemPrompt: "Réponds uniquement : ok", prompt: "ok", model: "haiku", tag: { agent: "compteur" } });
   },
@@ -56,6 +58,8 @@ const server = await buildServer(hub, {
   webDist: join(hubRoot, "apps", "web", "dist"),
 });
 await server.listen({ host: "127.0.0.1", port });
+// Si le hub est déjà publié dans Tailscale, son adresse est acceptée dès le démarrage.
+void hub.remote?.status().then((s) => s.url && console.log(`Depuis le téléphone : ${s.url}`), () => {});
 
 const link = `http://127.0.0.1:${port}/login?token=${hub.sessions.createLoginToken()}`;
 console.log(`\nGame Studio Hub — http://127.0.0.1:${port}`);

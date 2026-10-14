@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import "./styles.css";
 import "./studio/studio.css";
+import { registerServiceWorker } from "./studio/push.ts";
+
+registerServiceWorker();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

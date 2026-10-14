@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { ApprovalError } from "../approvals/approval-service.ts";
-import { HumanSessionRequiredError, type HumanSession } from "../auth/human-session.ts";
+import { HumanSessionRequiredError, PairingError, type HumanSession } from "../auth/human-session.ts";
+import { PAIRING_PAGE } from "./pairing-page.ts";
 import { ConversationError } from "../conversation/conversation-service.ts";
 import type { Hub } from "../hub.ts";
 import { OrchestratorError } from "../orchestrator/port.ts";
@@ -81,6 +82,7 @@ const Body = {
     agents: z.array(z.enum(["director", "concepteur", "developer", "qa"])).max(4),
     enabled: z.boolean(),
   }),
+  push: z.object({ endpoint: z.string().url().max(2000), keys: z.object({ p256dh: z.string().min(40).max(200), auth: z.string().min(8).max(100) }) }),
   rating: z.object({ rating: z.enum(["up", "down"]), note: z.string().max(500).optional() }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
@@ -93,7 +95,9 @@ const Body = {
 export async function buildServer(hub: Hub, options: ServerOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   await app.register(cookie);
-  const allowed = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
+  const fixedHosts = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
+  // Les hôtes Tailscale (« mon-pc.tail1234.ts.net ») s'ajoutent quand le hub y est publié (ADR-30).
+  const allowed = { has: (h: string) => fixedHosts.has(h) || hub.extraHosts.has(h) };
 
   app.addHook("onRequest", async (req, reply) => {
     const host = (req.headers.host ?? "").toLowerCase();
@@ -102,6 +106,8 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
 
   app.get("/login", async (req, reply) => {
     const token = String((req.query as Record<string, unknown>).token ?? "");
+    // Sans jeton : page de connexion d'un téléphone, avec le code affiché sur le PC (ADR-30).
+    if (!token) return reply.type("text/html; charset=utf-8").send(PAIRING_PAGE);
     try {
       const { sessionId, cookie: secret } = hub.sessions.login(token);
       reply.setCookie(SESSION_COOKIE, `${sessionId}.${secret}`, { httpOnly: true, sameSite: "strict", path: "/" });
@@ -115,12 +121,29 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     }
   });
 
+  app.post("/login/code", async (req, reply) => {
+    const originHost = String(req.headers.origin ?? "").replace(/^https?:\/\//, "").toLowerCase();
+    if (!allowed.has(originHost)) return reply.code(403).send({ error: "Origine non autorisée" });
+    const body = z.object({ code: z.string().regex(/^\d{6}$/, "Le code a 6 chiffres"), name: z.string().max(60).default("Téléphone") }).parse(req.body);
+    try {
+      const { sessionId, cookie: secret } = hub.sessions.loginWithCode(body.code, body.name);
+      // Session durable (90 jours) : le téléphone reste connecté, révocable depuis le PC.
+      const https = req.headers["x-forwarded-proto"] === "https" || req.protocol === "https";
+      reply.setCookie(SESSION_COOKIE, `${sessionId}.${secret}`, { httpOnly: true, sameSite: "strict", path: "/", maxAge: 90 * 86400, secure: https });
+      hub.journal.append({ project: null, actor: { kind: "human" }, type: "device.paired", payload: { device: sessionId, name: body.name } });
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof PairingError) return reply.code(401).send({ error: err.message });
+      throw err;
+    }
+  });
+
   app.register(async (api) => {
     api.addHook("preHandler", async (req, reply) => authenticate(hub, allowed, req, reply));
 
     api.get("/session", async (req) => {
       const [sid, secret] = readSessionCookie(req);
-      return { csrf: hub.sessions.csrfFor(sid, secret), orchestrator: hub.orchestrator.name, gamesRoot: options.gamesRoot };
+      return { csrf: hub.sessions.csrfFor(sid, secret), orchestrator: hub.orchestrator.name, gamesRoot: options.gamesRoot, device: hub.sessions.isDevice(sid) };
     });
 
     // ── Projets et import ──
@@ -343,6 +366,43 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as TaskParams;
       return hub.tasks.abandon(req.human!, slug, id);
     });
+    // ── Téléphone (ADR-30) ──
+    api.get("/remote/status", async () => (hub.remote ? hub.remote.status() : { tailscale: "absent", dnsName: null, serving: false, url: null, message: "Indisponible dans ce mode" }));
+    api.post("/remote/enable", async (req) => {
+      if (!hub.remote) throw new ProjectError("Accès à distance indisponible");
+      return hub.remote.enable(req.human!);
+    });
+    api.post("/remote/disable", async (req) => {
+      if (!hub.remote) throw new ProjectError("Accès à distance indisponible");
+      return hub.remote.disable(req.human!);
+    });
+    api.post("/devices/pairing", async (req) => hub.sessions.createPairingCode(req.human!));
+    api.get("/devices", async (req) => {
+      const [sid] = readSessionCookie(req);
+      const rows = hub.db.prepare("SELECT id, name, created_at, last_seen FROM devices ORDER BY created_at").all() as { id: string; name: string; created_at: string; last_seen: string }[];
+      return rows.map((d) => ({ ...d, current: d.id === sid }));
+    });
+    api.post("/devices/:id/revoke", async (req) => {
+      const { id } = req.params as { id: string };
+      hub.sessions.revoke(req.human!, id);
+      hub.notifications.forgetDevice(id);
+      hub.journal.append({ project: null, actor: { kind: "human" }, type: "device.revoked", payload: { device: id } });
+      return { revoked: true };
+    });
+    api.get("/push/key", async () => ({ key: hub.notifications.publicKey() }));
+    api.post("/push/subscribe", async (req) => {
+      const [sid] = readSessionCookie(req);
+      hub.notifications.subscribe(req.human!, Body.push.parse(req.body), hub.sessions.isDevice(sid) ? sid : null);
+      return { subscribed: true };
+    });
+    api.post("/push/unsubscribe", async (req) => {
+      hub.notifications.unsubscribe(req.human!, z.object({ endpoint: z.string().url() }).parse(req.body).endpoint);
+      return { unsubscribed: true };
+    });
+    api.post("/push/test", async () => {
+      hub.notifications.notify({ title: "Game Studio Hub", body: "Les notifications fonctionnent sur cet appareil.", url: "#/", tag: "test" });
+      return { sent: hub.notifications.list().length };
+    });
     // ── Compétences (ADR-29) ──
     api.get("/skills", async (req) => {
       const { project } = z.object({ project: z.string().optional() }).parse(req.query);
@@ -487,7 +547,7 @@ function readSessionCookie(req: FastifyRequest): [string, string] {
   return [raw.slice(0, dot), raw.slice(dot + 1)];
 }
 
-async function authenticate(hub: Hub, allowed: Set<string>, req: FastifyRequest, reply: FastifyReply) {
+async function authenticate(hub: Hub, allowed: { has(h: string): boolean }, req: FastifyRequest, reply: FastifyReply) {
   let sid: string;
   let secret: string;
   try {

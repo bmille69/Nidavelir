@@ -137,7 +137,9 @@ export type Skill = {
   updated_at: string;
 };
 export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
-export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string };
+export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string; device: boolean };
+export type RemoteStatus = { tailscale: "absent" | "stopped" | "ready"; dnsName: string | null; serving: boolean; url: string | null; message?: string; link?: string };
+export type Device = { id: string; name: string; created_at: string; last_seen: string; current: boolean };
 
 export class ApiError extends Error {
   readonly status: number;
@@ -217,6 +219,16 @@ export const api = {
   merge: (slug: string, id: string, head: string) => request<{ task: Task; sha: string }>("POST", `/projects/${slug}/tasks/${id}/merge`, { head }),
   requestChanges: (slug: string, id: string, feedback: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/changes`, { feedback }),
   abandonTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/abandon`, {}),
+  remoteStatus: () => request<RemoteStatus>("GET", "/remote/status"),
+  remoteEnable: () => request<RemoteStatus>("POST", "/remote/enable", {}),
+  remoteDisable: () => request<RemoteStatus>("POST", "/remote/disable", {}),
+  pairingCode: () => request<{ code: string; expires_at: string }>("POST", "/devices/pairing", {}),
+  devices: () => request<Device[]>("GET", "/devices"),
+  revokeDevice: (id: string) => request<{ revoked: boolean }>("POST", `/devices/${id}/revoke`, {}),
+  pushKey: () => request<{ key: string }>("GET", "/push/key"),
+  pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => request<{ subscribed: boolean }>("POST", "/push/subscribe", sub),
+  pushUnsubscribe: (endpoint: string) => request<{ unsubscribed: boolean }>("POST", "/push/unsubscribe", { endpoint }),
+  pushTest: () => request<{ sent: number }>("POST", "/push/test", {}),
   skills: (project?: string) => request<Skill[]>("GET", `/skills${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   saveSkill: (s: { id?: string; name: string; description: string; body: string; agents: SkillAgent[]; enabled: boolean }) => request<Skill>("POST", "/skills", s),
   deleteSkill: (id: string) => request<{ deleted: boolean }>("POST", `/skills/${id}/delete`, {}),

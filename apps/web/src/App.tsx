@@ -7,6 +7,7 @@ import { Sidebar } from "./studio/Sidebar.tsx";
 import { StudioHome } from "./studio/StudioHome.tsx";
 import { QualityView } from "./studio/Quality.tsx";
 import { SkillsView } from "./studio/Skills.tsx";
+import { PhoneView } from "./studio/Phone.tsx";
 import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
 
 export type Route =
@@ -14,6 +15,7 @@ export type Route =
   | { page: "import" }
   | { page: "quality" }
   | { page: "skills" }
+  | { page: "phone" }
   | { page: "conceive"; project?: string }
   | { page: "conception"; id: string }
   | { page: "project"; slug: string; thread?: string; task?: string; view?: "discussion" | "decisions" | "vision" | "tasks" };
@@ -23,6 +25,7 @@ function parse(hash: string): Route {
   if (parts[0] === "import") return { page: "import" };
   if (parts[0] === "qualite") return { page: "quality" };
   if (parts[0] === "competences") return { page: "skills" };
+  if (parts[0] === "telephone") return { page: "phone" };
   if (parts[0] === "concevoir") return { page: "conceive" };
   if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
   if (parts[0] === "p" && parts[1] && parts[2] === "concevoir") return { page: "conceive", project: parts[1] };
@@ -38,6 +41,7 @@ export function href(route: Route): string {
   if (route.page === "import") return "#/import";
   if (route.page === "quality") return "#/qualite";
   if (route.page === "skills") return "#/competences";
+  if (route.page === "phone") return "#/telephone";
   if (route.page === "conceive") return route.project ? `#/p/${encodeURIComponent(route.project)}/concevoir` : "#/concevoir";
   if (route.page === "conception") return `#/c/${route.id}`;
   if (route.page === "project") {
@@ -57,6 +61,9 @@ export function App() {
   const [route, setRoute] = useState<Route>(() => parse(window.location.hash));
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Sur téléphone, la barre latérale devient un menu qui se replie.
+  const [menu, setMenu] = useState(false);
+  useEffect(() => setMenu(false), [route]);
 
   useEffect(() => {
     const onHash = () => setRoute(parse(window.location.hash));
@@ -76,10 +83,15 @@ export function App() {
         <div className="card narrow">
           <h1>Game Studio Hub</h1>
           {authError === "session" ? (
-            <p>
-              Aucune session active. Ouvrez le <strong>lien de connexion</strong> affiché dans le terminal où le hub a été lancé
-              (il n'est valable qu'une fois ; relancez le hub pour en obtenir un nouveau).
-            </p>
+            <>
+              <p>
+                Aucune session active. Ouvrez le <strong>lien de connexion</strong> affiché dans le terminal où le hub a été lancé
+                (il n'est valable qu'une fois ; relancez le hub pour en obtenir un nouveau).
+              </p>
+              <p>
+                Sur un téléphone : <a href="/login">connectez-le avec le code</a> affiché dans la page « Téléphone » du hub, sur le PC.
+              </p>
+            </>
           ) : (
             <p className="error">{authError}</p>
           )}
@@ -91,13 +103,23 @@ export function App() {
 
   return (
     <StudioProvider>
-      <div className="app">
+      <div className={`app ${menu ? "menu-open" : ""}`}>
+        <header className="mobile-bar">
+          <button className="menu-btn" aria-label="Menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
+            ☰
+          </button>
+          <a href="#/" className="mobile-brand">
+            Game Studio Hub
+          </a>
+        </header>
         <Sidebar route={route} session={session} />
+        <div className="menu-backdrop" onClick={() => setMenu(false)} />
         <div className="main">
           {route.page === "dashboard" && <StudioHome />}
           {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
           {route.page === "quality" && <QualityView />}
           {route.page === "skills" && <SkillsView />}
+          {route.page === "phone" && <PhoneView session={session} />}
           {route.page === "conceive" && <ConceptionStart project={route.project} />}
           {route.page === "conception" && <ConceptionView key={route.id} id={route.id} />}
           {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} />}

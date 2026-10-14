@@ -205,7 +205,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
                   : "Parlez de votre jeu librement : intentions, envies, doutes, références. Le directeur reformule, relève les tensions et pose quelques questions."}
               </p>
               <p className="muted small">
-                {workshop ? "Quand la proposition vous va, dites « go » : il rédige la consigne et le Développeur se met au travail. Vous suivez l'avancement à droite." : auto ? "Ce qu'il retient entre dans la bible du jeu (onglet « Le jeu ») ; s'il a besoin de vous, il vous le demande à droite." : "Ce qu'il retient apparaît à droite, à trier quand vous voulez."}
+                {workshop ? "Quand la proposition vous va, dites « go » : il rédige la consigne et le Développeur se met au travail. Vous suivez l'avancement dans le panneau « Chantiers »." : auto ? "Ce qu'il retient entre dans la bible du jeu (onglet « Le jeu ») ; s'il a besoin de vous, il vous le demande à droite." : "Ce qu'il retient apparaît à droite, à trier quand vous voulez."}
               </p>
             </div>
           )}
