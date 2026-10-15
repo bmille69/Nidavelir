@@ -64,7 +64,7 @@ const Body = {
   head: z.object({ head: z.string().regex(/^[0-9a-f]{40}$/) }),
   feedback: z.object({ feedback: z.string().min(1).max(4000) }),
   escalation: z.object({ allowed: z.boolean() }),
-  agentTool: z.object({ tool_name: z.string().min(1).max(200), tool_input: z.record(z.string(), z.unknown()).default({}) }),
+  agentTool: z.object({ tool_name: z.string().min(1).max(200), tool_input: z.record(z.string(), z.unknown()).default({}), cwd: z.string().max(1000).optional() }),
   decide: z.object({
     hash: z.string().length(64),
     verdict: z.enum(["approved", "rejected"]),
@@ -522,7 +522,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const { run } = req.params as { run: string };
         const body = Body.agentTool.parse(req.body);
         try {
-          return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input);
+          return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
         } catch (err) {
           return reply.code(403).send({ decision: "deny", reason: (err as Error).message });
         }

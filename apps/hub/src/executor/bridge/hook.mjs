@@ -16,7 +16,8 @@ try {
   const res = await fetch(`${url}/pretool`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${process.env.STUDIO_RUN_TOKEN ?? ""}` },
-    body: JSON.stringify({ tool_name: input.tool_name, tool_input: input.tool_input ?? {} }),
+    // Dossier courant du terminal de l'agent : il persiste d'une commande à l'autre (ADR-38).
+    body: JSON.stringify({ tool_name: input.tool_name, tool_input: input.tool_input ?? {}, cwd: typeof input.cwd === "string" ? input.cwd : undefined }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) out("deny", `refus (hub ${res.status})`);

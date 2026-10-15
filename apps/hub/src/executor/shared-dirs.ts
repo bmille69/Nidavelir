@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, readdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import type { VcsPort } from "../vcs/git.ts";
 
 /**
@@ -21,10 +21,63 @@ export async function linkSharedDirs(repo: string, worktree: string, vcs: VcsPor
     const link = join(worktree, dir);
     if (!existsSync(target) || !statSync(target).isDirectory() || existsSync(link)) continue;
     if (!(await vcs.isIgnored(repo, dir))) continue; // versionné : surtout pas de lien
-    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    if (dir === "node_modules" && hasWorkspaceLinks(target, repo)) mirrorModules(target, link, repo, worktree);
+    else symlinkSync(target, link, LINK);
     linked.push(dir);
   }
   return linked;
+}
+
+const LINK = process.platform === "win32" ? "junction" : "dir";
+/** Caches d'outils : propres à chaque copie, jamais partagés. */
+const OWN_CACHES = new Set([".vite", ".vite-temp", ".cache"]);
+
+/**
+ * npm workspaces (ADR-38) : node_modules contient des liens vers les paquets du projet lui-même
+ * (ex. @bordee/rules → packages/rules). Partagé tel quel, il ferait utiliser au chantier les paquets
+ * du jeu principal : tests et lancement mélangeraient le code du chantier et l'ancien.
+ * Renvoie le même paquet dans la copie, ou null si ce n'est pas un paquet du projet.
+ */
+function ownPackage(entry: string, repo: string, worktree: string): string | null {
+  try {
+    if (!lstatSync(entry).isSymbolicLink()) return null;
+    const rel = relative(realpathSync.native(repo), realpathSync.native(entry));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return join(worktree, rel);
+  } catch {
+    return null;
+  }
+}
+
+function entries(modules: string): { name: string; path: string }[] {
+  return readdirSync(modules).flatMap((name) => {
+    const path = join(modules, name);
+    if (name.startsWith("@") && !lstatSync(path).isSymbolicLink() && statSync(path).isDirectory()) {
+      return readdirSync(path).map((sub) => ({ name: `${name}/${sub}`, path: join(path, sub) }));
+    }
+    return [{ name, path }];
+  });
+}
+
+function hasWorkspaceLinks(modules: string, repo: string): boolean {
+  return entries(modules).some((e) => ownPackage(e.path, repo, repo) !== null);
+}
+
+/**
+ * Un vrai dossier node_modules dans la copie : une jonction par dépendance vers celle du jeu
+ * (rien n'est copié ni téléchargé), sauf les paquets du projet, qui visent ceux de la copie.
+ */
+function mirrorModules(modules: string, link: string, repo: string, worktree: string): void {
+  mkdirSync(link);
+  for (const e of entries(modules)) {
+    if (OWN_CACHES.has(e.name)) continue;
+    const to = join(link, e.name);
+    if (e.name.includes("/")) mkdirSync(join(link, e.name.split("/")[0]!), { recursive: true });
+    const own = ownPackage(e.path, repo, worktree);
+    if (own) symlinkSync(own, to, LINK);
+    else if (statSync(e.path).isDirectory()) symlinkSync(realpathSync.native(e.path), to, LINK);
+    else copyFileSync(e.path, to);
+  }
 }
 
 /**

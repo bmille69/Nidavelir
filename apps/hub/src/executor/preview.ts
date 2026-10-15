@@ -1,7 +1,7 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export class PreviewError extends Error {
@@ -51,13 +51,16 @@ export class PreviewService {
     const port = await freePort(5180);
     const viteBin = join(cwd, "node_modules", "vite", "bin", "vite.js");
     const env = { ...process.env, PORT: String(port), BROWSER: "none" };
+    // Le dossier où tourne Vite : le jeu, ou l'espace de travail vers lequel « dev » délègue (ADR-38).
+    // Toujours sur un port libre : le jeu que vous essayez par ailleurs (port 5173) ne gêne plus.
+    const viteDir = /^\s*vite(\s|$)/.test(scripts.dev) ? cwd : workspaceDevDir(cwd, scripts.dev);
     const child =
-      /^\s*vite(\s|$)/.test(scripts.dev) && existsSync(viteBin) && this.#workDir
+      viteDir && existsSync(viteBin) && this.#workDir
         ? // Vite : lancé avec une configuration d'enrobage qui autorise les bibliothèques partagées (voir #viteWrapper).
           spawn(
             process.execPath,
-            [viteBin, "--config", this.#viteWrapper(key, cwd), "--configLoader", "native", "--port", String(port), "--strictPort", "--host", "127.0.0.1"],
-            { cwd, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] },
+            [viteBin, "--config", this.#viteWrapper(key, viteDir, cwd), "--configLoader", "native", "--port", String(port), "--strictPort", "--host", "127.0.0.1"],
+            { cwd: viteDir, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] },
           )
         : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev"], {
             cwd,
@@ -102,18 +105,20 @@ export class PreviewService {
    * Cette configuration reprend celle du jeu telle quelle et autorise en plus ce dossier partagé.
    * Elle vit dans les données du hub : rien n'est écrit dans le jeu.
    */
-  #viteWrapper(key: string, root: string): string {
+  #viteWrapper(key: string, root: string, project = root): string {
     const dir = join(this.#workDir!, "previews");
     mkdirSync(dir, { recursive: true });
-    const modules = realpathSync.native(join(root, "node_modules"));
-    const vite = pathToFileURL(join(modules, "vite", "dist", "node", "index.js")).href;
+    // node_modules de la copie : un lien vers celui du jeu, ou un dossier de liens (espaces de travail, ADR-38).
+    const vitePkg = realpathSync.native(join(project, "node_modules", "vite"));
+    const modules = dirname(vitePkg);
+    const vite = pathToFileURL(join(vitePkg, "dist", "node", "index.js")).href;
     const file = join(dir, `${key.replace(/[^\w-]+/g, "_")}.vite.config.mjs`);
     const code = [
       `import { loadConfigFromFile, mergeConfig } from ${JSON.stringify(vite)};`,
       `const ROOT = ${JSON.stringify(root)};`,
       "export default async (env) => {",
       "  const loaded = await loadConfigFromFile(env, undefined, ROOT);",
-      `  return mergeConfig(loaded?.config ?? {}, { root: ROOT, server: { fs: { allow: [ROOT, ${JSON.stringify(modules)}] } } });`,
+      `  return mergeConfig(loaded?.config ?? {}, { root: ROOT, server: { fs: { allow: [ROOT, ${JSON.stringify(project)}, ${JSON.stringify(modules)}] } } });`,
       "};",
     ];
     writeFileSync(file, code.join("\n"), "utf8");
@@ -137,6 +142,27 @@ export class PreviewService {
   async stopAll(): Promise<void> {
     await Promise.all([...this.#running.keys()].map((key) => this.stop(key)));
   }
+}
+
+/** « npm run dev -w <paquet> » : dossier de l'espace de travail dont le script « dev » est Vite, sinon null. */
+export function workspaceDevDir(root: string, dev: string): string | null {
+  const m = /^\s*npm run dev (?:-w|--workspace)[ =]("?)([\w@./-]+)\1\s*$/.exec(dev);
+  if (!m) return null;
+  const wanted = m[2]!;
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { workspaces?: string[] | { packages?: string[] } };
+  const patterns = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces?.packages ?? []);
+  const dirs = patterns.flatMap((p) => {
+    if (!p.endsWith("/*")) return [join(root, p)];
+    const base = join(root, p.slice(0, -2));
+    return existsSync(base) ? readdirSync(base).map((d) => join(base, d)) : [];
+  });
+  for (const dir of dirs) {
+    const file = join(dir, "package.json");
+    if (!existsSync(file)) continue;
+    const ws = JSON.parse(readFileSync(file, "utf8")) as { name?: string; scripts?: Record<string, string> };
+    if (ws.name === wanted || resolve(dir) === resolve(root, wanted)) return /^\s*vite(\s|$)/.test(ws.scripts?.dev ?? "") ? dir : null;
+  }
+  return null;
 }
 
 function killTree(pid: number | undefined): void {

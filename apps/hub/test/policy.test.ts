@@ -132,6 +132,21 @@ describe("commandes", () => {
     // Le refus dit quoi faire à la place.
     expect(exec.evaluate("Bash", { command: "cat > src/a.ts <<'EOF'\nx\nEOF" }).reason).toMatch(/utilise l'outil Write ou Edit/);
   });
+  it("suit le dossier courant du terminal de l'agent, qui persiste d'une commande à l'autre (ADR-38)", () => {
+    mkdirSync(join(root, "packages", "client", "src"), { recursive: true });
+    const inClient = join(root, "packages", "client");
+    // Constaté le 15/10 : après « cd packages/client », « cat ../../package.json » était refusé à tort.
+    expect(exec.evaluate("Bash", { command: "cat ../../package.json" }, inClient)).toMatchObject({ decision: "allow" });
+    expect(exec.evaluate("Bash", { command: "grep -n x ../../src/a.ts" }, inClient)).toMatchObject({ decision: "allow" });
+    expect(exec.evaluate("Bash", { command: "cat ../../../outside.txt" }, inClient)).toMatchObject({ decision: "deny" });
+    expect(exec.evaluate("Bash", { command: "cd ../.. && ls" }, inClient)).toMatchObject({ decision: "allow" });
+    expect(exec.evaluate("Bash", { command: "cd ../../.." }, inClient)).toMatchObject({ decision: "deny" });
+    // Revenir à la racine de la copie avec un chemin à la Git Bash (/c/…).
+    const bashRoot = root.replace(/^([A-Za-z]):\\/, (_m, l: string) => `/${l.toLowerCase()}/`).replace(/\\/g, "/");
+    expect(exec.evaluate("Bash", { command: `cd ${bashRoot} && ls src` }, inClient)).toMatchObject({ decision: "allow" });
+    // Un dossier courant hors de la copie ne donne aucun droit : on repart de la racine.
+    expect(exec.evaluate("Bash", { command: "cat ../outside.txt" }, dir)).toMatchObject({ decision: "deny" });
+  });
   it("scripts du projet permis au testeur, jamais ceux qui publient ou installent", () => {
     const game = join(dir, "jeu");
     mkdirSync(join(game, "node_modules", ".bin"), { recursive: true });

@@ -174,7 +174,8 @@ export class PolicyEngine {
     this.#commands = new Set(plan.commands.map((c) => c.cmd.trim()));
   }
 
-  evaluate(tool: string, input: Record<string, unknown>): Decision {
+  /** `cwd` : dossier courant du terminal de l'agent ; il persiste d'une commande à l'autre (ADR-38). */
+  evaluate(tool: string, input: Record<string, unknown>, cwd?: string): Decision {
     // Compétences (ADR-29) : seulement celles que le hub a fournies, jamais les skills intégrées de Claude Code.
     if (tool === "Skill") {
       return String(input.skill ?? "").startsWith(`${STUDIO_PLUGIN}:`) ? allow("compétence du studio") : deny("seules les compétences du studio sont permises");
@@ -183,7 +184,7 @@ export class PolicyEngine {
     if (tool === "StructuredOutput") return allow("rendu du résultat final");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);
     if (WRITE_TOOLS.has(tool)) return this.#write(tool, input);
-    if (tool === "Bash") return this.#bash(String(input.command ?? ""));
+    if (tool === "Bash") return this.#bash(String(input.command ?? ""), cwd);
     return deny(`outil « ${tool} » non autorisé pour l'agent`);
   }
 
@@ -242,20 +243,22 @@ export class PolicyEngine {
    * Une commande peut enchaîner plusieurs morceaux (;, &&, ||, |) : chacun est jugé seul (ADR-33).
    * Un refus l'emporte, puis une demande ; sinon la commande passe.
    */
-  #bash(command: string): Decision {
+  #bash(command: string, from?: string): Decision {
     const cmd = command.trim();
     if (!cmd) return deny("commande vide");
     // Commande prévue telle quelle dans le plan.
     if (this.#mode !== "plan" && this.#commands.has(cmd) && !commandProblem(cmd)) return allow("commande prévue dans le plan");
     const parsed = splitCommand(cmd);
     if ("error" in parsed) return deny(parsed.error);
-    let cwd = this.#root;
-    let moved = false;
+    // Hors de la copie, Claude Code ramène le terminal à sa racine : on part alors de la racine.
+    const start = from ? this.#relInside(unixDrive(from)) : null;
+    let cwd = start ? join(this.#root, start) : this.#root;
+    let moved = Boolean(start);
     const decisions: Decision[] = [];
     for (const s of parsed.segments) {
       if (/^cd$/i.test(s.words[0]!)) {
         const target = s.words[1];
-        const rel = target && s.words.length === 2 ? this.#relInside(target, cwd) : null;
+        const rel = target && s.words.length === 2 ? this.#relInside(unixDrive(target), cwd) : null;
         if (rel === null) return deny(`« cd » hors du projet : ${s.text}`);
         cwd = join(this.#root, rel);
         moved = true;
@@ -331,7 +334,7 @@ export class PolicyEngine {
       const value = raw.startsWith("-") ? (raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : "") : raw;
       if (!value || !/[./\\]/.test(value)) continue;
       if (/^(\/dev\/null|nul)$/i.test(value)) continue;
-      const path = value.replace(/^\/([a-zA-Z])\//, "$1:/");
+      const path = unixDrive(value);
       if (isSecret(path.replace(/\\/g, "/"))) return `fichier sensible : ${value}`;
       const outsidey = isAbsolute(path) || /^~/.test(path) || /(^|[\\/])\.\.([\\/]|$)/.test(path);
       if (!outsidey) {
@@ -376,6 +379,11 @@ function commandProblem(cmd: string): string | null {
     if (FORBIDDEN_COMMANDS.some((re) => re.test(s.text))) return "commande interdite (réseau, interpréteur, Git en écriture ou système)";
   }
   return null;
+}
+
+/** Chemin à la manière de Git Bash (/c/Games/…) → C:/Games/… */
+function unixDrive(p: string): string {
+  return p.replace(/^\/([a-zA-Z])(\/|$)/, "$1:/");
 }
 
 function readScripts(pkg: string): Record<string, string> | null {

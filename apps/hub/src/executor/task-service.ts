@@ -66,6 +66,8 @@ type ActiveRun = {
   startedAt: string;
   tokenHash: string;
   policy: PolicyEngine;
+  /** Dernier dossier courant du terminal de l'agent, rapporté par le hook (ADR-38). */
+  cwd?: string;
   abort: AbortController;
   events: RunEvent[];
   waiting: Map<string, (allowed: boolean) => void>;
@@ -699,9 +701,10 @@ export class TaskService {
 
   // ── Pont agent (hook PreToolUse et gardien MCP) ──────────────────────────
 
-  agentPreTool(runId: string, token: string, tool: string, input: Record<string, unknown>): Decision {
+  agentPreTool(runId: string, token: string, tool: string, input: Record<string, unknown>, cwd?: string): Decision {
     const run = this.#authRun(runId, token);
-    const d = run.policy.evaluate(tool, input);
+    if (cwd) run.cwd = cwd;
+    const d = run.policy.evaluate(tool, input, run.cwd);
     if (d.decision !== "allow") this.#event(run, "info", `${d.decision === "deny" ? "Refusé" : "Demande d'autorisation"} : ${this.#describe(run, tool, input)} (${d.reason})`);
     if (d.decision === "deny") this.#log(run.project, "policy.denied", run.task, { run: run.id, tool, reason: d.reason, input: summarizeInput(input) });
     return d;
@@ -710,7 +713,7 @@ export class TaskService {
   /** Appelé par le gardien pour une action hors plan : attend votre décision (refus si délai dépassé). */
   async agentPermission(runId: string, token: string, tool: string, input: Record<string, unknown>): Promise<{ behavior: "allow" | "deny"; message?: string }> {
     const run = this.#authRun(runId, token);
-    const d = run.policy.evaluate(tool, input);
+    const d = run.policy.evaluate(tool, input, run.cwd);
     if (d.decision === "allow") return { behavior: "allow" };
     if (d.decision === "deny") return { behavior: "deny", message: `Refusé par le hub : ${d.reason}` };
     // Atelier (ADR-25) : hors plan mais sans danger (le gardien a déjà refusé ce qui l'est), dans une copie
