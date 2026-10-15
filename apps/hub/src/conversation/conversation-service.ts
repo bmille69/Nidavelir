@@ -101,8 +101,35 @@ export class ConversationService {
     return thread;
   }
 
+  /**
+   * Discussions du projet, la plus récemment active d'abord, avec leur activité
+   * (l'interface s'en sert pour vous placer sur la bonne et signaler les nouveautés).
+   */
   listThreads(project: string): Thread[] {
-    return (this.#db.prepare("SELECT * FROM threads WHERE project = ? ORDER BY created_at DESC").all(project) as Row[]).map(toThread);
+    const rows = this.#db
+      .prepare(
+        `SELECT t.*, COUNT(m.id) AS n, MAX(m.seq) AS last_seq, MAX(m.at) AS last_at,
+                (SELECT role FROM messages WHERE thread = t.id ORDER BY seq DESC LIMIT 1) AS last_role
+         FROM threads t LEFT JOIN messages m ON m.thread = t.id
+         WHERE t.project = ? GROUP BY t.id ORDER BY COALESCE(MAX(m.at), t.created_at) DESC`,
+      )
+      .all(project) as Row[];
+    return rows.map((r) => ({
+      ...toThread(r),
+      messages: Number(r.n),
+      last_seq: Number(r.last_seq ?? 0),
+      last_at: (r.last_at as string | null) ?? null,
+      last_role: (r.last_role as Thread["last_role"]) ?? null,
+    }));
+  }
+
+  /** Renommer une discussion (son titre est d'abord le début du premier message). */
+  renameThread(project: string, id: string, title: string): Thread {
+    this.getThread(project, id);
+    const clean = title.trim().replace(/\s+/g, " ").slice(0, 120);
+    if (!clean) throw new ConversationError("Titre vide");
+    this.#db.prepare("UPDATE threads SET title = ? WHERE id = ? AND project = ?").run(clean, id, project);
+    return this.getThread(project, id);
   }
 
   getThread(project: string, id: string): Thread {

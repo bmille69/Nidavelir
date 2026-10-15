@@ -152,4 +152,38 @@ describe("atelier", () => {
     await page.screenshot({ path: join(shots, "competences.png") });
     expect(pageErrors).toEqual([]);
   });
+
+  it("discussions : la bonne s'ouvre, un clic de trop ne crée rien, renommer, pastille quand le studio écrit ailleurs", async () => {
+    const [first] = hub.conversations.listThreads(P);
+    // Ouvrir le projet vous place sur la discussion la plus récemment active.
+    await page.goto(`${BASE}/#/p/${P}`);
+    await expect.poll(() => page.url()).toContain(`/t/${first!.id}`);
+    await page.locator(".threads a.active", { hasText: "Les balles du perso" }).waitFor();
+
+    // « Nouvelle discussion » : une page blanche, aucune discussion créée tant qu'on n'écrit pas.
+    const before = hub.conversations.listThreads(P).length;
+    await page.locator(".new-thread").click();
+    await expect.poll(() => page.url()).toContain(`/p/${P}/nouvelle`);
+    await page.locator(".new-thread.on").waitFor();
+    expect(hub.conversations.listThreads(P).length).toBe(before);
+
+    // Renommer la discussion en cours.
+    await page.locator(".threads a", { hasText: "Les balles du perso" }).click();
+    await page.getByRole("button", { name: "Renommer cette discussion" }).click();
+    await page.locator(".thread-rename").fill("Tirs premium");
+    await page.locator(".thread-rename").press("Enter");
+    await page.locator(".threads a.active", { hasText: "Tirs premium" }).waitFor();
+    expect(hub.conversations.getThread(P, first!.id).title).toBe("Tirs premium");
+
+    // Le studio écrit dans une autre discussion (ex. le Concepteur transmet) : pastille et bandeau.
+    const other = hub.conversations.createThread(P, "Conception : Résolution en 3D");
+    hub.conversations.notify(P, other.id, "Conception transmise : 6 chantiers.");
+    await page.locator(".threads li.has-news", { hasText: "Conception : Résolution en 3D" }).locator(".count").getByText("1").waitFor({ timeout: 10_000 });
+    await page.locator(".thread-news", { hasText: "Du nouveau dans « Conception : Résolution en 3D » (1)" }).waitFor();
+    await page.screenshot({ path: join(shots, "discussions-pastille.png") });
+    await page.locator(".thread-news a").click();
+    await page.locator(".threads a.active", { hasText: "Conception : Résolution en 3D" }).waitFor();
+    await expect.poll(() => page.locator(".threads li.has-news").count()).toBe(0);
+    expect(pageErrors).toEqual([]);
+  });
 });

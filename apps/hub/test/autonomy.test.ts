@@ -808,3 +808,41 @@ describe("Concepteur, directeur et développeur se passent la main (ADR-34)", ()
     expect(hub.tasks.list(P).map((x) => x.status)).toEqual(["merged", "merged"]);
   });
 });
+
+describe("Concevoir depuis une discussion (ADR-35)", () => {
+  it("les chantiers reviennent dans la discussion d'où vous êtes parti, pas dans une nouvelle", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    exec.scripts.execute.push(async (t) => {
+      await t.write("src/a.ts", "export {};\n");
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
+    const t = hub.conversations.createThread(P, "Le combat");
+    fake.extractions.push(
+      () =>
+        ({
+          reply: "Dossier prêt, je transmets.",
+          questions: [],
+          title: "Résolution en 3D",
+          engine: "",
+          dossier: "# Résolution en 3D",
+          chantiers: [{ title: "Scène", goal: "Objectif : la scène." }],
+          ready: true,
+          claude_md: "",
+          sources: [],
+          transmettre: true,
+        }) as never,
+    );
+    const c = hub.conceptions.start(sb.human(), { kind: "feature", project: P, idea: "la résolution en 3D", thread: t.id });
+    await settle(hub);
+
+    expect(hub.conversations.listThreads(P).map((x) => x.title)).toEqual(["Le combat"]);
+    const texts = hub.conversations.messages(P, t.id).map((m) => m.text);
+    expect(texts[0]).toMatch(new RegExp(`^✦ Conception ouverte avec le Concepteur : « la résolution en 3D »\. Répondez-lui sur sa page : #/c/${c.id}`));
+    expect(texts.join("\n")).toMatch(/Conception « Résolution en 3D » transmise par le Concepteur/);
+    expect(hub.tasks.list(P)[0]).toMatchObject({ origin: { thread: t.id }, status: "merged" });
+    // Une discussion d'un autre projet est refusée.
+    expect(() => hub.conceptions.start(sb.human(), { kind: "feature", project: P, idea: "x", thread: "inconnue" })).toThrow();
+  });
+});

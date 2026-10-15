@@ -251,7 +251,7 @@ export const api = {
   saveSkill: (s: { id?: string; name: string; description: string; body: string; agents: SkillAgent[]; enabled: boolean }) => request<Skill>("POST", "/skills", s),
   deleteSkill: (id: string) => request<{ deleted: boolean }>("POST", `/skills/${id}/delete`, {}),
   conceptions: () => request<Conception[]>("GET", "/conceptions"),
-  startConception: (body: { kind: "project" | "feature"; project?: string; idea: string }) => request<Conception>("POST", "/conceptions", body),
+  startConception: (body: { kind: "project" | "feature"; project?: string; idea: string; thread?: string }) => request<Conception>("POST", "/conceptions", body),
   conception: (id: string) => request<{ conception: Conception; messages: ConceptionMessage[] }>("GET", `/conceptions/${id}`),
   replyConception: (id: string, text: string) => request<Conception>("POST", `/conceptions/${id}/reply`, { text }),
   createFromConception: (id: string) => request<{ project: Project; tasks: string[] }>("POST", `/conceptions/${id}/create-project`, {}),
@@ -267,6 +267,7 @@ export const api = {
   jobs: (slug: string) => request<Job[]>("GET", `/projects/${slug}/jobs`),
   threads: (slug: string) => request<Thread[]>("GET", `/projects/${slug}/threads`),
   createThread: (slug: string, title: string) => request<Thread>("POST", `/projects/${slug}/threads`, { title }),
+  renameThread: (slug: string, id: string, title: string) => request<Thread>("POST", `/projects/${slug}/threads/${id}/rename`, { title }),
   messages: (slug: string, thread: string) => request<Message[]>("GET", `/projects/${slug}/threads/${thread}/messages`),
   send: (slug: string, thread: string, text: string) =>
     request<{ human: Message; director: Message }>("POST", `/projects/${slug}/threads/${thread}/messages`, { text }),

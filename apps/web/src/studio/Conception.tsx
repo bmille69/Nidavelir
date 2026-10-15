@@ -13,7 +13,7 @@ const EXAMPLES = [
 ];
 
 /** Point de départ : « Nouveau projet » ou « Concevoir une fonctionnalité ». */
-export function ConceptionStart({ project }: { project?: string }) {
+export function ConceptionStart({ project, thread }: { project?: string; thread?: string }) {
   const snap = useStudio();
   const [idea, setIdea] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,7 +24,7 @@ export function ConceptionStart({ project }: { project?: string }) {
     setBusy(true);
     setError(null);
     try {
-      const c = await api.startConception({ kind: project ? "feature" : "project", project, idea });
+      const c = await api.startConception({ kind: project ? "feature" : "project", project, idea, thread });
       navigate({ page: "conception", id: c.id });
     } catch (e) {
       setError((e as Error).message);

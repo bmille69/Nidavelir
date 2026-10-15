@@ -73,7 +73,7 @@ const Body = {
   note: z.object({ note: z.string().max(2000).optional() }),
   abandon: z.object({ hash: z.string().length(64), note: z.string().max(2000).optional() }),
   autonomy: z.object({ level: Autonomy }),
-  conception: z.object({ kind: z.enum(["project", "feature"]), project: z.string().optional(), idea: z.string().min(1).max(8000) }),
+  conception: z.object({ kind: z.enum(["project", "feature"]), project: z.string().optional(), idea: z.string().min(1).max(8000), thread: z.string().optional() }),
   skill: z.object({
     id: z.string().optional(),
     name: z.string().min(1).max(60),
@@ -493,6 +493,10 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.post("/projects/:slug/threads", async (req) =>
       hub.conversations.createThread((req.params as { slug: string }).slug, Body.thread.parse(req.body ?? {}).title),
     );
+    api.post("/projects/:slug/threads/:id/rename", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.conversations.renameThread(slug, id, Body.thread.parse(req.body ?? {}).title);
+    });
     api.get("/projects/:slug/threads/:id/messages", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.conversations.messages(slug, id);

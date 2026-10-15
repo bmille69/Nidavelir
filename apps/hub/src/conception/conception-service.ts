@@ -120,11 +120,13 @@ export class ConceptionService {
   }
 
   /** Démarre une conception à partir de votre idée, même en vrac. Le premier tour part en arrière-plan. */
-  start(session: HumanSession, input: { kind: "project" | "feature"; project?: string; idea: string }): Conception {
+  start(session: HumanSession, input: { kind: "project" | "feature"; project?: string; idea: string; thread?: string }): Conception {
     assertHumanSession(session);
     const idea = input.idea.trim();
     if (!idea) throw new ConceptionError("Décrivez votre idée, même en quelques mots");
     if (input.kind === "feature") this.#projects.get(input.project ?? "");
+    // Lancée depuis une discussion : les chantiers y reviendront (ADR-35), pas dans une nouvelle fenêtre.
+    const thread = input.kind === "feature" && input.thread ? this.#conversations.getThread(input.project!, input.thread).id : undefined;
     const now = this.#clock.now();
     const c: Conception = {
       id: randomUUID(),
@@ -132,7 +134,7 @@ export class ConceptionService {
       project: input.kind === "feature" ? input.project! : null,
       title: idea.slice(0, 60),
       status: "thinking",
-      data: EMPTY,
+      data: thread ? { ...EMPTY, thread } : EMPTY,
       created_at: now,
       updated_at: now,
     };
@@ -141,6 +143,13 @@ export class ConceptionService {
       .run(c.id, c.kind, c.project, c.title, c.status, JSON.stringify(c.data), now, now);
     this.#journal.append({ project: c.project, actor: { kind: "human" }, type: "conception.started", subject: c.id, payload: { kind: c.kind } });
     this.#insert(c.id, "human", idea, null, null);
+    if (thread) {
+      this.#conversations.notify(
+        c.project!,
+        thread,
+        `✦ Conception ouverte avec le Concepteur : « ${c.title} ». Répondez-lui sur sa page : #/c/${c.id}\nQuand vous lui direz « transmets », les chantiers reviendront ici.`,
+      );
+    }
     this.#track(this.#turn(c.id, session));
     return c;
   }

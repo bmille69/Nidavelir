@@ -183,3 +183,26 @@ describe("appel Claude Code", () => {
   });
 });
 
+
+describe("liste des discussions (ADR-35)", () => {
+  it("la plus active en haut, avec son activité ; renommer ; les vides restent vides", async () => {
+    sb.hub.projects.setAutonomy(sb.human(), P, "workshop");
+    const a = sb.hub.conversations.createThread(P, "Ancienne");
+    const b = sb.hub.conversations.createThread(P, "Récente");
+    const vide = sb.hub.conversations.createThread(P, "Clic de trop");
+    await sb.hub.conversations.send(P, b.id, "première idée");
+    await sb.hub.conversations.send(P, a.id, "je reviens sur l'ancienne");
+    // Le hub écrit dans « Récente » (ex. le Concepteur transmet) : elle repasse en tête.
+    sb.hub.conversations.notify(P, b.id, "Conception transmise.");
+    await sb.hub.conversations.idle();
+
+    const list = sb.hub.conversations.listThreads(P);
+    expect(list.map((t) => t.title)).toEqual(["Récente", "Ancienne", "Clic de trop"]);
+    expect(list[0]).toMatchObject({ messages: 3, last_seq: 3, last_role: "director", last_at: expect.any(String) });
+    expect(list.find((t) => t.id === vide.id)).toMatchObject({ messages: 0, last_seq: 0, last_at: null, last_role: null });
+
+    expect(sb.hub.conversations.renameThread(P, a.id, "  Les   boss  ").title).toBe("Les boss");
+    expect(() => sb.hub.conversations.renameThread(P, a.id, "   ")).toThrow(/Titre vide/);
+    expect(() => sb.hub.conversations.renameThread("autre", a.id, "x")).toThrow();
+  });
+});

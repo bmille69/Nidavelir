@@ -405,6 +405,14 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - Les liens internes (`#/c/…`, `#/p/…`) sont cliquables dans les messages.
 - **Au passage** : un brouillon jamais lancé puis abandonné n'apprend plus de « leçon » et ne compte plus dans « Qualité ». Les 5 anciens brouillons de `bordee` (T-0002 à T-0006, refaits sous T-0007 à T-0011) ont été abandonnés.
 
+### ADR-35 : des discussions qui ne se perdent pas
+**Statut** : **Validée** le 15/10/2026, à la demande du directeur créatif. Constats : un clic de trop sur « Nouvelle discussion » en créait une vide ; on ne pouvait pas renommer ; on s'y perdait quand le Concepteur ouvrait une autre fenêtre de discussion.
+- **Nouvelle discussion = page blanche** (`#/p/<projet>/nouvelle`) : rien n'est créé avant le premier message. Les discussions sans message ne sont plus affichées.
+- **Renommer** : crayon sur la discussion ouverte, ou double-clic sur son titre (`POST …/threads/:id/rename`).
+- **Ordre et activité** : la liste est triée par dernière activité (messages du hub et du Concepteur compris), avec l'heure et le titre sur deux lignes. En ouvrant un projet, on arrive directement sur la discussion **en vigueur**, la plus récemment active.
+- **Pastilles** : le nombre de messages du studio arrivés depuis votre dernier passage dans chaque discussion. Le suivi est mémorisé dans ce navigateur ; à la première visite, tout compte comme lu. Un bandeau « Du nouveau dans « … » » s'affiche en haut de la discussion ouverte, en un clic.
+- **« Concevoir » depuis une discussion** : la conception est rattachée à cette discussion. Une note avec le lien vers le Concepteur y est postée, et les chantiers transmis y reviennent (ADR-34) au lieu d'ouvrir une nouvelle fenêtre.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

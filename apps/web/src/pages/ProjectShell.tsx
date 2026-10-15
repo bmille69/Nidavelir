@@ -20,7 +20,7 @@ const TABS: { view: View; label: string; icon: IconName; supervisedOnly?: boolea
   { view: "tasks", label: "Chantiers", icon: "hammer" },
 ];
 
-export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; view: View; threadId?: string; taskId?: string }) {
+export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: string; view: View; threadId?: string; taskId?: string; fresh?: boolean }) {
   // Les demandes d'autorisation doivent se voir depuis n'importe quel onglet.
   const [pending, setPending] = useState(0);
   useEffect(() => {
@@ -59,7 +59,7 @@ export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; v
           </div>
           <div className="project-actions">
             {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
-            <a className="concevoir-btn" href={`#/p/${slug}/concevoir`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
+            <a className="concevoir-btn" href={`#/p/${slug}/concevoir${view === "discussion" && threadId ? `/${threadId}` : ""}`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
               <Icon name="sparkle" size={15} /> Concevoir
             </a>
           </div>
@@ -92,7 +92,7 @@ export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; v
           </a>
         ))}
       </nav>
-      {view === "discussion" && <ProjectView slug={slug} threadId={threadId} />}
+      {view === "discussion" && <ProjectView slug={slug} threadId={threadId} fresh={fresh} />}
       {view === "decisions" && <DecisionsView slug={slug} />}
       {view === "vision" && <VisionView slug={slug} />}
       {view === "tasks" && <TasksView slug={slug} taskId={taskId} />}

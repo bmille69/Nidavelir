@@ -5,7 +5,9 @@ import { DirectorPanel } from "../studio/Choices.tsx";
 import { WorkshopPanel } from "../studio/Workshop.tsx";
 import { Capture } from "../studio/Capture.tsx";
 import { Linkify } from "../studio/Linkify.tsx";
-import { navigate } from "../App.tsx";
+import { href, navigate } from "../App.tsx";
+import { ThreadList, useSeen } from "../studio/ThreadList.tsx";
+import { Icon } from "../studio/Icon.tsx";
 import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -26,7 +28,7 @@ type Panel = "noted" | "inbox" | "canon";
 const PAGE = 50;
 const sourceOf = (i: Item) => (i.source.kind === "file" ? i.source.ref.split("#")[0]! : "conversations");
 
-export function ProjectView({ slug, threadId }: { slug: string; threadId?: string }) {
+export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?: string; fresh?: boolean }) {
   const autonomy = useStudio()?.projects.find((p) => p.slug === slug)?.autonomy ?? "supervised";
   const auto = autonomy !== "supervised";
   const workshop = autonomy === "workshop";
@@ -50,9 +52,30 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   // En autonomie, rien n'est « à trier » : on montre tout ce qui est noté.
   const onlyNew = onlyNewChoice && !auto;
 
+  // Les discussions bougent toutes seules (le Concepteur ou le hub y écrivent) : on les suit.
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
+  const loadThreads = useCallback(
+    () =>
+      api.threads(slug).then((ts) => {
+        setThreads(ts);
+        setThreadsLoaded(true);
+      }),
+    [slug],
+  );
   useEffect(() => {
-    api.threads(slug).then(setThreads);
-  }, [slug]);
+    setThreadsLoaded(false);
+    void loadThreads().catch(() => {});
+    const t = setInterval(() => void loadThreads().catch(() => {}), 4000);
+    return () => clearInterval(t);
+  }, [loadThreads]);
+  const { markSeen, unread } = useSeen(slug, threads, threadsLoaded);
+
+  // En ouvrant le projet, on vous place sur la discussion en vigueur : la plus récemment active.
+  useEffect(() => {
+    if (threadId || fresh || !threadsLoaded) return;
+    const latest = threads.find((t) => (t.messages ?? 0) > 0);
+    if (latest) window.location.replace(href({ page: "project", slug, thread: latest.id }));
+  }, [threadId, fresh, threadsLoaded, threads, slug]);
 
   // La discussion courante est lue via une référence : un rafraîchissement lancé juste avant
   // la création d'une discussion ne doit pas effacer les messages de la nouvelle.
@@ -88,12 +111,19 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, sending]);
 
-  async function newThread() {
-    const t = await api.createThread(slug, "");
-    setThreads((ts) => [t, ...ts]);
-    setPanel("noted");
-    navigate({ page: "project", slug, thread: t.id });
+  // Ce que vous voyez est lu : la pastille de cette discussion disparaît.
+  useEffect(() => {
+    const last = messages.at(-1);
+    if (threadId && last && last.thread === threadId && last.id !== "pending") markSeen(threadId, last.seq);
+  }, [messages, threadId]);
+
+  /** Une page blanche : rien n'est créé avant votre premier message (un clic de trop ne laisse aucune trace). */
+  function newThread() {
+    setMessages([]);
+    navigate({ page: "project", slug, fresh: true });
   }
+
+  const news = threads.filter((t) => t.id !== threadId && unread(t) > 0);
 
   async function send() {
     const text = draft.trim();
@@ -173,24 +203,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
           {waiting > 0 && <span className="count warn">{waiting}</span>}
         </button>
       </div>
-      <aside className="threads">
-        <h2>Discussions</h2>
-        <button onClick={newThread}>Nouvelle discussion</button>
-        <ul>
-          {threads.map((t) => (
-            <li key={t.id}>
-              <a className={t.id === threadId ? "active" : ""} href={`#/p/${slug}/t/${t.id}`}>
-                {t.title}
-              </a>
-            </li>
-          ))}
-        </ul>
-        {visible.length > shown && (
-          <button className="secondary small" onClick={() => setShown((n) => n + PAGE)}>
-            Afficher {Math.min(PAGE, visible.length - shown)} de plus ({visible.length - shown} restants)
-          </button>
-        )}
-      </aside>
+      <ThreadList slug={slug} threads={threads} current={threadId} fresh={fresh && !threadId} unread={unread} onNew={newThread} onRenamed={() => void loadThreads()} />
 
       <section className="conversation">
         <div className="mode-bar">
@@ -208,6 +221,15 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
             </a>
           )}
         </div>
+        {news.length > 0 && (
+          <div className="thread-news" role="status">
+            {news.slice(0, 2).map((t) => (
+              <a key={t.id} href={`#/p/${slug}/t/${t.id}`}>
+                <span className="live-dot" /> Du nouveau dans « {t.title} » ({unread(t)}) <Icon name="arrow" size={14} />
+              </a>
+            ))}
+          </div>
+        )}
         <div className="messages">
           {!threadId && messages.length === 0 && (
             <div className="empty">
@@ -384,6 +406,11 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
             </li>
           ))}
         </ul>
+        {visible.length > shown && (
+          <button className="secondary small" onClick={() => setShown((n) => n + PAGE)}>
+            Afficher {Math.min(PAGE, visible.length - shown)} de plus ({visible.length - shown} restants)
+          </button>
+        )}
       </aside>
       )}
     </main>

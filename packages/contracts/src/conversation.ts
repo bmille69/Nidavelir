@@ -10,6 +10,11 @@ export const Thread = z.object({
   title: z.string(),
   mode: ThreadMode,
   created_at: z.string(),
+  /** Activité (liste des discussions) : nombre de messages, dernier message et son auteur. */
+  messages: z.number().optional(),
+  last_seq: z.number().optional(),
+  last_at: z.string().nullable().optional(),
+  last_role: z.enum(["human", "director"]).nullable().optional(),
 });
 export type Thread = z.infer<typeof Thread>;
 
