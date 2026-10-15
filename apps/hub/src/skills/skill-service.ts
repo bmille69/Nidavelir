@@ -203,7 +203,10 @@ export class SkillService {
   /** Réactions aux changements de statut d'une tâche. */
   onTaskStatus(task: Task): void {
     if (task.status === "changes_requested" && task.feedback.length) this.learn(task.project, task.id, `Corrections demandées par le directeur créatif : « ${task.feedback.at(-1)} »`);
-    if (task.status === "abandoned") this.learn(task.project, task.id, "Le directeur créatif a abandonné ce chantier (résultat non retenu).");
+    // Un brouillon jamais lancé n'a produit aucun résultat : il n'y a rien à en apprendre.
+    if (task.status === "abandoned" && this.#tasks?.runs(task.project, task.id).length) {
+      this.learn(task.project, task.id, "Le directeur créatif a abandonné ce chantier (résultat non retenu).");
+    }
   }
 
   async idle(): Promise<void> {

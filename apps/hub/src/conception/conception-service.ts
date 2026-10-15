@@ -22,7 +22,8 @@ export class ConceptionError extends Error {
   }
 }
 
-export type ConceptionData = Omit<ConceptTurn, "reply" | "questions"> & { questions: ConceptTurn["questions"]; error?: string };
+/** `thread` : discussion d'où le directeur a demandé la conception (ADR-34) ; les chantiers y reviendront. */
+export type ConceptionData = Omit<ConceptTurn, "reply" | "questions" | "transmettre"> & { questions: ConceptTurn["questions"]; error?: string; thread?: string };
 export type Conception = {
   id: string;
   kind: "project" | "feature";
@@ -60,6 +61,10 @@ export class ConceptionService {
   onTurn: ((c: Conception) => void) | null = null;
   /** Compétences ajoutées aux consignes du Concepteur (ADR-29). */
   skills: { promptBlock(agent: "concepteur", project: string | null): string } | null = null;
+  /** Racine des jeux, pour créer un projet quand vous dites « transmets » (posée par le serveur). */
+  gamesRoot: string | null = null;
+  /** État du jeu et chantiers du projet, pour une fonctionnalité d'un jeu existant (ADR-34). */
+  projectState: ((project: string) => string) | null = null;
 
   constructor(deps: {
     db: Db;
@@ -136,6 +141,26 @@ export class ConceptionService {
       .run(c.id, c.kind, c.project, c.title, c.status, JSON.stringify(c.data), now, now);
     this.#journal.append({ project: c.project, actor: { kind: "human" }, type: "conception.started", subject: c.id, payload: { kind: c.kind } });
     this.#insert(c.id, "human", idea, null, null);
+    this.#track(this.#turn(c.id, session));
+    return c;
+  }
+
+  /**
+   * Le directeur confie une grosse demande au Concepteur (ADR-34), depuis une discussion.
+   * Vous répondez ensuite au Concepteur sur sa page ; les chantiers reviendront dans cette discussion.
+   */
+  startDelegated(project: string, input: { idea: string; thread: string }): Conception {
+    const p = this.#projects.get(project);
+    if (p.autonomy !== "workshop") throw new ConceptionError("Réservé au mode atelier");
+    const idea = input.idea.trim();
+    if (!idea) throw new ConceptionError("Sujet de conception vide");
+    const now = this.#clock.now();
+    const c: Conception = { id: randomUUID(), kind: "feature", project, title: idea.split("\n")[0]!.slice(0, 60), status: "thinking", data: { ...EMPTY, thread: input.thread }, created_at: now, updated_at: now };
+    this.#db
+      .prepare("INSERT INTO conceptions (id, kind, project, title, status, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(c.id, c.kind, c.project, c.title, c.status, JSON.stringify(c.data), now, now);
+    this.#journal.append({ project, actor: { kind: "agent", role: "director", run: "autopilot" }, type: "conception.started", subject: c.id, payload: { kind: c.kind, thread: input.thread } });
+    this.#insert(c.id, "human", `(Demande transmise par le directeur, depuis votre discussion)\n\n${idea}`, null, null);
     this.#track(this.#turn(c.id));
     return c;
   }
@@ -149,7 +174,7 @@ export class ConceptionService {
     if (!text.trim()) throw new ConceptionError("Message vide");
     this.#insert(id, "human", text.trim(), null, null);
     this.#update(id, { status: "thinking" });
-    this.#track(this.#turn(id));
+    this.#track(this.#turn(id, session));
     return this.get(id);
   }
 
@@ -157,10 +182,10 @@ export class ConceptionService {
    * « Créer le projet » : dossier du jeu, Git, CLAUDE.md, dossier de conception, discussion
    * « Conception » et premiers chantiers en attente (mode atelier). Rien n'est lancé.
    */
-  async createProject(session: HumanSession, id: string, gamesRoot: string): Promise<{ project: Project; tasks: string[] }> {
+  async createProject(session: HumanSession, id: string, gamesRoot: string, opts: { launch?: boolean } = {}): Promise<{ project: Project; tasks: string[]; thread: string | null }> {
     assertHumanSession(session);
     const c = this.get(id);
-    if (c.kind !== "project" || c.status !== "open") throw new ConceptionError("Cette conception ne peut pas créer de projet");
+    if (c.kind !== "project" || c.status === "done") throw new ConceptionError("Cette conception ne peut pas créer de projet");
     if (!c.data.ready) throw new ConceptionError("La conception n'est pas encore prête : répondez d'abord aux questions bloquantes");
     const slug = slugify(c.data.title);
     const root = join(gamesRoot, slug);
@@ -170,41 +195,112 @@ export class ConceptionService {
     if (c.data.claude_md.trim()) writeFileSync(join(root, "CLAUDE.md"), c.data.claude_md.trim() + "\n", "utf8");
     writeFileSync(join(root, "studio", "conception.md"), c.data.dossier.trim() + "\n", "utf8");
     await this.#vcs.commitPaths(root, ["CLAUDE.md", "studio"].filter((p) => existsSync(join(root, p))), `conception: dossier initial de ${c.data.title}`);
-    const tasks = this.#seed(project.slug, c, `Conception : ${c.data.title}`);
+    const { tasks, thread } = await this.#seed(project.slug, c, { dossier: "studio/conception.md", launch: !!opts.launch });
     this.#finish(id, project.slug, { tasks });
-    return { project, tasks };
+    return { project, tasks, thread };
   }
 
   /** « Ajouter les chantiers » : dossier dans studio/conceptions/, discussion et chantiers en attente dans le projet. */
   async addToProject(session: HumanSession, id: string): Promise<{ tasks: string[] }> {
     assertHumanSession(session);
+    return this.#addToProject(id, { launch: false });
+  }
+
+  /** Dossier dans le jeu, chantiers créés ; `launch` : mis en file d'attente tout de suite (« transmets », ADR-34). */
+  async #addToProject(id: string, opts: { launch: boolean }): Promise<{ tasks: string[]; thread: string | null }> {
     const c = this.get(id);
-    if (c.kind !== "feature" || c.status !== "open" || !c.project) throw new ConceptionError("Cette conception ne peut pas être ajoutée à un projet");
+    if (c.kind !== "feature" || c.status === "done" || !c.project) throw new ConceptionError("Cette conception ne peut pas être ajoutée à un projet");
     const p = this.#projects.get(c.project);
     const dir = join(p.root, "studio", "conceptions");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${slugify(c.data.title)}.md`), c.data.dossier.trim() + "\n", "utf8");
+    const file = `${slugify(c.data.title)}.md`;
+    writeFileSync(join(dir, file), c.data.dossier.trim() + "\n", "utf8");
     await this.#vcs.commitPaths(p.root, ["studio"], `conception: ${c.data.title}`);
-    const tasks = this.#seed(p.slug, c, `Conception : ${c.data.title}`);
+    const { tasks, thread } = await this.#seed(p.slug, c, { dossier: `studio/conceptions/${file}`, launch: opts.launch });
     this.#finish(id, p.slug, { tasks });
-    return { tasks };
+    return { tasks, thread };
+  }
+
+  /**
+   * Vous avez dit « transmets » au Concepteur (ADR-34) : sans bouton ni copier-coller, le dossier
+   * part dans le jeu et les chantiers dans la file de l'équipe. Le Concepteur vous le confirme.
+   */
+  async #handoff(id: string, session?: HumanSession): Promise<void> {
+    const c = this.get(id);
+    if (c.status === "done") return;
+    const say = (text: string) => this.#insert(id, "concepteur", text, null, null);
+    if (!c.data.ready || !c.data.chantiers.length) {
+      say("Je ne peux pas encore transmettre : il reste des questions à trancher ou aucun chantier n'est prêt. Répondez-moi et je transmets dès que c'est bon.");
+      return;
+    }
+    try {
+      let project: string;
+      let r: { tasks: string[]; thread: string | null };
+      if (c.kind === "feature") {
+        project = c.project!;
+        r = await this.#addToProject(id, { launch: true });
+      } else {
+        if (!session || !this.gamesRoot) {
+          say("Pour créer le projet, cliquez sur « ✦ Créer le projet » en bas du dossier, à droite.");
+          return;
+        }
+        const created = await this.createProject(session, id, this.gamesRoot, { launch: true });
+        project = created.project.slug;
+        r = created;
+      }
+      const auto = this.#projects.get(project).autonomy === "workshop";
+      say(
+        [
+          `✓ C'est transmis à l'équipe : ${r.tasks.length} chantier(s) (${r.tasks.join(", ")}).`,
+          auto
+            ? "Ils partent un par un, dans l'ordre ; le développeur reçoit pour chacun la consigne complète et le dossier de conception, sans résumé."
+            : "Ils attendent dans « Chantiers » : lancez-les quand vous voulez.",
+          r.thread ? `Suivez-les dans la discussion du projet : #/p/${project}/t/${r.thread}` : `Suivez-les dans le projet : #/p/${project}`,
+        ].join("\n"),
+      );
+    } catch (err) {
+      say(`Je n'ai pas pu transmettre : ${(err as Error).message.slice(0, 300)}`);
+    }
   }
 
   async idle(): Promise<void> {
     while (this.#background.size) await Promise.allSettled([...this.#background]);
   }
 
-  /** Crée la discussion de suivi et les chantiers en attente (lancés un à un par vous ou par « go »). */
-  #seed(project: string, c: Conception, threadTitle: string): string[] {
-    if (this.#projects.get(project).autonomy === "supervised") return [];
-    const thread = this.#conversations.createThread(project, threadTitle);
+  /**
+   * Crée les chantiers de la conception, chacun avec sa consigne complète et le chemin du dossier
+   * (le développeur le lit dans sa copie du jeu), dans la discussion d'origine ou une discussion dédiée.
+   * `launch` : en atelier, ils partent tout de suite, un à la fois (file d'attente, ADR-31).
+   */
+  async #seed(project: string, c: Conception, opts: { dossier: string; launch: boolean }): Promise<{ tasks: string[]; thread: string | null }> {
+    const p = this.#projects.get(project);
+    if (p.autonomy === "supervised") return { tasks: [], thread: null };
+    let thread = c.data.thread ?? null;
+    try {
+      if (thread) this.#conversations.getThread(project, thread);
+    } catch {
+      thread = null;
+    }
+    thread ??= this.#conversations.createThread(project, `Conception : ${c.data.title}`).id;
+    const launch = opts.launch && p.autonomy === "workshop";
     const list = c.data.chantiers.map((ch, k) => `${k + 1}. ${ch.title}`).join("\n");
     this.#conversations.notify(
       project,
-      thread.id,
-      `Conception « ${c.data.title} » terminée. Le dossier est dans studio/${c.kind === "project" ? "conception.md" : "conceptions/"}.\n\nPremiers chantiers, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
+      thread,
+      launch
+        ? `Conception « ${c.data.title} » transmise par le Concepteur. Le dossier est dans ${opts.dossier}.\n\nChantiers, réalisés un par un dans cet ordre (chacun reçoit sa consigne complète et le dossier) :\n${list || "(aucun)"}\n\nParlez-moi ici pour ajuster ou arrêter quoi que ce soit.`
+        : `Conception « ${c.data.title} » terminée. Le dossier est dans ${opts.dossier}.\n\nPremiers chantiers, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
     );
-    return c.data.chantiers.map((ch) => this.#tasks.createFromConversation(project, { title: ch.title, goal: ch.goal }, thread.id).id);
+    const tasks = c.data.chantiers.map(
+      (ch) =>
+        this.#tasks.createFromConversation(
+          project,
+          { title: ch.title, goal: `${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Lis-le avant de commencer : piliers, choix faits, contraintes et étapes.`.slice(0, 4000) },
+          thread!,
+        ).id,
+    );
+    if (launch) for (const id of tasks) await this.#tasks.launch(project, id);
+    return { tasks, thread };
   }
 
   #finish(id: string, project: string, payload: Record<string, unknown>): void {
@@ -212,7 +308,7 @@ export class ConceptionService {
     this.#journal.append({ project, actor: { kind: "human" }, type: "conception.done", subject: id, payload });
   }
 
-  async #turn(id: string): Promise<void> {
+  async #turn(id: string, session?: HumanSession): Promise<void> {
     const c = this.get(id);
     try {
       const context = c.kind === "feature" && c.project ? await this.#featureContext(c.project) : "";
@@ -234,8 +330,12 @@ export class ConceptionService {
       // Le hub numérote lui-même les chantiers : on retire « 1. » ou « 1) » en tête de titre.
       const turn = { ...parsed, chantiers: parsed.chantiers.map((ch) => ({ ...ch, title: ch.title.replace(/^\s*\d+\s*[.)-]\s*/, "") })) };
       this.#insert(id, "concepteur", turn.reply, turn, costUsd);
-      const { reply: _r, ...rest } = turn;
-      this.#update(id, { status: "open", title: turn.title, data: { ...rest, claude_md: c.kind === "project" ? turn.claude_md : "" } });
+      const { reply: _r, transmettre, ...rest } = turn;
+      this.#update(id, { status: transmettre ? "thinking" : "open", title: turn.title, data: { ...rest, thread: c.data.thread, claude_md: c.kind === "project" ? turn.claude_md : "" } });
+      if (transmettre) {
+        await this.#handoff(id, session);
+        if (this.get(id).status === "thinking") this.#update(id, { status: "open" });
+      }
       this.onTurn?.(this.get(id));
     } catch (err) {
       this.#insert(id, "concepteur", `Je n'ai pas pu terminer ma réponse : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null, null);
@@ -255,6 +355,7 @@ export class ConceptionService {
       code.claudeMd ? `<consignes_du_projet source="CLAUDE.md">\n${esc(code.claudeMd)}\n</consignes_du_projet>` : "",
       code.files.length ? `<fichiers_du_jeu total="${code.totalFiles}">\n${code.files.join("\n")}\n</fichiers_du_jeu>` : "",
       bible ? `<bible_du_jeu>\n${esc(bible)}\n</bible_du_jeu>` : "",
+      this.projectState?.(project) ?? "",
     ]
       .filter(Boolean)
       .join("\n\n");

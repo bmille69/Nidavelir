@@ -395,6 +395,16 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 
   Un échec de mise à jour garde l'ancien carnet.
 
+### ADR-34 : le Concepteur, le directeur et le développeur se passent la main
+**Statut** : **Validée** le 15/10/2026, à la suite d'un incident.
+- **Incident** (`bordee`, conception « Résolution en 3D ») : le dossier et les 7 chantiers étaient prêts, mais un bouton (« Ajouter les chantiers ») restait à cliquer, ce que rien n'indiquait. Le Concepteur a affirmé les avoir « mis dans un dossier », introuvable. Le directeur créatif a dû copier-coller la réponse au directeur, qui l'a résumée (T-0029) : de la consigne a été perdue.
+- **« Transmets » au Concepteur** (`transmettre` dans sa réponse, seulement si `ready`) : le hub écrit le dossier dans le jeu (`studio/conceptions/<titre>.md`, commit), crée les chantiers dans l'ordre et, en atelier, les met **tout de suite en file** (ADR-31). Le Concepteur confirme avec le lien vers la discussion. Pour un nouveau jeu, la même phrase crée le projet. Les boutons restent disponibles. S'il n'est pas prêt, il le dit et ne crée rien.
+- **Pas de résumé en route** : chaque chantier garde la consigne complète écrite par le Concepteur, suivie du chemin du dossier, que le développeur lit dans sa copie du jeu.
+- **Le Concepteur connaît le projet** : pour une fonctionnalité, il reçoit, comme le directeur, le carnet « État du jeu », la liste des chantiers et la séance en cours. Il ne refait donc pas ce qui existe, et il sait retirer un chantier déjà fait avant de transmettre. Ses consignes lui interdisent de demander un copier-coller.
+- **Le directeur confie une grosse demande** : `[[CONCEVOIR]] sujet et contexte [[/CONCEVOIR]]`. Le hub ouvre une conception liée à la discussion et donne le lien vers la page du Concepteur ; à la transmission, les chantiers reviennent **dans cette discussion**. Le directeur voit les conceptions du projet (`<conceptions>` : en cours, questions en attente, prête, transmise).
+- Les liens internes (`#/c/…`, `#/p/…`) sont cliquables dans les messages.
+- **Au passage** : un brouillon jamais lancé puis abandonné n'apprend plus de « leçon » et ne compte plus dans « Qualité ». Les 5 anciens brouillons de `bordee` (T-0002 à T-0006, refaits sous T-0007 à T-0011) ont été abandonnés.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

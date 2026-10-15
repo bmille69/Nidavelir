@@ -991,3 +991,7 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Liens internes dans les messages des agents (ADR-34) */
+.inline-link { display: inline-flex; align-items: center; margin: 0.15rem 0; padding: 0.15rem 0.6rem; border-radius: 999px; font-weight: 650; font-size: 0.86rem; background: var(--accent-soft); border: 1px solid rgba(139, 123, 255, 0.4); white-space: nowrap; }
+.inline-link:hover { background: rgba(139, 123, 255, 0.25); }

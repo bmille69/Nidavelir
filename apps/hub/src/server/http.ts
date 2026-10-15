@@ -95,6 +95,8 @@ const Body = {
 export async function buildServer(hub: Hub, options: ServerOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   await app.register(cookie);
+  // « Transmets » au Concepteur peut créer un nouveau jeu dans la racine des jeux (ADR-34).
+  hub.conceptions.gamesRoot = options.gamesRoot;
   const fixedHosts = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
   // Les hôtes Tailscale (« mon-pc.tail1234.ts.net ») s'ajoutent quand le hub y est publié (ADR-30).
   const allowed = { has: (h: string) => fixedHosts.has(h) || hub.extraHosts.has(h) };

@@ -313,10 +313,12 @@ export type Directives = {
   launch: string[];
   /** Corrections que vous demandez sur un chantier à relire. */
   fixes: { task: string; note: string }[];
+  /** Grosse demande confiée au Concepteur (ADR-34) : le sujet, avec le contexte utile de la discussion. */
+  concevoir: string | null;
 };
 
 export const hasDirectives = (d: Directives) =>
-  d.requests.length + d.merge.length + d.abandon.length + d.launch.length + d.fixes.length > 0 || d.session !== null || d.endSession;
+  d.requests.length + d.merge.length + d.abandon.length + d.launch.length + d.fixes.length > 0 || d.session !== null || d.endSession || d.concevoir !== null;
 
 /** Séparateur entre la réponse du directeur et la consigne envoyée au développeur (affichée repliée). */
 export const BRIEF_MARK = "§CONSIGNE§ ";
@@ -341,7 +343,7 @@ export function parseDuration(s: string): number | null {
  * - [[IMPLEMENTER: titre | objectif | D-0001, D-0002]] (hors atelier, la liste de décisions est facultative).
  */
 export function parseDirectives(text: string): { text: string; directives: Directives } {
-  const d: Directives = { requests: [], session: null, endSession: false, merge: [], abandon: [], launch: [], fixes: [] };
+  const d: Directives = { requests: [], session: null, endSession: false, merge: [], abandon: [], launch: [], fixes: [], concevoir: null };
   let out = text;
   const take = (re: RegExp, fn: (m: RegExpExecArray) => void) => {
     out = out.replace(re, (...args) => {
@@ -358,6 +360,9 @@ export function parseDirectives(text: string): { text: string; directives: Direc
   take(/\[\[\s*CORRIGER\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*CORRIGER\s*\]\]/gi, (m) => {
     const task = m[1]!.match(TASK_IDS)?.[0];
     if (task && m[2]!.trim()) d.fixes.push({ task, note: m[2]!.trim().slice(0, 2000) });
+  });
+  take(/\[\[\s*CONCEVOIR\s*\]\]([\s\S]*?)\[\[\s*\/\s*CONCEVOIR\s*\]\]/gi, (m) => {
+    if (m[1]!.trim()) d.concevoir = m[1]!.trim().slice(0, 4000);
   });
   take(/\[\[\s*S[EÉ]ANCE\s*:([^\]]*)\]\]/gi, (m) => {
     const [duration = "", goal = ""] = m[1]!.split("|").map((s) => s.trim());

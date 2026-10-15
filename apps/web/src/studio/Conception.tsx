@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Linkify } from "./Linkify.tsx";
 import { navigate } from "../App.tsx";
 import { api, type Conception, type ConceptionMessage, type ConceptQuestion } from "../api.ts";
 import { AgentAvatar } from "./AgentAvatar.tsx";
@@ -150,7 +151,9 @@ export function ConceptionView({ id }: { id: string }) {
           {messages.map((m) => (
             <div key={m.id} className={`msg ${m.role === "human" ? "human" : "director"}`}>
               <div className="who">{m.role === "human" ? "Vous" : "Concepteur"}</div>
-              <div className="text">{m.text}</div>
+              <div className="text">
+                <Linkify text={m.text} />
+              </div>
             </div>
           ))}
           {thinking && (

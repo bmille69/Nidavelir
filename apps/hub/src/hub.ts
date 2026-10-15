@@ -177,6 +177,13 @@ export function createHub(options: HubOptions): Hub {
   };
   const conceptions = new ConceptionService({ db, clock, journal, projects, tasks, conversations, vision, vcs, orchestrator, web: options.conceptWeb ?? true });
   conceptions.skills = skills;
+  // Le directeur et le Concepteur se passent la main (ADR-34) : conception demandée depuis une discussion,
+  // état du jeu et chantiers montrés au Concepteur.
+  if (autopilot) {
+    autopilot.conceptions = conceptions;
+    const pilot = autopilot;
+    conceptions.projectState = (project) => pilot.workshopState(project);
+  }
   // Téléphone (ADR-30) : notifications sur vos appareils pour ce qui vous attend.
   const notifications = new NotificationService({ db, clock, journal, subject: options.pushSubject, fetch: options.pushFetch });
   const projectName = (slug: string) => {

@@ -134,7 +134,9 @@ export class QualityService {
       const reworkedBy = new Map<string, string[]>();
       for (const t of tasks) for (const r of t.reworks) reworkedBy.set(r, [...(reworkedBy.get(r) ?? []), t.id]);
       const reverted = await this.#vcs.revertedCommits(this.#projects.get(slug).root).catch(() => [] as string[]);
-      chantiers.push(...tasks.map((t) => this.#row(t, reworkedBy.get(t.id) ?? [], reverted)));
+      // Un brouillon jamais lancé n'est pas un chantier : ni réussi ni raté.
+      const launched = tasks.filter((t) => this.#tasks.runs(slug, t.id).length > 0);
+      chantiers.push(...launched.map((t) => this.#row(t, reworkedBy.get(t.id) ?? [], reverted)));
     }
     chantiers.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
     const byWeek = new Map<string, ChantierRow[]>();

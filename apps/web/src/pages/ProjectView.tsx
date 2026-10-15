@@ -4,6 +4,7 @@ import { AUTONOMY } from "../studio/Autonomy.tsx";
 import { DirectorPanel } from "../studio/Choices.tsx";
 import { WorkshopPanel } from "../studio/Workshop.tsx";
 import { Capture } from "../studio/Capture.tsx";
+import { Linkify } from "../studio/Linkify.tsx";
 import { navigate } from "../App.tsx";
 import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
@@ -399,7 +400,11 @@ function MessageText({ text, slug }: { text: string; slug: string }) {
   const [intro, ...briefs] = text.replace(CAPTURE, "").split(BRIEF_MARK);
   return (
     <>
-      {intro!.trim() && <div className="text">{intro!.trim()}</div>}
+      {intro!.trim() && (
+        <div className="text">
+          <Linkify text={intro!.trim()} />
+        </div>
+      )}
       {shot && <Capture slug={slug} task={shot[1]!} version={shot[2]!} />}
       {briefs.map((b, k) => {
         const [title, ...rest] = b.split("\n");

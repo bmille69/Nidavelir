@@ -44,6 +44,7 @@ async function settle(hub: Hub) {
     await hub.tasks.idle();
     await hub.autopilot?.idle();
     await hub.gameState.idle();
+    await hub.conceptions.idle();
   }
 }
 
@@ -580,7 +581,7 @@ describe("tableau Qualité", () => {
     expect(() => hub.quality.rate(sb.human(), P, draft.id, "down")).toThrow(/terminé/);
 
     const { overall, weeks, chantiers } = await hub.quality.report(P);
-    expect(overall).toMatchObject({ launched: 3, merged: 1, abandoned: 1, first_try: 1, success_rate: 0.5, first_try_rate: 0.5, up: 1, down: 0 });
+    expect(overall).toMatchObject({ launched: 2, merged: 1, abandoned: 1, first_try: 1, success_rate: 0.5, first_try_rate: 0.5, up: 1, down: 0 });
     // Le chantier abandonné compte aussi : (2 + 4 étapes) × 0,01 $ pour 1 fusionné.
     expect(overall.cost_per_merged).toBeCloseTo(0.06, 5);
     expect(overall.interventions_per_chantier).toBe(0);
@@ -715,5 +716,95 @@ describe("état du jeu (ADR-33)", () => {
     // Le 2e carnet repart du premier ; un échec (ici, pas de réponse valable) garde l'ancien.
     expect(fake.calls.filter((c) => c.kind === "structured")[1]!.prompt).toMatch(/<carnet_actuel>\n## Ce qui existe\n- Grille de 10×10/);
     expect(hub.gameState.get(P)!.task).toBe("T-0001");
+  });
+});
+
+describe("Concepteur, directeur et développeur se passent la main (ADR-34)", () => {
+  const conceptTurn = (over: Record<string, unknown> = {}) => ({
+    reply: "Voici le dossier du système de craft.",
+    questions: [],
+    title: "Système de craft",
+    engine: "",
+    dossier: "# Système de craft\n## En une phrase\nFabriquer ses armes avec les débris des boss.",
+    chantiers: [
+      { title: "Recettes", goal: "Objectif : un fichier de recettes et ses tests." },
+      { title: "Établi", goal: "Objectif : l'écran d'établi qui utilise les recettes." },
+    ],
+    ready: true,
+    claude_md: "",
+    sources: [],
+    transmettre: false,
+    ...over,
+  });
+  const twoChantiers = (exec: FakeExecutor) => {
+    for (const f of ["recettes.ts", "etabli.ts"]) {
+      exec.scripts.execute.push(async (t) => {
+        await t.write(`src/${f}`, "export {};\n");
+        return REPORT;
+      });
+      exec.scripts.verify.push(() => VERIFIED);
+    }
+  };
+
+  it("« transmets » au Concepteur : dossier dans le jeu, chantiers en file, consigne complète au développeur", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    twoChantiers(exec);
+    fake.extractions.push(() => conceptTurn({ transmettre: true }) as never);
+    const c = hub.conceptions.start(sb.human(), { kind: "feature", project: P, idea: "un système de craft" });
+    await settle(hub);
+
+    // Le Concepteur voyait l'état du projet (chantiers, séance…) comme le directeur.
+    expect(fake.calls.find((x) => x.kind === "structured")!.systemPrompt).toMatch(/<chantiers>/);
+    const last = hub.conceptions.messages(c.id).at(-1)!.text;
+    expect(last).toMatch(/^✓ C'est transmis à l'équipe : 2 chantier\(s\) \(T-0001, T-0002\)\./);
+    expect(last).toMatch(/Suivez-les dans la discussion du projet : #\/p\/destiny\/t\/[\w-]+/);
+    expect(hub.conceptions.get(c.id).status).toBe("done");
+    const root = hub.projects.get(P).root;
+    expect(git(root, "show", "HEAD~2:studio/conceptions/systeme-de-craft.md")).toMatch(/débris des boss/);
+    // Un par un, dans l'ordre, sans copier-coller : la consigne complète et le chemin du dossier.
+    expect(exec.requests.filter((r) => r.kind === "execute").map((r) => /<consigne_du_directeur>\n(T-\d+)/.exec(r.prompt)![1])).toEqual(["T-0001", "T-0002"]);
+    expect(exec.requests[0]!.prompt).toMatch(/Objectif : un fichier de recettes et ses tests\.\n\nDossier de conception complet : studio\/conceptions\/systeme-de-craft\.md/);
+    expect(hub.tasks.list(P).map((t) => t.status)).toEqual(["merged", "merged"]);
+  });
+
+  it("pas prêt : le Concepteur le dit, rien n'est créé", async () => {
+    const { sb, hub, fake } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    fake.extractions.push(() => conceptTurn({ ready: false, transmettre: true }) as never);
+    const c = hub.conceptions.start(sb.human(), { kind: "feature", project: P, idea: "un système de craft" });
+    await settle(hub);
+    expect(hub.conceptions.messages(c.id).at(-1)!.text).toMatch(/Je ne peux pas encore transmettre/);
+    expect(hub.conceptions.get(c.id).status).toBe("open");
+    expect(hub.tasks.list(P)).toEqual([]);
+  });
+
+  it("le directeur confie une grosse demande au Concepteur ; les chantiers reviennent dans la discussion", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    twoChantiers(exec);
+    fake.replies.push("C'est un gros sujet : je le confie au Concepteur.\n[[CONCEVOIR]]\nUn système de craft à partir des débris des boss. Le directeur créatif veut que ça reste simple.\n[[/CONCEVOIR]]");
+    fake.extractions.push(() => conceptTurn({ ready: false, questions: [{ question: "Combien de recettes ?", why: "Périmètre", options: [{ label: "5", detail: "" }, { label: "10", detail: "" }], recommended: "5" }] }) as never);
+    const t = hub.conversations.createThread(P, "Craft");
+    const { director } = await hub.conversations.send(P, t.id, "je veux un système de craft complet");
+    await settle(hub);
+
+    expect(director.text).toBe("C'est un gros sujet : je le confie au Concepteur.");
+    const [c] = hub.conceptions.list();
+    expect(c).toMatchObject({ kind: "feature", project: P, data: { thread: t.id } });
+    expect(hub.conceptions.messages(c!.id)[0]!.text).toMatch(/^\(Demande transmise par le directeur, depuis votre discussion\)\n\nUn système de craft à partir des débris/);
+    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(new RegExp(`✦ Conception confiée au Concepteur : « .+ »\. .*#/c/${c!.id}`));
+    // Le directeur voit la conception en cours.
+    fake.replies.push("Le Concepteur attend vos réponses.");
+    await hub.conversations.send(P, t.id, "où en est le craft ?");
+    expect(fake.calls.filter((x) => x.kind === "reply").at(-1)!.systemPrompt).toMatch(/<conceptions [^>]*>\n- « Système de craft » : attend les réponses du directeur créatif/);
+
+    // Vous répondez au Concepteur et dites « transmets » : les chantiers reviennent dans la discussion d'origine.
+    fake.extractions.push(() => conceptTurn({ transmettre: true }) as never);
+    hub.conceptions.reply(sb.human(), c!.id, "5 recettes, c'est bon, transmets");
+    await settle(hub);
+    expect(hub.tasks.list(P).map((x) => x.origin?.thread)).toEqual([t.id, t.id]);
+    expect(hub.conversations.messages(P, t.id).map((m) => m.text).join("\n")).toMatch(/Conception « Système de craft » transmise par le Concepteur/);
+    expect(hub.tasks.list(P).map((x) => x.status)).toEqual(["merged", "merged"]);
   });
 });

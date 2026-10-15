@@ -58,6 +58,11 @@ export class Autopilot {
   readonly #sessions = new Map<string, Session>();
   /** Fusions faites par le hub (le compte rendu les annonce déjà). */
   readonly #autoMerging = new Set<string>();
+  /** Le Concepteur, à qui le directeur peut confier une grosse demande (ADR-34). */
+  conceptions: {
+    startDelegated(project: string, input: { idea: string; thread: string }): { id: string; title: string };
+    list(): { id: string; kind: string; project: string | null; title: string; status: string; data: { ready: boolean; questions: unknown[]; chantiers: { title: string }[] } }[];
+  } | null = null;
   /** Carnet « État du jeu » montré au directeur (ADR-33). */
   gameState: { get(project: string): { text: string } | null } | null = null;
   /** Vérifications objectives avant fusion (ADR-32) ; absent = fusion sur le seul avis du testeur. */
@@ -292,6 +297,12 @@ export class Autopilot {
         return `${id} abandonné : ses modifications sont supprimées, votre jeu reste intact.`;
       });
     }
+    if (d.concevoir && this.conceptions) {
+      await attempt("Concepteur", async () => {
+        const c = this.conceptions!.startDelegated(project, { idea: d.concevoir!, thread });
+        return `✦ Conception confiée au Concepteur : « ${c.title} ». Il étudie le jeu, prépare le dossier et vous pose ses questions sur sa page : #/c/${c.id}\nQuand vous lui direz « transmets », les chantiers reviendront ici, chacun avec le dossier complet.`;
+      });
+    }
     const launched: string[] = [];
     for (const id of d.launch) await attempt(id, async () => this.#launch(project, this.#tasks.get(project, id), launched));
     for (const r of d.requests) {
@@ -339,9 +350,27 @@ export class Autopilot {
     const s = this.#sessions.get(project);
     const now = Date.parse(this.#clock.now());
     const state = this.gameState?.get(project)?.text ?? null;
+    // Conceptions du Concepteur pour ce projet : le directeur peut en parler et y renvoyer (ADR-34).
+    const conceptions = (this.conceptions?.list() ?? [])
+      .filter((c) => c.project === project && c.kind === "feature")
+      .slice(0, 4)
+      .map((c) => {
+        const where =
+          c.status === "done"
+            ? "transmise : ses chantiers sont dans la liste ci-dessous"
+            : c.status === "thinking"
+              ? "le Concepteur y travaille"
+              : c.data.questions.length
+                ? "attend les réponses du directeur créatif"
+                : c.data.ready
+                  ? `prête : ${c.data.chantiers.length} chantier(s) ; il suffit de dire « transmets » au Concepteur`
+                  : "en cours";
+        return `- « ${c.title} » : ${where} (page : #/c/${c.id})`;
+      });
     return [
       state ? `<etat_du_jeu note="carnet tenu à jour par le hub après chaque chantier fusionné : ce qui existe déjà, les choix faits, les limites connues">\n${state.replace(/</g, "‹")}\n</etat_du_jeu>` : "",
       `<chantiers>\n${rows.join("\n") || "(aucun)"}\n</chantiers>`,
+      conceptions.length ? `<conceptions note="travail du Concepteur sur ce jeu">\n${conceptions.join("\n").replace(/</g, "‹")}\n</conceptions>` : "",
       s ? `<seance objectif="${s.goal.replace(/"/g, "'")}" fin="${hhmm(s.until)}" reste_minutes="${Math.max(0, Math.round((s.until - now) / 60_000))}" />` : "",
     ]
       .filter(Boolean)
@@ -463,7 +492,7 @@ export class Autopilot {
       const level = this.#projects.get(project).autonomy;
       if (level === "workshop") {
         // Atelier (ADR-24) : pas de fiches ; la consigne du directeur est le cahier des charges.
-        await this.workshop(project, thread, { requests: [request], session: null, endSession: false, merge: [], abandon: [], launch: [], fixes: [] });
+        await this.workshop(project, thread, { requests: [request], session: null, endSession: false, merge: [], abandon: [], launch: [], fixes: [], concevoir: null });
         return;
       }
       await this.#flush(project, thread);
