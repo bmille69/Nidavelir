@@ -413,6 +413,13 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - **Pastilles** : le nombre de messages du studio arrivés depuis votre dernier passage dans chaque discussion. Le suivi est mémorisé dans ce navigateur ; à la première visite, tout compte comme lu. Un bandeau « Du nouveau dans « … » » s'affiche en haut de la discussion ouverte, en un clic.
 - **« Concevoir » depuis une discussion** : la conception est rattachée à cette discussion. Une note avec le lien vers le Concepteur y est postée, et les chantiers transmis y reviennent (ADR-34) au lieu d'ouvrir une nouvelle fenêtre.
 
+### ADR-36 : Fable 5 pour le Concepteur et le développeur
+**Statut** : **Validée** le 15/10/2026 par le directeur créatif. Fable 5 est accessible avec l'abonnement Max (essai réel : `claude -p --model fable` répond, modèle `claude-fable-5-1`).
+- **Concepteur** (`STUDIO_MODEL_CONCEPT`) : `fable` au lieu d'`opus`. Appels rares et décisifs.
+- **Développeur** (`STUDIO_MODEL_DEV`, plan et exécution) : `fable` au lieu de `sonnet`. C'est lui qui écrit le code : moins d'erreurs veut dire moins de corrections et de chantiers repris, donc une production plus rapide.
+- **Inchangés** : le directeur (`sonnet`), pour des réponses rapides dans la discussion, et le testeur (`haiku`), puisque la qualité repose d'abord sur des vérifications réelles (ADR-32).
+- **Contrepartie** : le quota de l'abonnement s'épuise plus vite. Chaque rôle peut revenir à l'ancien modèle par sa variable d'environnement, sans toucher au code.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

@@ -19,15 +19,16 @@ const cli = new ClaudeCli(join(dataDir, "claude-work"));
 const orchestrator = new DirectClaudeOrchestrator(cli, {
   chat: process.env.STUDIO_MODEL_CHAT ?? "sonnet",
   structured: process.env.STUDIO_MODEL_STRUCTURED ?? "sonnet",
-  // La conception est rare et décisive : modèle le plus capable par défaut (ADR-28).
-  concept: process.env.STUDIO_MODEL_CONCEPT ?? "opus",
+  // La conception est rare et décisive : modèle le plus capable par défaut (ADR-28, ADR-36).
+  concept: process.env.STUDIO_MODEL_CONCEPT ?? "fable",
 });
 
 const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
   registry: defaultRegistryOptions(hubRoot, dataDir),
   orchestrator,
-  executor: new ClaudeCodeExecutor({ default: process.env.STUDIO_MODEL_DEV ?? "sonnet", verify: process.env.STUDIO_MODEL_QA ?? "haiku" }),
+  // Le développeur écrit le code : le modèle le plus capable évite des corrections (ADR-36).
+  executor: new ClaudeCodeExecutor({ default: process.env.STUDIO_MODEL_DEV ?? "fable", verify: process.env.STUDIO_MODEL_QA ?? "haiku" }),
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
   autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },
