@@ -1,13 +1,13 @@
 {
-  "name": "Game Studio Hub",
-  "short_name": "Studio",
+  "name": "Nidavellir — le hub de création de jeux vidéo",
+  "short_name": "Nidavellir",
   "description": "Votre studio de jeu vidéo : le directeur, le Concepteur et l'équipe d'agents.",
   "lang": "fr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0a0c12",
-  "theme_color": "#0a0c12",
+  "background_color": "#080b12",
+  "theme_color": "#080b12",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

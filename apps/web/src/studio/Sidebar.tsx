@@ -1,5 +1,7 @@
 import type { Route } from "../App.tsx";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import logoMark from "../assets/logo-mark.png";
+import logoWord from "../assets/logo-word.png";
 import { api, type Conception, type SessionInfo } from "../api.ts";
 import { useStudio } from "./context.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
@@ -34,11 +36,8 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
     <aside className="sidebar">
       <div className="brand-row">
         <a href="#/" className="brand">
-          <Logo />
-          <span>
-            <strong>Game Studio Hub</strong>
-            <small>Votre studio IA</small>
-          </span>
+          <Logo size={40} />
+          <img className="brand-word" src={logoWord} alt="Nidavellir — le hub de création de jeux vidéo" width={362} height={78} />
         </a>
         {onClose && (
           <button className="icon-btn drawer-close" aria-label="Fermer le menu" onClick={onClose}>
@@ -126,22 +125,6 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 }
 
 export function Logo({ size = 36 }: { size?: number }) {
-  // Identifiant unique : deux logos (menu, barre du téléphone) ne doivent pas partager leur dégradé.
-  const id = `logo-g${useId().replace(/:/g, "")}`;
-  return (
-    <svg className="logo" viewBox="0 0 40 40" width={size} height={size} aria-hidden="true">
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#c4b5fd" />
-          <stop offset="0.55" stopColor="#7c8cff" />
-          <stop offset="1" stopColor="#38bdf8" />
-        </linearGradient>
-      </defs>
-      <path d="M20 2 L36 11 V29 L20 38 L4 29 V11 Z" fill={`url(#${id})`} />
-      <path d="M13 17 h14 a4 4 0 0 1 4 4 v1 a5 5 0 0 1 -5 5 h-1 l-2 -2 h-6 l-2 2 h-1 a5 5 0 0 1 -5 -5 v-1 a4 4 0 0 1 4 -4 Z" fill="#0b0d18" />
-      <circle cx="25" cy="21.5" r="1.4" fill="#c4b5fd" />
-      <circle cx="28" cy="23.5" r="1.4" fill="#38bdf8" />
-      <path d="M14 22.5 h4 M16 20.5 v4" stroke="#c4b5fd" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
+  // Le N de Nidavellir (DA du 15/10), moitié glace, moitié braise.
+  return <img className="logo" src={logoMark} alt="" aria-hidden="true" width={Math.round((size * 104) / 122)} height={size} />;
 }

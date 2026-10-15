@@ -6,6 +6,7 @@ import { AGENTS, ago, describeEvent } from "./agents.ts";
 import { AUTONOMY } from "./Autonomy.tsx";
 import { useNow, useStudio } from "./context.tsx";
 import { Icon } from "./Icon.tsx";
+import banner from "../assets/banner.jpg";
 
 const ENGINE = { godot: "Godot", web: "Web · TypeScript", unknown: "Moteur inconnu" } as const;
 
@@ -68,6 +69,7 @@ export function Home() {
   return (
     <main className="studio-page home">
       <header className="home-hero">
+        <img className="home-banner" src={banner} alt="" aria-hidden="true" width={1254} height={588} />
         <div className="home-hero-text">
           <p className="eyebrow">
             {new Date(now).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
@@ -78,6 +80,9 @@ export function Home() {
               ? `${forYou.length} chose${forYou.length > 1 ? "s" : ""} vous attend${forYou.length > 1 ? "ent" : ""}. `
               : "Rien ne vous attend. "}
             {team.length > 0 ? `${team.length} agent${team.length > 1 ? "s" : ""} au travail.` : "L'équipe est au repos."}
+          </p>
+          <p className="brand-flow" aria-hidden="true">
+            <b>Idées</b> <i>›</i> <b>Outils</b> <i>›</i> <b>Jeux</b>
           </p>
         </div>
         <a className={`team-live ${team.length ? "on" : ""}`} href="#/direct" title="Voir le studio en direct">

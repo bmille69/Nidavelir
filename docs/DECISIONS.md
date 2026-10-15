@@ -436,6 +436,15 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - **Défaut 3, gardien trop strict par erreur** : le terminal de l'agent garde son dossier d'une commande à l'autre, mais le gardien jugeait chaque commande depuis la racine. Après `cd packages/client`, un `cat ../../package.json` (dans la copie) était refusé ; un `cd /c/Games/…` vers la copie aussi. Environ 60 % des 43 refus depuis ADR-33 étaient de ce type. Correctif : le hook transmet le dossier courant (`cwd`) ; le gardien part de là s'il est dans la copie, sinon de la racine. Les chemins à la Git Bash (`/c/…`) sont compris.
 - **Utilité du gardien** : il reste la seule barrière entre un agent qui a un terminal et votre PC. En 2 jours, il a arrêté un `npm install`, qui aurait réécrit les dépendances du jeu principal partagées par lien, ainsi que des appels réseau (`curl`) et des interpréteurs (`python`). En atelier, les actions hors plan passent d'office (681 notées) : il ne bloque que l'interdit.
 
+### ADR-39 : identité visuelle Nidavellir
+**Statut** : **Validée** le 15/10/2026, d'après la direction artistique fournie par le directeur créatif (`DA.png`).
+- **Nom** : l'application s'appelle **Nidavellir — le hub de création de jeux vidéo** (menu, titre de l'onglet, écran d'accueil du téléphone, page de connexion, notifications). Les noms internes (code, dépôt) ne changent pas.
+- **Éléments tirés de la DA** (`apps/web/src/assets`, `apps/web/public`) : le N, et le nom avec sa signature, détourés sur fond transparent (luminance → transparence, via ffmpeg) ; la bannière de la forge en tête de l'accueil ; l'icône d'application pour le téléphone et l'onglet (180, 192 et 512 px).
+- **Couleurs** : nuit `#080B12`, glace `#00E5FF` (boutons, liens, sélection, focus), braise `#FF5A00` (ce qui vous attend, le Concepteur, l'accent chaud). Le violet de la charte précédente disparaît. La signature « moitié glace, moitié braise » (`--grad-brand`) souligne l'accueil.
+- **Lettres** : Exo 2 pour les titres et les boutons, Orbitron pour les sur-titres et les rubriques du menu, Segoe UI pour le texte courant (lisibilité). Les polices sont **incluses dans l'application** : aucun appel à Google au chargement, et tout fonctionne hors ligne.
+- **Accueil** : la bannière à droite du « Bonjour », fondue dans la page, et le motif « Idées › Outils › Jeux ». Sur le téléphone, la bannière passe au-dessus.
+- **Rien n'est retiré** : seules l'apparence et le nom changent ; les 22 parcours du navigateur passent à l'identique.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

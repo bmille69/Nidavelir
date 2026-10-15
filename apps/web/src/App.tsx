@@ -99,8 +99,8 @@ export function App() {
     return (
       <div className="centered">
         <div className="card narrow auth-card">
-          <Logo />
-          <h1>Game Studio Hub</h1>
+          <Logo size={64} />
+          <h1>Nidavellir</h1>
           {authError === "session" ? (
             <>
               <p>
@@ -128,8 +128,8 @@ export function App() {
             <Icon name="menu" size={22} />
           </button>
           <a href="#/" className="mobile-brand">
-            <Logo size={26} />
-            <span>Studio</span>
+            <Logo size={28} />
+            <span>Nidavellir</span>
           </a>
           <LiveBadge />
         </header>

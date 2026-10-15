@@ -4,17 +4,17 @@ export const PAIRING_PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="theme-color" content="#0a0c12" />
-<title>Connexion — Game Studio Hub</title>
+<meta name="theme-color" content="#080b12" />
+<title>Connexion — Nidavellir</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0a0c12; color: #ebeaf3; font: 16px/1.5 system-ui, sans-serif; padding: 16px; box-sizing: border-box; }
-  main { width: 100%; max-width: 380px; background: #131722; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; padding: 24px; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(60% 40% at 15% 0%, rgba(0,229,255,.12), transparent 70%), radial-gradient(50% 40% at 90% 100%, rgba(255,90,0,.12), transparent 70%), #080b12; color: #eef4fb; font: 16px/1.5 system-ui, sans-serif; padding: 16px; box-sizing: border-box; }
+  main { width: 100%; max-width: 380px; background: #0e1420; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; padding: 24px; }
   h1 { font-size: 1.3rem; margin: 0 0 .3rem; }
   p { color: #8d92a8; margin: 0 0 1rem; }
   input { box-sizing: border-box; width: 100%; font: inherit; color: inherit; background: #1a1f2d; border: 1px solid rgba(255,255,255,.14); border-radius: 12px; padding: .75rem; margin-bottom: .75rem; }
   #code { font-size: 2rem; letter-spacing: .5em; text-align: center; }
-  button { width: 100%; font: inherit; font-weight: 700; border: 0; border-radius: 12px; padding: .8rem; background: linear-gradient(135deg, #a593ff, #6f8dff); color: #0b0d16; }
+  button { width: 100%; font: inherit; font-weight: 700; border: 0; border-radius: 12px; padding: .8rem; background: linear-gradient(135deg, #7ff4ff, #00e5ff 45%, #00b4ff); color: #03141a; }
   .err { color: #ff7a85; min-height: 1.5em; margin: .5rem 0 0; }
 </style>
 </head>

@@ -408,7 +408,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return { unsubscribed: true };
     });
     api.post("/push/test", async () => {
-      hub.notifications.notify({ title: "Game Studio Hub", body: "Les notifications fonctionnent sur cet appareil.", url: "#/", tag: "test" });
+      hub.notifications.notify({ title: "Nidavellir", body: "Les notifications fonctionnent sur cet appareil.", url: "#/", tag: "test" });
       return { sent: hub.notifications.list().length };
     });
     // ── Compétences (ADR-29) ──
