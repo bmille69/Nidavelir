@@ -2,7 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ClaudeCli } from "../src/llm/claude-cli.ts";
+import { DirectClaudeOrchestrator } from "../src/orchestrator/direct-claude.ts";
 import { buildServer, SESSION_COOKIE } from "../src/server/http.ts";
+import type { StudioSnapshot } from "../src/studio/activity.ts";
 import { extracted, FakeOrchestrator } from "./fake-orchestrator.ts";
 import { cleanupSandboxes, sandbox, type Sandbox } from "./helpers.ts";
 
@@ -143,5 +146,46 @@ describe("parcours : import, conversation, tri", () => {
     const res = await post("/api/human/projects/import", { path: join(sb.dir, "hub"), slug: "hub", name: "Hub" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/protégé/);
+  });
+});
+
+describe("modèles des agents (ADR-37)", () => {
+  it("le studio montre le modèle de chaque agent, sa consommation, et le change au prochain appel", async () => {
+    const { get, post } = await login();
+    let snap = (await get("/api/human/studio")).json() as StudioSnapshot;
+    expect(snap.models.roles.map((r) => [r.role, r.model, r.recommended])).toEqual([
+      ["concepteur", "fable", "fable"],
+      ["director", "sonnet", "sonnet"],
+      ["archivist", "sonnet", "sonnet"],
+      ["developer", "fable", "fable"],
+      ["qa", "haiku", "haiku"],
+    ]);
+    expect(snap.models.choices.map((c) => c.id)).toEqual(["fable", "opus", "sonnet", "haiku"]);
+
+    sb.hub.usage.record({ project: null, agent: "developer", model: "fable", tokens: { input: 100, output: 50, cacheRead: 800, cacheWrite: 50 }, costUsd: 0.4 });
+    sb.hub.usage.record({ project: null, agent: "lecons", model: "sonnet", tokens: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01 });
+    sb.hub.usage.record({ project: null, agent: "compteur", model: "haiku", tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 0 });
+    const res = await post("/api/human/studio/models", { role: "developer", model: "sonnet" });
+    expect(res.statusCode).toBe(200);
+    expect((await post("/api/human/studio/models", { role: "guardian", model: "sonnet" })).statusCode).toBe(400);
+    expect((await post("/api/human/studio/models", { role: "qa", model: "gpt" })).statusCode).toBe(400);
+
+    snap = (await get("/api/human/studio")).json() as StudioSnapshot;
+    expect(snap.models.roles.find((r) => r.role === "developer")).toMatchObject({ model: "sonnet", recommended: "fable" });
+    expect(snap.usage.agents.developer).toMatchObject({ today: { tokens: 1000, calls: 1 }, week: { tokens: 1000, calls: 1 }, models: { fable: 1000 } });
+    // Les leçons passent par le modèle de l'archiviste ; l'appel « compteur » n'est pas un agent.
+    expect(snap.usage.agents.archivist?.week.tokens).toBe(20);
+    expect(snap.usage.agents.compteur).toBeUndefined();
+    expect(sb.hub.journal.list({ subject: "developer", latest: true }).find((e) => e.type === "model.changed")).toMatchObject({ subject: "developer", payload: { from: "fable", to: "sonnet" } });
+
+    // Lu à chaque appel par le directeur et le développeur.
+    const seen: string[] = [];
+    const cli = { call: async (c: { model: string }) => (seen.push(c.model), { text: "ok", costUsd: 0, structured: {} }) } as unknown as ClaudeCli;
+    const director = new DirectClaudeOrchestrator(cli, () => ({ chat: sb.hub.models.get("director"), structured: sb.hub.models.get("archivist"), concept: sb.hub.models.get("concepteur") }));
+    await director.reply({ systemPrompt: "s", prompt: "p" });
+    await post("/api/human/studio/models", { role: "director", model: "fable" });
+    await director.reply({ systemPrompt: "s", prompt: "p" });
+    await director.structured({ systemPrompt: "s", prompt: "p", jsonSchema: {}, tier: "concept" });
+    expect(seen).toEqual(["sonnet", "fable", "fable"]);
   });
 });

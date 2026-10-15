@@ -43,14 +43,16 @@ export function buildExecArgs(req: Pick<ExecRequest, "tools" | "maxTurns" | "jso
   return args;
 }
 
+type PhaseModels = Partial<Record<ExecRequest["kind"], string>> & { default: string };
+
 export class ClaudeCodeExecutor implements ExecutorPort {
   readonly name = "claude-code";
-  readonly #models: Partial<Record<ExecRequest["kind"], string>> & { default: string };
+  readonly #models: () => PhaseModels;
   readonly #binary: string;
 
-  /** Un modèle par phase : le testeur peut être plus léger que le développeur (ADR-26). */
-  constructor(model: string | (Partial<Record<ExecRequest["kind"], string>> & { default: string }) = "sonnet", binary = "claude") {
-    this.#models = typeof model === "string" ? { default: model } : model;
+  /** Un modèle par phase : le testeur peut être plus léger que le développeur (ADR-26), lu à chaque run (ADR-37). */
+  constructor(model: string | PhaseModels | (() => PhaseModels) = "sonnet", binary = "claude") {
+    this.#models = typeof model === "function" ? model : typeof model === "string" ? () => ({ default: model }) : () => model;
     this.#binary = binary;
   }
 
@@ -78,7 +80,9 @@ export class ClaudeCodeExecutor implements ExecutorPort {
       JSON.stringify({ mcpServers: { studio: { type: "stdio", command: node, args: [join(BRIDGE, "gate.mjs"), req.bridgeUrl], env: { STUDIO_RUN_TOKEN: req.token } } } }, null, 2),
     );
     writeFileSync(system, req.systemPrompt, "utf8");
-    const args = buildExecArgs(req, { settings, mcp, system }, this.#models[req.kind] ?? this.#models.default);
+    const models = this.#models();
+    const model = models[req.kind] ?? models.default;
+    const args = buildExecArgs(req, { settings, mcp, system }, model);
 
     return new Promise((resolve, reject) => {
       const child = spawn(this.#binary, args, {
@@ -126,6 +130,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
           costUsd: typeof result.total_cost_usd === "number" ? result.total_cost_usd : null,
           tokens: parseUsage(result),
           limits,
+          model,
         });
       });
       child.stdin.end(req.prompt, "utf8");

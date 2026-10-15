@@ -420,6 +420,14 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - **Inchangés** : le directeur (`sonnet`), pour des réponses rapides dans la discussion, et le testeur (`haiku`), puisque la qualité repose d'abord sur des vérifications réelles (ADR-32).
 - **Contrepartie** : le quota de l'abonnement s'épuise plus vite. Chaque rôle peut revenir à l'ancien modèle par sa variable d'environnement, sans toucher au code.
 
+### ADR-37 : le modèle de chaque agent se choisit dans « Le studio en direct »
+**Statut** : **Validée** le 15/10/2026, à la demande du directeur créatif.
+- **Sous chaque carte** (Concepteur, directeur, archiviste, développeur, testeur) : le modèle en service, une liste pour le changer (Fable 5, Opus, Sonnet, Haiku), le modèle **recommandé** (★) avec sa raison, et un bouton « Conseillé : … » pour y revenir. Le gardien n'a pas de modèle : il applique des règles fixes.
+- **Consommation** : jetons d'aujourd'hui et des 7 derniers jours, et part de l'agent dans la consommation du studio. L'équivalent en dollars au tarif de l'API est indicatif (survol), puisque tout passe par l'abonnement. Le modèle des runs du développeur et du testeur est désormais enregistré ; les « leçons » comptent pour l'archiviste, dont elles utilisent le modèle.
+- **Effet** : le choix est mémorisé dans le hub (table `settings`, clé `models`) et lu **à chaque appel**. Il vaut dès le prochain appel, sans redémarrage ; un travail déjà lancé garde son modèle. Chaque changement est inscrit au journal et apparaît dans le fil du studio.
+- **Défauts** : les variables `STUDIO_MODEL_*` restent les défauts tant qu'aucun choix n'est fait ; sinon, le modèle recommandé (ADR-36).
+- **Correspondance** : directeur = discussion (`chat`), archiviste = appels structurés (fiches, regroupement, carnet, leçons), Concepteur = `concept`, développeur = plan et exécution, testeur = vérification.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

@@ -81,7 +81,7 @@ export function StudioLive() {
                 <div>
                   <p>{d!.text}</p>
                   <span className="muted small">
-                    {names.get(e.project ?? "") ?? e.project} · {ago(e.at, now)}
+                    {e.project ? (names.get(e.project) ?? e.project) : "Studio"} · {ago(e.at, now)}
                   </span>
                 </div>
               </li>

@@ -16,19 +16,21 @@ const port = Number(process.env.STUDIO_PORT ?? 4317);
 const gamesRoot = process.env.STUDIO_GAMES_ROOT ?? "C:\\Games";
 
 const cli = new ClaudeCli(join(dataDir, "claude-work"));
-const orchestrator = new DirectClaudeOrchestrator(cli, {
-  chat: process.env.STUDIO_MODEL_CHAT ?? "sonnet",
-  structured: process.env.STUDIO_MODEL_STRUCTURED ?? "sonnet",
-  // La conception est rare et décisive : modèle le plus capable par défaut (ADR-28, ADR-36).
-  concept: process.env.STUDIO_MODEL_CONCEPT ?? "fable",
-});
+// Modèles choisis dans « Le studio en direct », lus à chaque appel (ADR-37) ; défauts recommandés (ADR-36).
+const orchestrator = new DirectClaudeOrchestrator(cli, () => ({ chat: hub.models.get("director"), structured: hub.models.get("archivist"), concept: hub.models.get("concepteur") }));
 
 const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
   registry: defaultRegistryOptions(hubRoot, dataDir),
   orchestrator,
-  // Le développeur écrit le code : le modèle le plus capable évite des corrections (ADR-36).
-  executor: new ClaudeCodeExecutor({ default: process.env.STUDIO_MODEL_DEV ?? "fable", verify: process.env.STUDIO_MODEL_QA ?? "haiku" }),
+  executor: new ClaudeCodeExecutor(() => ({ default: hub.models.get("developer"), verify: hub.models.get("qa") })),
+  models: {
+    director: process.env.STUDIO_MODEL_CHAT,
+    archivist: process.env.STUDIO_MODEL_STRUCTURED,
+    concepteur: process.env.STUDIO_MODEL_CONCEPT,
+    developer: process.env.STUDIO_MODEL_DEV,
+    qa: process.env.STUDIO_MODEL_QA,
+  },
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,
   autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },

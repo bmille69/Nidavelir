@@ -66,6 +66,7 @@ export function ago(iso: string, now: number): string {
 }
 
 const AUTONOMY_LABEL: Record<string, string> = { supervised: "je valide tout", balanced: "équilibré", autonomous: "autonome" };
+const MODEL_NAME: Record<string, string> = { fable: "Fable 5", opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" };
 const RUN_KIND: Record<string, AgentId> = { plan: "developer", execute: "developer", verify: "qa" };
 
 /** Phrase lisible et agent concerné pour un événement du journal ; null si sans intérêt pour le fil. */
@@ -143,6 +144,10 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       return { agent: "you", text: `Tâche abandonnée (${e.subject ?? ""})` };
     case "task.cancelled":
       return { agent: "you", text: `Travail arrêté par vous (${e.subject ?? ""})` };
+    case "model.changed": {
+      const agent = (e.subject ?? "developer") as AgentId;
+      return { agent, text: `${AGENTS[agent]?.name ?? e.subject} passe de ${MODEL_NAME[String(p.from)] ?? String(p.from)} à ${MODEL_NAME[String(p.to)] ?? String(p.to)}` };
+    }
     case "approval.recorded":
       return null;
     default:

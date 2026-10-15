@@ -27,7 +27,14 @@ export type UsageSnapshot = {
   today: { tokens: number; calls: number; costUsd: number };
   week: { tokens: number; calls: number; costUsd: number };
   byAgent: { agent: string; tokens: number; calls: number }[];
+  /** Consommation de chaque agent du studio, aujourd'hui et sur 7 jours, avec le modèle le plus utilisé (ADR-37). */
+  agents: Record<string, AgentUsage>;
 };
+
+export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
+
+/** Appels rangés sous l'agent dont ils utilisent le modèle : les leçons passent par celui de l'archiviste. */
+const AGENT_OF: Record<string, string> = { lecons: "archivist" };
 
 /** Lit l'usage et les limites dans la sortie JSON de Claude Code. */
 export function parseUsage(json: Record<string, unknown> | null | undefined): TokenUsage | null {
@@ -109,12 +116,31 @@ export class UsageService {
         "SELECT agent, COUNT(*) AS calls, SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS tokens FROM usage_log WHERE at >= ? GROUP BY agent ORDER BY tokens DESC",
       )
       .all(today) as { agent: string; calls: number; tokens: number }[];
+    const agents: Record<string, AgentUsage> = {};
+    const rows = this.#db
+      .prepare(
+        "SELECT agent, model, at >= ? AS today, COUNT(*) AS calls, COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost FROM usage_log WHERE at >= ? AND agent <> 'compteur' GROUP BY agent, model, at >= ?",
+      )
+      .all(today, new Date(now - 7 * 86_400_000).toISOString(), today) as { agent: string; model: string | null; today: number; calls: number; tokens: number; cost: number }[];
+    for (const r of rows) {
+      const key = AGENT_OF[r.agent] ?? r.agent;
+      const a = (agents[key] ??= { today: { tokens: 0, calls: 0 }, week: { tokens: 0, calls: 0, costUsd: 0 }, models: {} });
+      a.week.tokens += Number(r.tokens);
+      a.week.calls += Number(r.calls);
+      a.week.costUsd += Number(r.cost);
+      if (Number(r.today)) {
+        a.today.tokens += Number(r.tokens);
+        a.today.calls += Number(r.calls);
+      }
+      if (r.model) a.models[r.model] = (a.models[r.model] ?? 0) + Number(r.tokens);
+    }
     const row = this.#db.prepare("SELECT at, data_json FROM usage_limits WHERE id = 1").get() as { at: string; data_json: string } | undefined;
     return {
       limits: row ? { ...(JSON.parse(row.data_json) as RateLimits), at: row.at } : null,
       today: sum(today),
       week: sum(new Date(now - 7 * 86_400_000).toISOString()),
       byAgent: byAgent.map((a) => ({ agent: a.agent, calls: Number(a.calls), tokens: Number(a.tokens) })),
+      agents,
     };
   }
 }

@@ -428,6 +428,19 @@
 @keyframes blinkdot { 50% { opacity: 0.25; } }
 .agent-idle, .agent-tagline { margin: 0; font-size: 0.82rem; color: var(--muted); }
 .agent-tagline { font-size: 0.74rem; opacity: 0.75; border-top: 1px dashed var(--border); padding-top: 0.45rem; }
+/* Modèle et consommation de chaque agent (ADR-37). */
+.agent-model { margin-top: auto; padding-top: 0.55rem; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 0.3rem; }
+.model-row { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; flex-wrap: wrap; }
+.model-pick { flex-direction: row; align-items: center; margin: 0; gap: 0.4rem; font-size: 0.72rem; color: var(--muted); }
+.model-pick select { width: auto; min-width: 0; padding: 0.2rem 1.6rem 0.2rem 0.5rem; font-size: 0.8rem; font-weight: 650; border-radius: 8px; background-color: rgba(0, 0, 0, 0.3); }
+.model-reco { font-size: 0.7rem; font-weight: 650; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--warn); cursor: pointer; }
+.model-reco:hover:not(:disabled) { border-color: var(--warn); }
+.model-reco.on { color: var(--agent); border-color: color-mix(in srgb, var(--agent) 45%, transparent); cursor: default; }
+.model-why { margin: 0; font-size: 0.7rem; color: var(--muted); opacity: 0.8; }
+.agent-usage { margin: 0; font-size: 0.72rem; color: var(--muted); }
+.agent-usage b { color: var(--text); font-weight: 650; }
+.usage-bar { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.usage-bar i { display: block; height: 100%; border-radius: inherit; background: var(--agent); opacity: 0.8; }
 .agent-acts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .agent-acts a {
   display: flex;

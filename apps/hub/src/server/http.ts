@@ -18,6 +18,7 @@ import { defaultDocNature } from "../projects/bootstrap.ts";
 import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
 import { studioSnapshot } from "../studio/activity.ts";
+import { MODEL_CHOICES, MODEL_ROLES, type ModelId } from "../usage/model-service.ts";
 import { PreviewError } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
@@ -41,6 +42,7 @@ declare module "fastify" {
 }
 
 const Body = {
+  model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({
     path: z.string().min(1),
@@ -153,6 +155,10 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio", async () => studioSnapshot(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
+    api.post("/studio/models", async (req) => {
+      const { role, model } = Body.model.parse(req.body);
+      return hub.models.set(role, model);
+    });
     api.post("/projects/:slug/autonomy", async (req) => {
       const { slug } = req.params as { slug: string };
       return hub.projects.setAutonomy(req.human!, slug, Body.autonomy.parse(req.body).level);

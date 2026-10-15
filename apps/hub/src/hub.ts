@@ -16,6 +16,7 @@ import { SynthesisService } from "./vision/synthesis.ts";
 import { VisionService } from "./vision/vision-service.ts";
 import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
+import { ModelService, type ModelRole } from "./usage/model-service.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
 import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
@@ -51,6 +52,8 @@ export type HubOptions = {
   conceptWeb?: boolean;
   /** Vérifications du hub avant fusion : tests du jeu et lancement (ADR-32). Absent : aucune. */
   checker?: CheckerPort;
+  /** Modèle par défaut de chaque agent, tant que vous n'en choisissez pas un dans le studio (ADR-37). */
+  models?: Partial<Record<ModelRole, string | undefined>>;
 };
 
 export type Hub = {
@@ -68,6 +71,7 @@ export type Hub = {
   synthesis: SynthesisService;
   tasks: TaskService;
   usage: UsageService;
+  models: ModelService;
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
@@ -125,6 +129,7 @@ export function createHub(options: HubOptions): Hub {
     },
   });
   const usage = new UsageService(db, clock, options.usageProbe);
+  const models = new ModelService(db, journal, options.models);
   // Compétences (ADR-29) : données aux agents, et leçons apprises de vos avis et corrections.
   const skills = new SkillService({ db, clock, journal, projects, orchestrator });
   skills.attach(tasks);
@@ -228,6 +233,7 @@ export function createHub(options: HubOptions): Hub {
     synthesis,
     tasks,
     usage,
+    models,
     autopilot,
     previews,
     quality,

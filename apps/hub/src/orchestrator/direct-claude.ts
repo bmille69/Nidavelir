@@ -1,19 +1,22 @@
 import type { ClaudeCli } from "../llm/claude-cli.ts";
 import { OrchestratorError, type CallMeta, type OrchestratorPort } from "./port.ts";
 
+type Models = { chat: string; structured: string; concept?: string };
+
 /** Directeur porté par Claude Code CLI, sans outils (ADR-10). */
 export class DirectClaudeOrchestrator implements OrchestratorPort {
   readonly name = "direct-claude";
   readonly #cli: ClaudeCli;
-  readonly #models: { chat: string; structured: string; concept?: string };
+  readonly #pick: () => Models;
 
-  constructor(cli: ClaudeCli, models: { chat: string; structured: string; concept?: string }) {
+  /** Modèles fixes, ou lus à chaque appel (choisis depuis le studio, ADR-37). */
+  constructor(cli: ClaudeCli, models: Models | (() => Models)) {
     this.#cli = cli;
-    this.#models = models;
+    this.#pick = typeof models === "function" ? models : () => models;
   }
 
   async reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta }) {
-    const r = await this.#cli.call({ systemPrompt: input.systemPrompt, prompt: input.prompt, model: this.#models.chat, tag: input.meta });
+    const r = await this.#cli.call({ systemPrompt: input.systemPrompt, prompt: input.prompt, model: this.#pick().chat, tag: input.meta });
     if (!r.text.trim()) throw new OrchestratorError("Réponse vide du directeur");
     return { text: r.text.trim(), costUsd: r.costUsd };
   }
@@ -23,7 +26,7 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
       jsonSchema: input.jsonSchema,
-      model: input.tier === "concept" ? (this.#models.concept ?? this.#models.structured) : this.#models.structured,
+      model: input.tier === "concept" ? (this.#pick().concept ?? this.#pick().structured) : this.#pick().structured,
       timeoutMs: input.tools?.length ? 480_000 : 240_000,
       tag: input.meta,
       tools: input.tools,

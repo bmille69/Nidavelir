@@ -832,7 +832,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           signal: run.abort.signal,
         });
         cost = result.costUsd;
-        this.usage?.record({ project: task.project, agent: kind === "verify" ? "qa" : "developer", tokens: result.tokens ?? null, costUsd: cost, limits: result.limits });
+        this.usage?.record({ project: task.project, agent: kind === "verify" ? "qa" : "developer", model: result.model ?? null, tokens: result.tokens ?? null, costUsd: cost, limits: result.limits });
         outcome = await spec.onResult(result);
         if (outcome.text) this.#event(run, "result", outcome.text);
       } catch (err) {

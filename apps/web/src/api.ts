@@ -71,7 +71,12 @@ export type UsageSnapshot = {
   today: { tokens: number; calls: number; costUsd: number };
   week: { tokens: number; calls: number; costUsd: number };
   byAgent: { agent: string; tokens: number; calls: number }[];
+  agents: Record<string, AgentUsage>;
 };
+export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
+export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "qa";
+export type ModelSetting = { role: ModelRole; model: string; recommended: string; why: string };
+export type ModelChoice = { id: string; label: string; note: string };
 export type Analysis = {
   root: string;
   suggestedName: string;
@@ -112,6 +117,7 @@ export type HubEvent = { seq: number; at: string; project: string | null; actor:
 export type StudioSnapshot = {
   at: string;
   usage: UsageSnapshot;
+  models: { roles: ModelSetting[]; choices: ModelChoice[] };
   agents: { id: AgentId; state: AgentState; activities: Activity[] }[];
   projects: { slug: string; name: string; engine: Project["engine"]; autonomy: Autonomy; delegated: number; busy: boolean; waiting: number; decisions: number; proposals: number; tasks: number }[];
   events: HubEvent[];
@@ -190,6 +196,7 @@ export const api = {
   projects: () => request<Project[]>("GET", "/projects"),
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
+  setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
   setAutonomy: (slug: string, level: Autonomy) => request<Project>("POST", `/projects/${slug}/autonomy`, { level }),
   decidePending: (slug: string) => request<{ decided: string[]; left: number }>("POST", `/projects/${slug}/autonomy/decide-pending`, {}),
   suggestions: () => request<Suggestion[]>("GET", "/import/suggestions"),

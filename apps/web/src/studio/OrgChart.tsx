@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { AgentId, AgentState, StudioSnapshot } from "../api.ts";
 import { AgentAvatar } from "./AgentAvatar.tsx";
+import { AgentModel } from "./AgentModel.tsx";
 import { AGENTS, STATE_LABEL, YOU_STATE_LABEL, since } from "./agents.ts";
 import { useNow } from "./context.tsx";
 
@@ -88,6 +89,7 @@ export function OrgChart({ snap, projectNames, filter }: { snap: StudioSnapshot;
                 state={a?.state ?? "idle"}
                 activities={a?.activities ?? []}
                 projectNames={filter ? undefined : projectNames}
+                snap={snap}
                 nodeRef={(el) => {
                   if (el) nodes.current.set(id, el);
                   else nodes.current.delete(id);
@@ -106,6 +108,7 @@ function AgentCard(props: {
   state: AgentState;
   activities: StudioSnapshot["agents"][number]["activities"];
   projectNames?: Map<string, string>;
+  snap: StudioSnapshot;
   nodeRef: (el: HTMLElement | null) => void;
 }) {
   const { id, state, activities } = props;
@@ -148,6 +151,7 @@ function AgentCard(props: {
           {activities.length > shown.length && <li className="more">et {activities.length - shown.length} autre(s)…</li>}
         </ul>
       )}
+      {id !== "you" && <AgentModel agent={id} snap={props.snap} />}
     </article>
   );
 }

@@ -1,6 +1,7 @@
 import type { HubEvent } from "@studio/contracts";
 import type { Hub } from "../hub.ts";
 import type { UsageSnapshot } from "../usage/usage-service.ts";
+import { MODEL_CHOICES, type ModelSetting } from "../usage/model-service.ts";
 
 export type AgentId = "you" | "concepteur" | "director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
@@ -9,6 +10,8 @@ export type AgentSnapshot = { id: AgentId; state: AgentState; activities: Activi
 export type StudioSnapshot = {
   at: string;
   usage: UsageSnapshot;
+  /** Modèle de chaque agent et modèles proposés (ADR-37). */
+  models: { roles: ModelSetting[]; choices: typeof MODEL_CHOICES };
   agents: AgentSnapshot[];
   projects: { slug: string; name: string; engine: string; autonomy: string; delegated: number; busy: boolean; waiting: number; decisions: number; proposals: number; tasks: number }[];
   events: HubEvent[];
@@ -16,6 +19,7 @@ export type StudioSnapshot = {
 
 /** Événements trop nombreux pour le fil du studio (une ligne par fiche notée). */
 const NOISY = new Set(["item.captured", "item.triaged", "session.opened", "server.error", "worktree.created", "approval.delegated", "proposal.submitted"]);
+const STUDIO_WIDE = new Set(["model.changed"]);
 const RUN_TEXT = { plan: "Prépare un plan", execute: "Travaille", verify: "Vérifie le travail" } as const;
 
 /**
@@ -115,6 +119,7 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
   return {
     at: hub.clock.now(),
     usage: hub.usage.snapshot(),
+    models: { roles: hub.models.list(), choices: MODEL_CHOICES },
     agents: (Object.keys(acts) as AgentId[]).map((id) => ({ id, state: state(id), activities: acts[id] })),
     projects: projects.map((p) => ({
       slug: p.slug,
@@ -130,7 +135,8 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
     })),
     events: hub.journal
       .list({ limit: 500, latest: true })
-      .filter((e) => e.project && names.has(e.project) && !NOISY.has(e.type))
+      // Réglages du studio (modèles, ADR-37) : sans projet, mais utiles dans le fil.
+      .filter((e) => (e.project ? names.has(e.project) : STUDIO_WIDE.has(e.type)) && !NOISY.has(e.type))
       .slice(-30)
       .reverse(),
   };
