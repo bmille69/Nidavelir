@@ -15,7 +15,7 @@ import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
 
 const PORT = 4401;
 const BASE = `http://127.0.0.1:${PORT}`;
-const webDist = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDist = process.env.STUDIO_WEB_DIST ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const shots = process.env.STUDIO_SCREENSHOTS ?? join(process.cwd(), ".data", "screenshots");
 
 let sb: Sandbox;
@@ -95,13 +95,15 @@ describe("téléphone", () => {
     await phone.locator("#name").fill("Pixel de test");
     await phone.screenshot({ path: join(shots, "telephone-2-code.png") });
     await phone.getByRole("button", { name: "Se connecter" }).click();
-    await phone.getByRole("heading", { name: "Le studio" }).waitFor({ timeout: 10_000 });
+    await phone.getByRole("heading", { name: "Vos projets" }).waitFor({ timeout: 10_000 });
+    await phone.locator(".tabbar .tab-item", { hasText: "Accueil" }).waitFor();
     await phone.screenshot({ path: join(shots, "telephone-3-studio.png") });
   });
 
   it("affichage mobile : menu repliable, projet en un seul panneau", async () => {
     await phone.locator(".mobile-bar .menu-btn").click();
     await phone.locator(".menu-open .sidebar").waitFor();
+    await phone.waitForTimeout(400);
     await phone.screenshot({ path: join(shots, "telephone-4-menu.png") });
     await phone.locator(".side-projects a", { hasText: "Destiny Survivor" }).click();
     await phone.locator(".project-title h1", { hasText: "Destiny Survivor" }).waitFor();
@@ -110,6 +112,13 @@ describe("téléphone", () => {
     // Pas de défilement horizontal de la page.
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "telephone-5-projet.png") });
+    // Un seul panneau à la fois : la discussion, ou le panneau de droite d'un geste.
+    await phone.locator(".pane-switch button").nth(1).click();
+    await phone.locator(".project.pane-side").waitFor();
+    expect(await phone.locator(".conversation").isVisible()).toBe(false);
+    await phone.screenshot({ path: join(shots, "telephone-5b-panneau.png") });
+    await phone.locator(".pane-switch button").nth(0).click();
+    await phone.locator(".project.pane-chat .composer").waitFor();
     await phone.goto(`${BASE}/#/telephone`);
     await phone.locator(".step", { hasText: "Notifications sur cet appareil" }).waitFor();
     // Le téléphone ne voit pas les réglages réservés au PC (Tailscale, codes).

@@ -17,7 +17,7 @@ import { cleanupSandboxes, DIRECTOR, msg, sandbox, type Sandbox } from "../test/
 
 const PORT = 4396;
 const BASE = `http://127.0.0.1:${PORT}`;
-const webDist = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDist = process.env.STUDIO_WEB_DIST ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const shots = process.env.STUDIO_SCREENSHOTS ?? join(process.cwd(), ".data", "screenshots");
 const P = "destiny";
 
@@ -110,9 +110,14 @@ afterAll(async () => {
 });
 
 describe("vue Studio", () => {
-  it("au repos : l'organigramme et vos projets s'affichent", async () => {
-    await page.getByRole("heading", { name: "Le studio" }).waitFor();
+  it("au repos : l'accueil montre ce qui vous attend, « En direct » l'organigramme", async () => {
+    // Accueil : ce qui vous attend en premier, puis vos projets.
     await page.getByRole("heading", { name: "Vos projets" }).waitFor();
+    await page.locator(".attention-card", { hasText: "1 proposition(s) à arbitrer" }).waitFor();
+    await page.screenshot({ path: join(shots, "accueil.png") });
+    // Le studio en direct, plus bas dans le menu.
+    await page.locator(".side-nav a", { hasText: "En direct" }).click();
+    await page.getByRole("heading", { name: "Le studio en direct" }).waitFor();
     for (const name of ["Vous", "Le Directeur", "L'Archiviste", "Le Développeur", "Le Testeur", "Le Gardien"]) {
       await page.locator(".agent-card h3", { hasText: name }).first().waitFor();
     }
@@ -158,7 +163,7 @@ describe("vue Studio", () => {
   it("quand tout est fini, l'équipe retourne au repos", async () => {
     release.open();
     await hub.conversations.idle();
-    await page.goto(`${BASE}/#/`);
+    await page.goto(`${BASE}/#/direct`);
     await expect.poll(() => page.locator(".agent-card.agent-director.state-idle").count(), { timeout: 10_000 }).toBe(1);
     await expect.poll(() => page.locator(".agent-card.agent-archivist.state-idle").count(), { timeout: 10_000 }).toBe(1);
     // Le plan terminé attend votre validation.

@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type SessionInfo } from "./api.ts";
 import { ImportFlow } from "./pages/ImportFlow.tsx";
 import { ProjectShell } from "./pages/ProjectShell.tsx";
 import { StudioProvider } from "./studio/context.tsx";
-import { Sidebar } from "./studio/Sidebar.tsx";
-import { StudioHome } from "./studio/StudioHome.tsx";
+import { Sidebar, Logo } from "./studio/Sidebar.tsx";
+import { Home } from "./studio/Home.tsx";
+import { StudioLive } from "./studio/Live.tsx";
+import { Icon, type IconName } from "./studio/Icon.tsx";
+import { useStudio } from "./studio/context.tsx";
 import { QualityView } from "./studio/Quality.tsx";
 import { SkillsView } from "./studio/Skills.tsx";
 import { PhoneView } from "./studio/Phone.tsx";
@@ -12,6 +15,7 @@ import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
 
 export type Route =
   | { page: "dashboard" }
+  | { page: "live" }
   | { page: "import" }
   | { page: "quality" }
   | { page: "skills" }
@@ -23,6 +27,7 @@ export type Route =
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "import") return { page: "import" };
+  if (parts[0] === "direct") return { page: "live" };
   if (parts[0] === "qualite") return { page: "quality" };
   if (parts[0] === "competences") return { page: "skills" };
   if (parts[0] === "telephone") return { page: "phone" };
@@ -39,6 +44,7 @@ function parse(hash: string): Route {
 
 export function href(route: Route): string {
   if (route.page === "import") return "#/import";
+  if (route.page === "live") return "#/direct";
   if (route.page === "quality") return "#/qualite";
   if (route.page === "skills") return "#/competences";
   if (route.page === "phone") return "#/telephone";
@@ -64,6 +70,15 @@ export function App() {
   // Sur téléphone, la barre latérale devient un menu qui se replie.
   const [menu, setMenu] = useState(false);
   useEffect(() => setMenu(false), [route]);
+  // Le dernier projet ouvert : un onglet du téléphone y ramène en un geste.
+  useEffect(() => {
+    if (route.page !== "project") return;
+    try {
+      localStorage.setItem(LAST_PROJECT, route.slug);
+    } catch {
+      /* stockage indisponible : l'onglet « Projet » n'est simplement pas proposé */
+    }
+  }, [route]);
 
   useEffect(() => {
     const onHash = () => setRoute(parse(window.location.hash));
@@ -80,7 +95,8 @@ export function App() {
   if (authError) {
     return (
       <div className="centered">
-        <div className="card narrow">
+        <div className="card narrow auth-card">
+          <Logo />
           <h1>Game Studio Hub</h1>
           {authError === "session" ? (
             <>
@@ -103,19 +119,22 @@ export function App() {
 
   return (
     <StudioProvider>
-      <div className={`app ${menu ? "menu-open" : ""}`}>
+      <div className={`app ${menu ? "menu-open" : ""} page-${route.page}`}>
         <header className="mobile-bar">
           <button className="menu-btn" aria-label="Menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
-            ☰
+            <Icon name="menu" size={22} />
           </button>
           <a href="#/" className="mobile-brand">
-            Game Studio Hub
+            <Logo size={26} />
+            <span>Studio</span>
           </a>
+          <LiveBadge />
         </header>
-        <Sidebar route={route} session={session} />
+        <Sidebar route={route} session={session} onClose={() => setMenu(false)} />
         <div className="menu-backdrop" onClick={() => setMenu(false)} />
         <div className="main">
-          {route.page === "dashboard" && <StudioHome />}
+          {route.page === "dashboard" && <Home />}
+          {route.page === "live" && <StudioLive />}
           {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
           {route.page === "quality" && <QualityView />}
           {route.page === "skills" && <SkillsView />}
@@ -124,7 +143,70 @@ export function App() {
           {route.page === "conception" && <ConceptionView key={route.id} id={route.id} />}
           {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} />}
         </div>
+        <TabBar route={route} onMenu={() => setMenu((m) => !m)} menuOpen={menu} />
       </div>
     </StudioProvider>
+  );
+}
+
+const LAST_PROJECT = "studio:last-project";
+
+/** Pastille « en direct » de la barre du haut, sur téléphone. */
+function LiveBadge() {
+  const snap = useStudio();
+  const working = snap?.agents.filter((a) => a.id !== "you" && a.state !== "idle").length ?? 0;
+  const forYou = snap?.agents.find((a) => a.id === "you")?.activities.length ?? 0;
+  return (
+    <a href={forYou ? "#/" : "#/direct"} className={`live-badge ${working ? "on" : ""} ${forYou ? "warn" : ""}`}>
+      {forYou ? (
+        <>
+          <Icon name="bell" size={16} /> {forYou}
+        </>
+      ) : working ? (
+        <>
+          <span className="live-dot" /> {working} au travail
+        </>
+      ) : (
+        "Au repos"
+      )}
+    </a>
+  );
+}
+
+/** Barre d'onglets du téléphone : les quatre endroits où l'on va le plus souvent, au pouce. */
+function TabBar({ route, onMenu, menuOpen }: { route: Route; onMenu: () => void; menuOpen: boolean }) {
+  const snap = useStudio();
+  let last: string | null = null;
+  try {
+    last = localStorage.getItem(LAST_PROJECT);
+  } catch {
+    last = null;
+  }
+  const project = snap?.projects.find((p) => p.slug === (route.page === "project" ? route.slug : last)) ?? null;
+  const forYou = snap?.agents.find((a) => a.id === "you")?.activities.length ?? 0;
+  const working = snap?.agents.some((a) => a.id !== "you" && a.state !== "idle") ?? false;
+  const tab = (key: string, hrefTo: string, icon: IconName, label: string, active: boolean, extra?: ReactNode) => (
+    <a key={key} href={hrefTo} className={`tab-item ${active && !menuOpen ? "active" : ""}`}>
+      <span className="tab-icon">
+        <Icon name={icon} size={22} />
+        {extra}
+      </span>
+      <span className="tab-label">{label}</span>
+    </a>
+  );
+  return (
+    <nav className="tabbar" aria-label="Navigation principale">
+      {tab("home", "#/", "home", "Accueil", route.page === "dashboard", forYou > 0 && <i className="tab-count">{forYou}</i>)}
+      {project
+        ? tab("project", `#/p/${project.slug}`, "chat", project.name, route.page === "project", project.waiting > 0 && <i className="tab-count">{project.waiting}</i>)
+        : tab("new", "#/concevoir", "sparkle", "Créer", route.page === "conceive")}
+      {tab("live", "#/direct", "live", "En direct", route.page === "live", working && <i className="tab-live" />)}
+      <button className={`tab-item ${menuOpen ? "active" : ""}`} onClick={onMenu} aria-expanded={menuOpen}>
+        <span className="tab-icon">
+          <Icon name="menu" size={22} />
+        </span>
+        <span className="tab-label">Menu</span>
+      </button>
+    </nav>
   );
 }

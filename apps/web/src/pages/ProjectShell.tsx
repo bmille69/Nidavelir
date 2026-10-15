@@ -4,6 +4,7 @@ import { AgentAvatar } from "../studio/AgentAvatar.tsx";
 import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
+import { Icon, type IconName } from "../studio/Icon.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
 import { TasksView } from "./TasksView.tsx";
@@ -12,11 +13,11 @@ import { VisionView } from "./VisionView.tsx";
 type View = "discussion" | "decisions" | "vision" | "tasks";
 
 /** Trois onglets ; « Décisions » n'existe qu'en mode « Je valide tout » (ADR-23). */
-const TABS: { view: View; label: string; supervisedOnly?: boolean }[] = [
-  { view: "discussion", label: "Discussion" },
-  { view: "decisions", label: "Décisions", supervisedOnly: true },
-  { view: "vision", label: "Le jeu" },
-  { view: "tasks", label: "Chantiers" },
+const TABS: { view: View; label: string; icon: IconName; supervisedOnly?: boolean }[] = [
+  { view: "discussion", label: "Discussion", icon: "chat" },
+  { view: "decisions", label: "Décisions", icon: "scale", supervisedOnly: true },
+  { view: "vision", label: "Le jeu", icon: "book" },
+  { view: "tasks", label: "Chantiers", icon: "hammer" },
 ];
 
 export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; view: View; threadId?: string; taskId?: string }) {
@@ -47,15 +48,21 @@ export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; v
     <div className="shell">
       <header className="project-head">
         <div className="project-title">
-          <a href="#/" className="crumb">
-            Studio
-          </a>
-          <span className="crumb-sep">/</span>
-          <h1>{project?.name ?? slug}</h1>
-          {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
-          <a className="concevoir-btn" href={`#/p/${slug}/concevoir`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
-            ✦ Concevoir
-          </a>
+          <span className="proj-initial lg" data-engine={project?.engine ?? "unknown"} aria-hidden="true">
+            {(project?.name ?? slug).slice(0, 1).toUpperCase()}
+          </span>
+          <div className="project-name">
+            <a href="#/" className="crumb">
+              Studio
+            </a>
+            <h1>{project?.name ?? slug}</h1>
+          </div>
+          <div className="project-actions">
+            {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
+            <a className="concevoir-btn" href={`#/p/${slug}/concevoir`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
+              <Icon name="sparkle" size={15} /> Concevoir
+            </a>
+          </div>
         </div>
         <div className="team-strip" aria-label="Agents au travail sur ce projet">
           {team.length === 0 ? (
@@ -76,6 +83,7 @@ export function ProjectShell({ slug, view, threadId, taskId }: { slug: string; v
       <nav className="project-tabs">
         {TABS.filter((t) => !t.supervisedOnly || project?.autonomy === "supervised" || view === t.view).map((t) => (
           <a key={t.view} className={t.view === view ? "active" : ""} href={t.view === "discussion" ? `#/p/${slug}` : `#/p/${slug}/${t.view}`}>
+            <Icon name={t.icon} size={17} />
             {t.label}
             {t.view === "discussion" && project && project.autonomy !== "supervised" && project.proposals > 0 && (
               <span className="badge warn">{project.proposals} question(s)</span>
