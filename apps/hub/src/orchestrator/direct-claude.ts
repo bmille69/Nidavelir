@@ -1,7 +1,7 @@
 import type { ClaudeCli } from "../llm/claude-cli.ts";
 import { OrchestratorError, type CallMeta, type OrchestratorPort } from "./port.ts";
 
-type Models = { chat: string; structured: string; concept?: string };
+type Models = { chat: string; structured: string; concept?: string; archeologue?: string };
 
 /** Directeur porté par Claude Code CLI, sans outils (ADR-10). */
 export class DirectClaudeOrchestrator implements OrchestratorPort {
@@ -15,8 +15,16 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
     this.#pick = typeof models === "function" ? models : () => models;
   }
 
-  async reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta }) {
-    const r = await this.#cli.call({ systemPrompt: input.systemPrompt, prompt: input.prompt, model: this.#pick().chat, tag: input.meta });
+  async reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta; readDir?: string; timeoutMs?: number }) {
+    const models = this.#pick();
+    const r = await this.#cli.call({
+      systemPrompt: input.systemPrompt,
+      prompt: input.prompt,
+      model: input.readDir ? (models.archeologue ?? models.chat) : models.chat,
+      tag: input.meta,
+      readDir: input.readDir,
+      timeoutMs: input.timeoutMs,
+    });
     if (!r.text.trim()) throw new OrchestratorError("Réponse vide du directeur");
     return { text: r.text.trim(), costUsd: r.costUsd };
   }

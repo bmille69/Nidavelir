@@ -159,6 +159,7 @@ describe("modèles des agents (ADR-37)", () => {
       ["archivist", "sonnet", "sonnet"],
       ["developer", "fable", "fable"],
       ["qa", "haiku", "haiku"],
+      ["archeologue", "sonnet", "sonnet"],
     ]);
     expect(snap.models.choices.map((c) => c.id)).toEqual(["fable", "opus", "sonnet", "haiku"]);
 

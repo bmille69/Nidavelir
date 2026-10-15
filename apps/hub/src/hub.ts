@@ -17,6 +17,8 @@ import { VisionService } from "./vision/vision-service.ts";
 import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { ModelService, type ModelRole } from "./usage/model-service.ts";
+import { ReverseService } from "./reverse/reverse-service.ts";
+import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
 import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
@@ -54,6 +56,8 @@ export type HubOptions = {
   checker?: CheckerPort;
   /** Modèle par défaut de chaque agent, tant que vous n'en choisissez pas un dans le studio (ADR-37). */
   models?: Partial<Record<ModelRole, string | undefined>>;
+  /** Outils de l'Atelier de démontage (ADR-40). Défaut : les vrais, téléchargés à votre demande. */
+  reverseTools?: ReverseToolsPort;
 };
 
 export type Hub = {
@@ -72,6 +76,7 @@ export type Hub = {
   tasks: TaskService;
   usage: UsageService;
   models: ModelService;
+  reverse: ReverseService;
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
@@ -215,6 +220,17 @@ export function createHub(options: HubOptions): Hub {
     if (c.data.questions.length) notifications.notify({ title: "✦ Le Concepteur attend vos réponses", body: c.title, url: `#/c/${c.id}`, tag: c.id });
     else if (c.data.ready) notifications.notify({ title: "✦ Conception prête", body: `${c.title} : vous pouvez créer le projet`, url: `#/c/${c.id}`, tag: c.id });
   };
+  const reverse = new ReverseService({
+    db,
+    clock,
+    journal,
+    tools: options.reverseTools ?? new RealReverseTools(dataDir),
+    orchestrator,
+    conversations,
+    projects,
+    vcs,
+    dataDir,
+  });
   const extraHosts = new Set<string>();
   const remote = options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
   let closed = false;
@@ -234,6 +250,7 @@ export function createHub(options: HubOptions): Hub {
     tasks,
     usage,
     models,
+    reverse,
     autopilot,
     previews,
     quality,

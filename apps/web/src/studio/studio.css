@@ -1082,3 +1082,39 @@
   .threads li a { display: flex; white-space: nowrap; }
   .thread-title { display: block; white-space: nowrap; text-overflow: ellipsis; }
 }
+
+/* ── Atelier de démontage (ADR-40) ───────────────────────────────────────── */
+.dissect-pick { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.6rem 0 0.3rem; }
+.dissect-pick input { flex: 1 1 320px; min-width: 0; }
+.dissect-rules { margin-top: 0.7rem; }
+.dissect-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.8rem; }
+.dissect-tile { display: flex; flex-direction: column; gap: 0.25rem; padding: 1rem 1.1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.dissect-tile:hover { border-color: rgba(0, 229, 255, 0.45); color: var(--text); }
+.dissect-status.st-extracted { color: var(--ok); }
+.dissect-status.st-running { color: var(--accent); }
+.dissect-status.st-blocked, .dissect-status.st-failed { color: var(--error); }
+.pill.dissect-status { align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.55rem; border-radius: 999px; border: 1px solid currentColor; }
+.dissect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+.dissect-evidence { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; padding: 0; margin: 0.6rem 0; }
+.dissect-blocked { color: var(--error); display: flex; gap: 0.4rem; align-items: flex-start; }
+.dissect-tool { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.dissect-modes { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.dissect-modes p { flex-basis: 100%; margin: 0.2rem 0 0; }
+.dissect-log { max-height: 160px; overflow: auto; font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted); background: rgba(0, 0, 0, 0.3); border-radius: var(--radius-sm); padding: 0.6rem; white-space: pre-wrap; }
+.dissect-archeo { display: flex; flex-direction: column; gap: 1rem; }
+.dissect-notes { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 1rem; min-height: 220px; }
+.dissect-notes nav { display: flex; flex-direction: column; gap: 0.3rem; }
+.note-tab { justify-content: flex-start; text-align: left; background: rgba(255, 255, 255, 0.03); color: var(--text-2); border: 1px solid var(--border); box-shadow: none; font-weight: 550; font-family: var(--font); }
+.note-tab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.note-tab.st-failed { color: var(--error); }
+.dissect-note { padding: 0.9rem 1.1rem; border-radius: var(--radius); background: rgba(0, 0, 0, 0.22); border: 1px solid var(--border); overflow: auto; max-height: 560px; }
+.dissect-send { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px dashed var(--border); }
+.dissect-ask { display: flex; gap: 0.6rem; align-items: flex-end; }
+.dissect-ask textarea { flex: 1; resize: vertical; }
+.dissect-mod { padding-top: 0.8rem; border-top: 1px solid var(--border); }
+.dissect-mod h3 { display: flex; align-items: center; gap: 0.4rem; margin-top: 0; }
+@media (max-width: 860px) {
+  .dissect-notes { grid-template-columns: minmax(0, 1fr); }
+  .dissect-notes nav { flex-direction: row; overflow-x: auto; }
+  .dissect-ask { flex-direction: column; align-items: stretch; }
+}

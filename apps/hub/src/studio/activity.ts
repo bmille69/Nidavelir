@@ -19,7 +19,7 @@ export type StudioSnapshot = {
 
 /** Événements trop nombreux pour le fil du studio (une ligne par fiche notée). */
 const NOISY = new Set(["item.captured", "item.triaged", "session.opened", "server.error", "worktree.created", "approval.delegated", "proposal.submitted"]);
-const STUDIO_WIDE = new Set(["model.changed"]);
+const STUDIO_WIDE = new Set(["model.changed", "tool.installed", "dissection.extracted", "dissection.failed"]);
 const RUN_TEXT = { plan: "Prépare un plan", execute: "Travaille", verify: "Vérifie le travail" } as const;
 
 /**

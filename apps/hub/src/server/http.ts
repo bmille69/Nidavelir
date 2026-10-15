@@ -42,6 +42,10 @@ declare module "fastify" {
 }
 
 const Body = {
+  reversePath: z.object({ path: z.string().min(3).max(1000) }),
+  reverseRun: z.object({ mode: z.enum(["code", "complet"]) }),
+  reverseAsk: z.object({ question: z.string().min(3).max(4000) }),
+  reverseSend: z.object({ project: z.string().min(1).max(100) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({
@@ -155,6 +159,24 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio", async () => studioSnapshot(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
+    // ── Atelier de démontage (ADR-40) ──
+    api.get("/reverse", async () => ({ dissections: hub.reverse.list(), tools: hub.reverse.tools() }));
+    api.post("/reverse/browse", async () => ({ path: await options.folderPicker.pick(options.gamesRoot) }));
+    api.post("/reverse/scan", async (req) => hub.reverse.scan(Body.reversePath.parse(req.body).path));
+    api.post("/reverse", async (req) => hub.reverse.create(req.human!, Body.reversePath.parse(req.body).path));
+    api.post("/reverse/tools/:tool/install", async (req) => hub.reverse.installTool(req.human!, (req.params as { tool: string }).tool));
+    api.get("/reverse/:id", async (req) => hub.reverse.get((req.params as { id: string }).id));
+    api.post("/reverse/:id/run", async (req) => hub.reverse.run(req.human!, (req.params as { id: string }).id, Body.reverseRun.parse(req.body).mode));
+    api.post("/reverse/:id/cancel", async (req) => {
+      hub.reverse.cancel((req.params as { id: string }).id);
+      return { ok: true };
+    });
+    api.post("/reverse/:id/ask", async (req) => hub.reverse.ask(req.human!, (req.params as { id: string }).id, Body.reverseAsk.parse(req.body).question));
+    api.post("/reverse/:id/notes/:note/send", async (req) => {
+      const { id, note } = req.params as { id: string; note: string };
+      return hub.reverse.send(req.human!, id, Number(note), Body.reverseSend.parse(req.body).project);
+    });
+    api.post("/reverse/:id/mod", async (req) => hub.reverse.createMod(req.human!, (req.params as { id: string }).id, options.gamesRoot));
     api.post("/studio/models", async (req) => {
       const { role, model } = Body.model.parse(req.body);
       return hub.models.set(role, model);

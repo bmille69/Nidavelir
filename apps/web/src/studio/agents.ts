@@ -148,6 +148,12 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       const agent = (e.subject ?? "developer") as AgentId;
       return { agent, text: `${AGENTS[agent]?.name ?? e.subject} passe de ${MODEL_NAME[String(p.from)] ?? String(p.from)} à ${MODEL_NAME[String(p.to)] ?? String(p.to)}` };
     }
+    case "tool.installed":
+      return { agent: "you", text: `Outil installé : ${e.subject ?? ""} ${String(p.version ?? "")}`.trim() };
+    case "dissection.extracted":
+      return { agent: "archivist", text: "Un jeu a été démonté : l'Archéologue l'étudie", tone: "ok" };
+    case "dissection.failed":
+      return { agent: "archivist", text: "Le démontage d'un jeu a échoué", tone: "error" };
     case "approval.recorded":
       return null;
     default:

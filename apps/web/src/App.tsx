@@ -1,3 +1,4 @@
+import { DissectionHome, DissectionView } from "./studio/Dissection.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type SessionInfo } from "./api.ts";
 import { ImportFlow } from "./pages/ImportFlow.tsx";
@@ -20,6 +21,8 @@ export type Route =
   | { page: "quality" }
   | { page: "skills" }
   | { page: "phone" }
+  | { page: "dissections" }
+  | { page: "dissection"; id: string }
   | { page: "conceive"; project?: string; thread?: string }
   | { page: "conception"; id: string }
   | { page: "project"; slug: string; thread?: string; task?: string; view?: "discussion" | "decisions" | "vision" | "tasks"; fresh?: boolean };
@@ -31,6 +34,7 @@ function parse(hash: string): Route {
   if (parts[0] === "qualite") return { page: "quality" };
   if (parts[0] === "competences") return { page: "skills" };
   if (parts[0] === "telephone") return { page: "phone" };
+  if (parts[0] === "demontage") return parts[1] ? { page: "dissection", id: parts[1] } : { page: "dissections" };
   if (parts[0] === "concevoir") return { page: "conceive" };
   if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
   if (parts[0] === "p" && parts[1] && parts[2] === "concevoir") return { page: "conceive", project: parts[1], thread: parts[3] };
@@ -50,6 +54,8 @@ export function href(route: Route): string {
   if (route.page === "quality") return "#/qualite";
   if (route.page === "skills") return "#/competences";
   if (route.page === "phone") return "#/telephone";
+  if (route.page === "dissections") return "#/demontage";
+  if (route.page === "dissection") return `#/demontage/${route.id}`;
   if (route.page === "conceive") return route.project ? `#/p/${encodeURIComponent(route.project)}/concevoir${route.thread ? `/${route.thread}` : ""}` : "#/concevoir";
   if (route.page === "conception") return `#/c/${route.id}`;
   if (route.page === "project") {
@@ -142,6 +148,8 @@ export function App() {
           {route.page === "quality" && <QualityView />}
           {route.page === "skills" && <SkillsView />}
           {route.page === "phone" && <PhoneView session={session} />}
+          {route.page === "dissections" && <DissectionHome />}
+          {route.page === "dissection" && <DissectionView key={route.id} id={route.id} />}
           {route.page === "conceive" && <ConceptionStart project={route.project} thread={route.thread} />}
           {route.page === "conception" && <ConceptionView key={route.id} id={route.id} />}
           {route.page === "project" && <ProjectShell slug={route.slug} view={route.view ?? "discussion"} threadId={route.thread} taskId={route.task} fresh={route.fresh} />}

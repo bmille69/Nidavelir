@@ -25,7 +25,15 @@ export type ClaudeCall = {
   tools?: string[];
   /** Pour le compteur d'utilisation : projet et agent à l'origine de l'appel. */
   tag?: { project?: string | null; agent: string };
+  /**
+   * Lecture d'un dossier (l'Archéologue, ADR-40) : Read, Grep et Glob seulement, le dossier comme
+   * dossier de travail. Claude Code refuse de lui-même toute lecture en dehors (vérifié le 15/10/2026).
+   */
+  readDir?: string;
 };
+
+/** Les seuls outils d'un appel qui lit un dossier : lire, chercher, lister. Ni écriture, ni terminal, ni web. */
+export const READ_TOOLS = ["Read", "Grep", "Glob"];
 
 export type ClaudeResult = { text: string; structured: unknown; costUsd: number | null };
 
@@ -47,7 +55,7 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
     "--safe-mode",
     "--strict-mcp-config",
     "--tools",
-    (call.tools ?? []).join(","),
+    (call.readDir ? READ_TOOLS : (call.tools ?? [])).join(","),
     "--no-session-persistence",
     "--output-format",
     "stream-json",
@@ -58,7 +66,11 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
     systemPromptFile,
   ];
   if (call.jsonSchema) args.push("--json-schema", JSON.stringify(call.jsonSchema));
-  if (call.tools?.length) {
+  if (call.readDir) {
+    if (call.tools?.length) throw new ClaudeCliError("Un appel qui lit un dossier ne reçoit aucun autre outil");
+    // Aucun --allowedTools : seules les lectures dans le dossier de travail passent sans demande, donc sans refus.
+    args.push("--setting-sources", "", "--max-turns", "80");
+  } else if (call.tools?.length) {
     const bad = call.tools.filter((t) => !WEB_TOOLS.includes(t));
     if (bad.length) throw new ClaudeCliError(`Outil non autorisé pour un appel conversationnel : ${bad.join(", ")}`);
     // Lecture du web uniquement : aucun accès aux fichiers ni au terminal.
@@ -99,6 +111,8 @@ export class ClaudeCli {
   readonly #workDir: string;
   readonly #binary: string;
   readonly #limit = new Semaphore(2);
+  /** Les longues lectures de l'Archéologue ne bloquent jamais le directeur. */
+  readonly #readers = new Semaphore(1);
   /** Reçoit l'usage de chaque appel (jetons, limites d'abonnement). */
   observer: ((e: UsageEvent) => void) | null = null;
 
@@ -110,14 +124,14 @@ export class ClaudeCli {
   }
 
   call(call: ClaudeCall): Promise<ClaudeResult> {
-    return this.#limit.run(() => this.#call(call));
+    return (call.readDir ? this.#readers : this.#limit).run(() => this.#call(call));
   }
 
   async #call(call: ClaudeCall): Promise<ClaudeResult> {
     const sysFile = join(this.#workDir, `system-${randomUUID()}.txt`);
     writeFileSync(sysFile, call.systemPrompt, "utf8");
     try {
-      const stdout = await this.#spawn(buildChatArgs(call, sysFile), call.prompt, call.timeoutMs ?? 180_000);
+      const stdout = await this.#spawn(buildChatArgs(call, sysFile), call.prompt, call.timeoutMs ?? 180_000, call.readDir);
       const { result, limits } = parseStream(stdout);
       if (!result) throw new ClaudeCliError(`Réponse illisible de Claude Code : ${stdout.slice(0, 300)}`);
       const json = result;
@@ -142,9 +156,9 @@ export class ClaudeCli {
     }
   }
 
-  #spawn(args: string[], stdin: string, timeoutMs: number): Promise<string> {
+  #spawn(args: string[], stdin: string, timeoutMs: number, cwd = this.#workDir): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.#binary, args, { cwd: this.#workDir, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(this.#binary, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       let err = "";
       const timer = setTimeout(() => {

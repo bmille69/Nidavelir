@@ -445,6 +445,16 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - **Accueil** : la bannière à droite du « Bonjour », fondue dans la page, et le motif « Idées › Outils › Jeux ». Sur le téléphone, la bannière passe au-dessus.
 - **Rien n'est retiré** : seules l'apparence et le nom changent ; les 22 parcours du navigateur passent à l'identique.
 
+### ADR-40 : l'Atelier de démontage et l'Archéologue
+**Statut** : **Validée** le 15/10/2026, à la demande du directeur créatif : démonter un jeu qu'il possède pour le comprendre, s'en inspirer (réécriture) ou le modifier (mods), pour son usage personnel.
+- **Cadre** : jeux possédés, usage personnel, aucune republication de code ou de ressources d'autrui. **Les jeux protégés sont refusés d'office** (Easy Anti-Cheat, BattlEye, GameGuard, Ricochet, Vanguard, XIGNCODE, Denuvo, VMProtect) : c'est interdit, et un anti-triche peut bannir le compte. Aucun outil de contournement n'est intégré.
+- **Détection** (`reverse/detect.ts`, lecture seule) : Godot C# et GDScript, Unity Mono et IL2CPP, Unreal, GameMaker, Electron, Ren'Py, RPG Maker. Elle indique ce qui est honnêtement récupérable et si le jeu embarque un outil de mods (Harmony, BepInEx, dossier de mods). **Seul Godot est démonté pour l'instant**, avec GDRE Tools, qui décompile aussi le C#. Les autres moteurs viendront à la demande.
+- **Outils** : catalogue fermé. Téléchargement depuis la page GitHub officielle, **seulement sur votre clic**, dans `.data/tools`. Le démontage se fait dans `.data/dissections/<id>/jeu` : le jeu installé n'est jamais écrit. Deux modes : « code seulement » (`--scripts-only`, rapide) ou « projet complet » (ressources comprises, plusieurs Go).
+- **L'Archéologue** (nouveau rôle, modèle réglable, Sonnet recommandé) : un appel Claude Code avec seulement `Read`, `Grep` et `Glob`, le dossier démonté comme dossier de travail, et aucun `--allowedTools`. Claude Code refuse lui-même toute lecture en dehors (vérifié en vrai le 15/10). Il a un emplacement d'appel à lui, pour ne jamais ralentir le directeur. Il écrit d'abord une fiche « Vue d'ensemble » (systèmes, données, chargement des mods, idées réutilisables), puis une fiche par question. Il explique avec ses mots et ne recopie pas de longs passages.
+- **S'inspirer** : « Envoyer au directeur » ouvre une discussion « Inspiration : … » dans le projet choisi, avec **la fiche seulement, jamais le code décompilé**. Le directeur propose une réécriture à la façon du studio. Le développeur n'a aucun accès au jeu démonté.
+- **Modifier** (jeux C#) : « Créer un projet de mod » crée un dépôt à part dans vos jeux, avec les fiches et le chemin des assemblages du jeu. Le directeur en pose la base : projet C#, premier patch, installation dans le dossier de mods, sans toucher aux fichiers d'origine.
+- **Classifieur de Claude Code** : pendant ce chantier, le mode automatique a refusé plusieurs actions liées à la décompilation, même sur de faux jeux. Le directeur créatif a ajouté des règles d'autorisation (`.claude/settings.local.json`), puis est passé en mode manuel pour valider chaque action. Le premier vrai démontage se fait par lui, depuis Nidavellir.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

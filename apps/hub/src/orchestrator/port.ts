@@ -9,7 +9,14 @@
 export interface OrchestratorPort {
   readonly name: string;
   /** Un tour de conversation du directeur. */
-  reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta }): Promise<{ text: string; costUsd: number | null }>;
+  reply(input: {
+    systemPrompt: string;
+    prompt: string;
+    meta?: CallMeta;
+    /** Dossier à lire (Archéologue, ADR-40) : lecture seule, rien en dehors. */
+    readDir?: string;
+    timeoutMs?: number;
+  }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */
   structured(input: {
     systemPrompt: string;

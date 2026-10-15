@@ -74,7 +74,38 @@ export type UsageSnapshot = {
   agents: Record<string, AgentUsage>;
 };
 export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
-export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "qa";
+export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "qa" | "archeologue";
+export type GameScan = {
+  path: string;
+  name: string;
+  engine: string;
+  engineLabel: string;
+  evidence: string[];
+  pck: string | null;
+  assembly: string | null;
+  protection: string | null;
+  recoverable: string;
+  moddable: string | null;
+  tool: string | null;
+};
+export type Dissection = {
+  id: string;
+  name: string;
+  path: string;
+  status: "detected" | "blocked" | "running" | "extracted" | "failed";
+  scan: GameScan;
+  mode: "code" | "complet" | null;
+  out: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  log: string[];
+  files: number | null;
+  mod_project: string | null;
+};
+export type DissectionNote = { id: number; dissection: string; title: string; question: string; body: string; status: "thinking" | "done" | "failed"; created_at: string };
+export type DissectionDetail = Dissection & { notes: DissectionNote[] };
+export type ReverseTool = { id: string; name: string; repo: string; purpose: string; size: string; installed: boolean; version: string | null };
 export type ModelSetting = { role: ModelRole; model: string; recommended: string; why: string };
 export type ModelChoice = { id: string; label: string; note: string };
 export type Analysis = {
@@ -197,6 +228,16 @@ export const api = {
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
+  reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
+  reverseBrowse: () => request<{ path: string | null }>("POST", "/reverse/browse", {}),
+  reverseCreate: (path: string) => request<Dissection>("POST", "/reverse", { path }),
+  reverseGet: (id: string) => request<DissectionDetail>("GET", `/reverse/${id}`),
+  reverseInstall: (tool: string) => request<ReverseTool>("POST", `/reverse/tools/${tool}/install`, {}),
+  reverseRun: (id: string, mode: "code" | "complet") => request<Dissection>("POST", `/reverse/${id}/run`, { mode }),
+  reverseCancel: (id: string) => request<{ ok: boolean }>("POST", `/reverse/${id}/cancel`, {}),
+  reverseAsk: (id: string, question: string) => request<DissectionNote>("POST", `/reverse/${id}/ask`, { question }),
+  reverseSend: (id: string, note: number, project: string) => request<{ thread: string }>("POST", `/reverse/${id}/notes/${note}/send`, { project }),
+  reverseMod: (id: string) => request<{ project: string; thread: string }>("POST", `/reverse/${id}/mod`, {}),
   setAutonomy: (slug: string, level: Autonomy) => request<Project>("POST", `/projects/${slug}/autonomy`, { level }),
   decidePending: (slug: string) => request<{ decided: string[]; left: number }>("POST", `/projects/${slug}/autonomy/decide-pending`, {}),
   suggestions: () => request<Suggestion[]>("GET", "/import/suggestions"),

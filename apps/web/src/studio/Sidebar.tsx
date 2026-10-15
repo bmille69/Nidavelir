@@ -89,6 +89,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
       <nav className="side-nav">
         {item("#/concevoir", "sparkle", "Nouveau projet", route.page === "conceive" && !route.project)}
         {item("#/import", "download", "Importer un jeu", route.page === "import")}
+        {item("#/demontage", "hammer", "Démonter un jeu", route.page === "dissections" || route.page === "dissection")}
       </nav>
 
       <div className="side-spacer" />

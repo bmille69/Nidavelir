@@ -288,6 +288,31 @@ const MIGRATIONS: string[] = [
     task TEXT
   );
   `,
+  `
+  -- Atelier de démontage (ADR-40) : jeux que vous possédez, démontés pour les étudier ou les modifier.
+  CREATE TABLE dissections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    scan_json TEXT NOT NULL,
+    mode TEXT,
+    error TEXT,
+    files INTEGER,
+    mod_project TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE dissection_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dissection TEXT NOT NULL REFERENCES dissections(id),
+    title TEXT NOT NULL,
+    question TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {
