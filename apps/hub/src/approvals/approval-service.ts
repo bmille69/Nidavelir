@@ -80,10 +80,11 @@ export class ApprovalService {
 
   /**
    * Validation déléguée : le directeur décide dans le cadre de l'autonomie que vous avez
-   * choisie pour ce projet (ADR-20). Jamais pour une fusion, une escalade ou un import.
+   * choisie pour ce projet (ADR-20). Fusion seulement en atelier ou en autonomie, après l'accord du testeur
+   * ou votre « fusionne » dans la discussion (ADR-31). Jamais pour une escalade ou un import.
    */
   recordDelegated(request: ApprovalRequest & { autonomy: string; run: string }): Approval {
-    if (!["proposal", "plan"].includes(request.subject.kind)) throw new ApprovalError(`Délégation impossible pour : ${request.subject.kind}`);
+    if (!["proposal", "plan", "merge"].includes(request.subject.kind)) throw new ApprovalError(`Délégation impossible pour : ${request.subject.kind}`);
     const approval = Approval.parse({
       id: nextId(this.#db, request.project, "A"),
       project: request.project,

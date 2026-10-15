@@ -8,6 +8,7 @@ import { ClaudeCodeExecutor } from "./executor/claude-code.ts";
 import { WindowsFolderPicker } from "./projects/folder-picker.ts";
 import { defaultRegistryOptions } from "./projects/project-registry.ts";
 import { buildServer } from "./server/http.ts";
+import { RealChecker } from "./quality/checks.ts";
 
 const hubRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const dataDir = process.env.STUDIO_DATA_DIR ? resolve(process.env.STUDIO_DATA_DIR) : join(hubRoot, ".data");
@@ -32,6 +33,8 @@ const hub = createHub({
   autopilot: { synthesisDelayMs: Number(process.env.STUDIO_AUTOPILOT_DELAY_MS ?? 45_000) },
   // Téléphone (ADR-30) : publication du hub dans votre réseau Tailscale, à la demande.
   remotePort: port,
+  // Avant chaque fusion automatique : tests du jeu et lancement dans un navigateur invisible (ADR-32).
+  checker: new RealChecker({ workDir: dataDir }),
   usageProbe: async () => {
     await cli.call({ systemPrompt: "Réponds uniquement : ok", prompt: "ok", model: "haiku", tag: { agent: "compteur" } });
   },

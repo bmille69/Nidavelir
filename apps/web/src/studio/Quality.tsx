@@ -5,7 +5,7 @@ import { StatusBadge } from "../pages/TasksView.tsx";
 import { useStudio } from "./context.tsx";
 import { money } from "./Workshop.tsx";
 
-const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)} %`);
+const pct = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? "—" : `${Math.round(v * 100)} %`);
 const num = (v: number | null, digits = 1) => (v === null ? "—" : v.toFixed(digits).replace(".", ","));
 
 /**
@@ -56,8 +56,31 @@ export function QualityView() {
       {o && o.launched > 0 && (
         <>
           <section className="kpis">
-            <Kpi label="Réussite" value={pct(o.success_rate)} hint={`${o.merged} fusionné(s) sur ${o.merged + o.abandoned} terminé(s)`} explain="Chantiers fusionnés parmi ceux qui sont terminés (fusionnés ou abandonnés)." />
-            <Kpi label="Du premier coup" value={pct(o.first_try_rate)} hint={`${o.first_try} sans correction`} explain="Fusionnés sans que vous ayez eu à demander de correction." />
+            <Kpi
+              label="Réussite"
+              value={pct(o.success_rate)}
+              hint={`${o.held} réussi(s) sur ${o.merged + o.abandoned} terminé(s)${o.reworked ? ` · ${o.reworked} à refaire ensuite` : ""}`}
+              explain="Chantiers fusionnés qui ont tenu (ni repris par un autre chantier, ni annulés), parmi ceux qui sont terminés (fusionnés ou abandonnés)."
+            />
+            <Kpi label="Du premier coup" value={pct(o.first_try_rate)} hint={`${o.first_try} sans correction`} explain="Réussis sans aucune correction, ni du testeur ni de vous, et pas repris ensuite." />
+            <Kpi
+              label="Le jeu se lance"
+              value={o.launch_checked ? pct(o.launch_ok / o.launch_checked) : "—"}
+              hint={`${o.launch_checked} chantier(s) vérifié(s)`}
+              explain="Avant chaque fusion, le hub ouvre le jeu dans un navigateur invisible et vérifie qu'il démarre sans erreur. Ce sont des faits, pas l'avis d'un agent."
+            />
+            <Kpi
+              label="Tests du jeu"
+              value={o.tests_checked ? pct(o.tests_ok / o.tests_checked) : "—"}
+              hint={`${o.tests_checked} chantier(s) vérifié(s)`}
+              explain="Avant chaque fusion, le hub lance lui-même les tests du jeu (npm test). Un chantier qui casse des tests qui passaient n'est pas fusionné."
+            />
+            <Kpi
+              label="Fiabilité du testeur"
+              value={pct(o.tester_rate)}
+              hint={o.tester_judged ? `${o.tester_right} validation(s) sur ${o.tester_judged} ont tenu` : "pas encore assez de recul"}
+              explain="Quand le testeur dit « c'est bon », est-ce que ça tient ? Raté si le hub trouve ensuite une régression, si le chantier doit être repris, ou s'il est annulé."
+            />
             <Kpi label="Coût par chantier fusionné" value={o.cost_per_merged === null ? "—" : money(o.cost_per_merged)} hint={`${money(o.cost_usd)} au total`} explain="Équivalent API, pris sur votre abonnement. Compte aussi les chantiers abandonnés : c'est le vrai prix d'un résultat." />
             <Kpi label="Travail des agents" value={o.median_agent_minutes === null ? "—" : `${num(o.median_agent_minutes)} min`} hint="médiane par chantier" explain="Temps cumulé de travail du développeur et du testeur, pour un chantier typique." />
             <Kpi label="Vos interventions" value={num(o.interventions_per_chantier)} hint="par chantier" explain="Plans validés à la main, autorisations et corrections demandées. Plus c'est bas, plus le studio est autonome." />
@@ -67,6 +90,11 @@ export function QualityView() {
             <p className="notice small">
               ⚠ Le testeur trouve des problèmes dans {pct(o.qa_fail_rate)} des chantiers. Si ces problèmes ne sont pas réels, ses consignes sont à revoir ; s'ils le sont, les consignes du directeur
               manquent de précision.
+            </p>
+          )}
+          {o.tester_rate !== null && o.tester_judged >= 5 && o.tester_rate < 0.8 && (
+            <p className="notice small">
+              ⚠ Le testeur valide trop facilement : {o.tester_judged - o.tester_right} de ses {o.tester_judged} validations n'ont pas tenu. Ses consignes sont à durcir.
             </p>
           )}
 
@@ -118,6 +146,7 @@ export function QualityView() {
                     <th>État</th>
                     <th>Corrections</th>
                     <th>Testeur</th>
+                    <th>Vérifié par le hub</th>
                     <th>Agents</th>
                     <th>Coût</th>
                     <th>Avis</th>
@@ -136,9 +165,18 @@ export function QualityView() {
                       </td>
                       <td>
                         <StatusBadge status={c.status} />
+                        {c.reworked_by.length > 0 && <span className="muted small"> · repris par {c.reworked_by.join(", ")}</span>}
+                        {c.reverted && <span className="muted small"> · annulé avec Git</span>}
                       </td>
                       <td>{c.corrections}</td>
-                      <td>{c.qa === "fail" ? "⚠ problèmes" : c.qa ? "✓" : "—"}</td>
+                      <td>{c.qa === "fail" ? "⚠ problèmes" : c.qa ? "✓" : "—"}{c.tester_missed ? " (a laissé passer une régression)" : ""}</td>
+                      <td>
+                        {c.checks
+                          ? [c.checks.tests !== "none" && `tests ${c.checks.tests === "pass" ? "✓" : "✗"}`, c.checks.launch !== "none" && `lancement ${c.checks.launch === "pass" ? "✓" : "✗"}`]
+                              .filter(Boolean)
+                              .join(" · ") || "—"
+                          : "—"}
+                      </td>
                       <td>{c.agent_minutes ? `${num(c.agent_minutes)} min` : "—"}</td>
                       <td>{c.cost_usd ? money(c.cost_usd) : "—"}</td>
                       <td title={c.rating?.note ?? undefined}>{c.rating ? (c.rating.rating === "up" ? "👍" : "👎") + (c.rating.note ? " …" : "") : "—"}</td>

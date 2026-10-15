@@ -269,6 +269,25 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  `
+  -- Vérifications faites par le hub avant fusion : tests du jeu, le jeu se lance (ADR-32).
+  CREATE TABLE checks (
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (project, task)
+  );
+  `,
+  `
+  -- Carnet « État du jeu », réécrit après chaque chantier fusionné (ADR-33).
+  CREATE TABLE game_state (
+    project TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    task TEXT
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

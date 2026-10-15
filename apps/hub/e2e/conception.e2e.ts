@@ -14,7 +14,7 @@ import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
 
 const PORT = 4399;
 const BASE = `http://127.0.0.1:${PORT}`;
-const webDist = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDist = process.env.STUDIO_WEB_DIST ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const shots = process.env.STUDIO_SCREENSHOTS ?? join(process.cwd(), ".data", "screenshots");
 
 let sb: Sandbox;

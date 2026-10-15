@@ -4,6 +4,7 @@ import { api, type Rating, type Escalation, type Review, type RunEvent, type Tas
 import { formatDate } from "./labels.ts";
 import { TryButton } from "../studio/Preview.tsx";
 import { RatingBox } from "../studio/Rating.tsx";
+import { Capture } from "../studio/Capture.tsx";
 import { money } from "../studio/Workshop.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
@@ -23,8 +24,8 @@ export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accen
 
 const LIVE = new Set(["planning", "running", "approved"]);
 
-export function StatusBadge({ status }: { status: string }) {
-  const s = TASK_STATUS[status] ?? { label: status, tone: "muted" };
+export function StatusBadge({ status, queued }: { status: string; queued?: boolean }) {
+  const s = queued && status === "draft" ? { label: "En attente de son tour", tone: "accent" } : (TASK_STATUS[status] ?? { label: status, tone: "muted" });
   return <span className={`badge status-${s.tone}`}>{s.label}</span>;
 }
 
@@ -51,7 +52,7 @@ export function TasksView({ slug, taskId }: { slug: string; taskId?: string }) {
               <a className={t.id === taskId ? "active" : ""} href={`#/p/${slug}/tasks/${t.id}`}>
                 <span className="small muted">{t.id}</span> {t.title}
                 <div className="row">
-                  <StatusBadge status={t.status} />
+                  <StatusBadge status={t.status} queued={!!t.queued_at} />
                   {t.pending_escalations > 0 && <span className="badge warn pulse">{t.pending_escalations} demande(s)</span>}
                 </div>
               </a>
@@ -398,6 +399,7 @@ function ReviewCard(props: {
   return (
     <div className="card">
       <h2>{isReview ? "Le résultat, à relire" : "Résultat"}</h2>
+      <Capture slug={slug} task={id} version={review.task.updated_at} />
       {review.report && <p className="statement">{review.report.summary_simple}</p>}
       {(isReview || review.task.status === "merged") && (
         <div className="how-to-test">

@@ -88,8 +88,18 @@ describe("commandes", () => {
       "git commit -m x",
       "git reset --hard",
       "rm -rf src",
-      "git status && rm src/a.ts",
+      "git status && rm -rf src",
       "npm test; curl x",
+      "cat > src/a.ts <<'EOF'\nx\nEOF",
+      "ls src > liste.txt",
+      "(ls src)",
+      "npm test &",
+      "grep x src/a.ts | rm src/a.ts",
+      `cat ${join(dir, "outside.txt")}`,
+      "cat ../outside.txt",
+      "head -5 .env",
+      "find . -name '*.ts' -delete",
+      "cd .. && ls",
       "echo $SECRET",
       "cat .env > out.txt",
       "ls `whoami`",
@@ -101,6 +111,48 @@ describe("commandes", () => {
       "mklink /J sortie C:/",
     ];
     for (const c of bad) expect(d(exec, "Bash", { command: c }), c).toBe("deny");
+  });
+  it("enchaînements sans danger permis : chaque morceau est jugé seul (ADR-33)", () => {
+    const ok = [
+      'wc -l src/a.ts; ls src; grep -n "shots\\|sim" src/a.ts',
+      "npm test 2>&1 | tail -12",
+      "npm test 2>/dev/null",
+      "git diff --stat | tail -3; git status --short",
+      `cd ${root} && grep -n "x" src/a.ts | head -3`,
+      "cd src && ls && cat a.ts",
+      "sed -n 5,20p src/a.ts",
+      "git grep -n -E 'update\\(|hit' -- src",
+      "find src -name '*.ts' | sort",
+      "node --version",
+    ];
+    for (const c of ok) expect(exec.evaluate("Bash", { command: c }), c).toMatchObject({ decision: "allow" });
+    // Un morceau hors plan dans un enchaînement : on demande, comme pour la commande seule.
+    expect(d(exec, "Bash", { command: "git status && rm src/a.ts" })).toBe("ask");
+    expect(d(exec, "Bash", { command: "git status && rm src/old.ts" })).toBe("allow");
+    // Le refus dit quoi faire à la place.
+    expect(exec.evaluate("Bash", { command: "cat > src/a.ts <<'EOF'\nx\nEOF" }).reason).toMatch(/utilise l'outil Write ou Edit/);
+  });
+  it("scripts du projet permis au testeur, jamais ceux qui publient ou installent", () => {
+    const game = join(dir, "jeu");
+    mkdirSync(join(game, "node_modules", ".bin"), { recursive: true });
+    writeFileSync(join(game, "node_modules", ".bin", "vitest.cmd"), "");
+    writeFileSync(join(game, "package.json"), JSON.stringify({ scripts: { test: "vitest", simulate: "x", deploy: "y" } }));
+    const verify = new PolicyEngine({ mode: "verify", root: game, plan: { ...plan, commands: [] } });
+    for (const c of ["npm test", "npm run simulate -- --games 1000 --seed 42 2>&1 | tail -40", "npx vitest run src"]) expect(verify.evaluate("Bash", { command: c }), c).toMatchObject({ decision: "allow" });
+    for (const c of ["npm run deploy", "npm run inexistant", "npx cowsay"]) expect(d(verify, "Bash", { command: c }), c).toBe("deny");
+    expect(d(new PolicyEngine({ mode: "plan", root: game }), "Bash", { command: "npm test" })).toBe("deny");
+  });
+  it("le jeu lui-même est lisible (modules partagés), jamais modifiable", () => {
+    const game = join(dir, "jeu-partage");
+    mkdirSync(game, { recursive: true });
+    writeFileSync(join(game, "regles.ts"), "");
+    writeFileSync(join(game, ".env"), "");
+    const withGame = new PolicyEngine({ mode: "execute", root, plan, readable: [game] });
+    expect(d(withGame, "Read", { file_path: join(game, "regles.ts") })).toBe("allow");
+    expect(d(withGame, "Bash", { command: `cat ${join(game, "regles.ts")}` })).toBe("allow");
+    expect(d(withGame, "Read", { file_path: join(game, ".env") })).toBe("deny");
+    expect(d(withGame, "Write", { file_path: join(game, "regles.ts") })).toBe("deny");
+    expect(d(exec, "Read", { file_path: join(game, "regles.ts") })).toBe("deny");
   });
   it("commande inconnue : on vous demande à l'exécution, refus pendant le plan", () => {
     expect(d(exec, "Bash", { command: "npm run lint" })).toBe("ask");

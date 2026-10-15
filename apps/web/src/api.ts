@@ -18,6 +18,15 @@ export type QualityStats = {
   qa_fail_rate: number | null;
   up: number;
   down: number;
+  held: number;
+  reworked: number;
+  tests_checked: number;
+  tests_ok: number;
+  launch_checked: number;
+  launch_ok: number;
+  tester_judged: number;
+  tester_right: number;
+  tester_rate: number | null;
 };
 export type ChantierRow = {
   project: string;
@@ -33,7 +42,13 @@ export type ChantierRow = {
   agent_minutes: number;
   qa: "pass" | "pass_with_notes" | "fail" | null;
   rating: Rating | null;
+  held: boolean;
+  reworked_by: string[];
+  reverted: boolean;
+  checks: { tests: CheckStatus; launch: CheckStatus; regression: boolean } | null;
+  tester_missed: boolean;
 };
+export type CheckStatus = "pass" | "fail" | "none";
 export type QualityReport = { overall: QualityStats; weeks: (QualityStats & { week: string; label: string })[]; chantiers: ChantierRow[] };
 export type RunInfo = Run & { result: { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string } | null };
 export type TaskDetail = { task: Task; plan: Plan | null; runs: RunInfo[]; escalations: Escalation[]; decisions: ItemFrontmatter[]; executor: string };
@@ -206,6 +221,9 @@ export const api = {
   abandon: (slug: string, id: string, hash: string) => request<unknown>("POST", `/projects/${slug}/decisions/${id}/abandon`, { hash }),
   why: (slug: string, id: string) => request<Lineage>("GET", `/projects/${slug}/items/${id}/why`),
   tasks: (slug: string) => request<TaskRow[]>("GET", `/projects/${slug}/tasks`),
+  gameState: (slug: string) => request<{ text: string | null; updated_at: string | null; task: string | null }>("GET", `/projects/${slug}/game-state`),
+  /** Capture du jeu prise par le hub pour un chantier (ADR-33) ; `v` évite l'ancienne image en cache. */
+  screenshotUrl: (slug: string, id: string, v = "") => `/api/human/projects/${slug}/tasks/${id}/screenshot${v ? `?v=${encodeURIComponent(v)}` : ""}`,
   createTask: (slug: string, decisions: string[]) => request<Task>("POST", `/projects/${slug}/tasks`, { decisions }),
   task: (slug: string, id: string) => request<TaskDetail>("GET", `/projects/${slug}/tasks/${id}`),
   startPlan: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/plan`, {}),

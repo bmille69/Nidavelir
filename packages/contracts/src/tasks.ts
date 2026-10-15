@@ -32,6 +32,10 @@ export const Task = z.object({
   origin: z.object({ thread: z.string() }).nullable().default(null),
   /** Atelier (ADR-26) : le développeur réalise la consigne directement, sans phase de plan séparée. */
   direct: z.boolean().default(false),
+  /** En file d'attente (ADR-31) : lancé dès que le chantier précédent du projet est fusionné ou terminé. */
+  queued_at: z.string().nullable().default(null),
+  /** Chantiers déjà fusionnés que celui-ci reprend parce qu'ils ne suffisaient pas (tableau « Qualité », ADR-32). */
+  reworks: z.array(TaskId).default([]),
   status: TaskStatus,
   /** Commentaires de votre part transmis au prochain plan (demande de corrections). */
   feedback: z.array(z.string()).default([]),

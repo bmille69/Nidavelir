@@ -2,7 +2,7 @@ import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { ApprovalEdits, Autonomy, ItemType, ProjectSlug } from "@studio/contracts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { ApprovalError } from "../approvals/approval-service.ts";
@@ -455,6 +455,20 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const task = hub.tasks.get(slug, id);
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return hub.previews.start(slug, id, task.worktree);
+    });
+    // Carnet « État du jeu » (ADR-33).
+    api.get("/projects/:slug/game-state", async (req) => {
+      const { slug } = req.params as { slug: string };
+      hub.projects.get(slug);
+      return hub.gameState.get(slug) ?? { project: slug, text: null, updated_at: null, task: null };
+    });
+    // Capture du jeu prise par le hub avant le testeur (ADR-33).
+    api.get("/projects/:slug/tasks/:id/screenshot", async (req, reply) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      hub.tasks.get(slug, id);
+      const file = hub.checks?.screenshotPath(slug, id);
+      if (!file || !existsSync(file)) return reply.code(404).send({ error: "Pas de capture pour ce chantier" });
+      return reply.type("image/png").header("cache-control", "private, max-age=300").send(readFileSync(file));
     });
     api.post("/projects/:slug/preview/stop", async (req) => {
       const { slug } = req.params as { slug: string };

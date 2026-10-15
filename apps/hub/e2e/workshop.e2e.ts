@@ -1,6 +1,6 @@
 /**
  * Mode atelier dans un vrai navigateur (Edge) : vous dites « go », le directeur rédige la consigne,
- * le développeur travaille, le testeur vérifie, vous relisez et fusionnez. Aucune fiche à gérer.
+ * le développeur travaille, le testeur vérifie, le hub fusionne. Aucune fiche à gérer.
  */
 import type { FastifyInstance } from "fastify";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -16,7 +16,7 @@ import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
 
 const PORT = 4398;
 const BASE = `http://127.0.0.1:${PORT}`;
-const webDist = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDist = process.env.STUDIO_WEB_DIST ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const shots = process.env.STUDIO_SCREENSHOTS ?? join(process.cwd(), ".data", "screenshots");
 const P = "destiny";
 
@@ -77,7 +77,7 @@ afterAll(async () => {
 });
 
 describe("atelier", () => {
-  it("« go » : consigne, chantier, résultat à relire, fusion", async () => {
+  it("« go » : consigne, chantier, testeur, fusion automatique", async () => {
     fake.replies.push(
       [
         "Je propose une balle à noyau blanc-chaud et un sillage effilé de 0,12 s teinté de l'élément, rendu seulement : la simulation ne bouge pas.",
@@ -114,15 +114,15 @@ describe("atelier", () => {
     expect(fake.calls[0]!.systemPrompt).toMatch(/Le rendu ne modifie jamais la simulation[\s\S]*src\/render3d\/projectileView.ts/);
 
     finish();
-    await page.locator(".msg", { hasText: "terminé, vérifié par le testeur" }).waitFor({ timeout: 15_000 });
-    await page.locator(".workshop-list .todo-label", { hasText: "À relire et fusionner" }).waitFor();
+    // Le testeur valide : le hub fusionne tout seul (ADR-31), sans clic de votre part.
+    await page.locator(".msg", { hasText: "terminé, vérifié par le testeur et fusionné dans votre jeu" }).waitFor({ timeout: 15_000 });
     await page.screenshot({ path: join(shots, "atelier-2-termine.png") });
 
-    await page.locator(".workshop-list a", { hasText: "Balles lumineuses" }).click();
-    await page.getByRole("button", { name: "Fusionner dans mon jeu" }).click();
+    await page.goto(`${BASE}/#/p/${P}/tasks/T-0001`);
     await page.getByText(/Fusionné dans votre jeu/).waitFor({ timeout: 10_000 });
     expect(readFileSync(join(repo, "src/render3d/projectileView.ts"), "utf8")).toMatch(/0.12/);
-    expect(fake.calls.filter((c) => c.kind === "structured")).toHaveLength(0);
+    // Aucune fiche notée ; le seul appel structuré est la mise à jour du carnet « État du jeu » (ADR-33).
+    expect(fake.calls.filter((c) => c.kind === "structured" && !/carnet « État du jeu »/.test(c.systemPrompt))).toHaveLength(0);
     expect(pageErrors).toEqual([]);
   });
 

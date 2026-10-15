@@ -334,6 +334,67 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
   - cibles tactiles d'au moins 40 px, champs en 16 px (pas de zoom automatique sur iPhone), aucun défilement horizontal.
 - **Non vérifié automatiquement** : le vrai Tailscale (absent de ce PC au moment de l'écriture ; son état et ses commandes sont testés par simulation) et la réception d'une notification sur un vrai téléphone. Le chiffrement et l'envoi sont testés de bout en bout avec un faux service de notification.
 
+### ADR-31 : fusion automatique, un chantier à la fois, séances autonomes
+**Statut** : **Validée** le 15/10/2026, à la demande du directeur créatif (« le technique, c'est toi qui gères »).
+- **Incident à l'origine** (14/10, projet `bordee`) : T-0013 est parti du jeu sans T-0012, encore à relire. T-0012 a été fusionné pendant que T-0013 travaillait ; les deux touchaient les mêmes fichiers, et T-0013 n'a jamais pu être fusionné (5 essais), il a fallu le refaire (T-0014).
+- **Un chantier à la fois par projet (atelier)** : tant qu'un chantier est en cours ou à relire, les suivants sont **en file** (`queued_at`) et partent tout seuls, dans l'ordre, chacun à partir du jeu qui contient les précédents. Le bouton « ▶ Lancer » suit la même règle. Après un arrêt du hub, la file est vidée : rien ne repart sans vous.
+- **Fusion automatique (atelier)** : quand le testeur valide (`pass` ou `pass_with_notes`), le hub fusionne lui-même. Il s'agit d'une validation déléguée de type `merge`, liée au commit exact et journalisée comme les autres. Votre jeu doit être propre (pas de modifications non commitées), sinon le chantier attend et vous êtes prévenu. Annulable avec un `git revert`.
+- **Testeur pas d'accord** : le développeur corrige **une fois** d'office dans la même copie, avec les remarques du testeur, puis le testeur revérifie. Si le testeur n'est toujours pas d'accord, ou s'il n'a pas pu rendre d'avis, le chantier attend votre mot. Vous êtes prévenu dans la discussion et sur le téléphone. Cette correction d'office ne compte pas comme une intervention dans « Qualité ».
+- **Votre mot dans la discussion suffit** : le directeur voit la liste des chantiers et traduit « fusionne », « corrige… », « laisse tomber », « lance T-0004 » en balises (`[[FUSIONNER]]`, `[[CORRIGER]]`, `[[ABANDONNER]]`, `[[LANCER]]`) que le hub exécute. Les boutons de l'onglet « Chantiers » restent disponibles.
+- **Séance autonome** : « bosse en autonomie 2 h » → le directeur annonce `[[SEANCE: 2h | objectif]]` et ses premiers chantiers. Le hub les enchaîne. Quand la file est vide, il redonne la main au directeur (message `<hub>`) avec le point d'étape : le directeur propose la suite ou termine par `[[FIN_SEANCE]]`. La séance s'arrête aussi :
+  - à la fin du temps (pas de nouveau chantier dans les 5 dernières minutes ; celui en cours se termine, les suivants redeviennent des brouillons) ;
+  - après 2 chantiers en échec, ou au bout de 12 chantiers ;
+  - sur « stop » ;
+  - si le directeur ne propose pas de suite.
+
+  Le bilan (fusionnés, en attente, coût) est donné dans la discussion et sur le téléphone. La séance est gardée en mémoire : un arrêt du hub la termine.
+- **Hors atelier**, rien ne change : le reste du temps, c'est vous qui fusionnez.
+
+### ADR-32 : une « Qualité » fondée sur des faits
+**Statut** : **Validée** le 15/10/2026 (idées 1, 2 et 3 retenues par le directeur créatif).
+- **Problème** : avec la fusion automatique (ADR-31), « fusionné » ne veut plus dire « réussi ». C'est le testeur, un agent, qui décide, et le tableau se contentait de le croire.
+- **1. Vérifications du hub avant chaque fusion automatique** (`CheckService`, table `checks`) :
+  - les **tests du jeu** (`npm test`) dans la copie du chantier ;
+  - **le jeu se lance** : `npm run dev`, puis Edge invisible pendant 6 s, sans erreur dans la page ni page vide. Le serveur de jeu est séparé de celui de « ▶ Essayer » : votre essai en cours n'est jamais coupé.
+
+  Si une vérification échoue, la même est refaite sur le jeu actuel. C'est une **régression** seulement si c'était bon avant : elle empêche la fusion et repart au développeur (même règle d'une correction d'office qu'à l'ADR-31), sinon le chantier attend votre avis. Un échec déjà présent avant le chantier est signalé, sans bloquer. Le résultat est donné dans le compte rendu (« Vérifié par le hub : tests du jeu ✓, le jeu se lance ✓ »). Un jeu sans script `test` ou `dev` n'est pas vérifié sur ce point.
+- **2. Chantiers à refaire** :
+  - le directeur marque un chantier qui reprend un chantier fusionné : `[[CHANTIER: titre | reprend T-0012]]`. Seul un chantier fusionné peut être « repris », et le directeur voit les 8 derniers ;
+  - une fusion annulée par un `git revert` est repérée dans l'historique du jeu.
+
+  « Réussite » et « Du premier coup » ne comptent que les chantiers qui **ont tenu**.
+- **3. Fiabilité du testeur** : parmi les chantiers qu'il a validés et dont on connaît la suite, la part qui a tenu. C'est raté si le hub a trouvé une régression, si le chantier a été repris ou s'il a été annulé. Un avertissement apparaît en dessous de 80 % (à partir de 5 validations).
+- **Mesuré sur `bordee` le 15/10** : tests 5 s, lancement 9 s ; le dossier du jeu n'est pas modifié.
+
+### ADR-33 : gardien plus fin, capture du jeu, carnet « État du jeu »
+**Statut** : **Validée** le 15/10/2026 (points 1, 2 et 3 de la revue d'ensemble). Pas de nouvel agent : les agents existants reçoivent des outils et du contexte.
+- **Constat sur 28 chantiers** :
+  - 90 commandes refusées, dont 66 pour « enchaînement » (`npm test 2>&1 | tail`, plusieurs lectures séparées par `;`, `|` entre guillemets dans un `grep`) ;
+  - le testeur ne pouvait pas lancer la simulation de `bordee`, ni lire les modules partagés ;
+  - aucun avis 👍/👎 donné.
+- **1. Gardien** : une commande est découpée en morceaux (`;`, `&&`, `||`, `|`) et chaque morceau est jugé seul. Un refus l'emporte, puis une demande.
+  - **Permis** :
+    - les lectures (`ls`, `cat`, `grep`, `find` sans `-exec` ni `-delete`, `sed -n`, `git status/diff/log/show/grep`…) ;
+    - après `|`, seulement des filtres (`grep`, `head`, `tail`, `sort`, `wc`…) ;
+    - `2>&1` et `>/dev/null` ;
+    - `cd` à l'intérieur de la copie ;
+    - **les scripts du projet** (`npm test`, `npm run <script>` existant, sauf deploy/publish/release/install…) et **ses outils** (`npx <outil>` présent dans `node_modules/.bin`), y compris pour le testeur.
+  - **Refusé, avec la marche à suivre dans le message** :
+    - les redirections vers un fichier et les `<<EOF` (« utilise Write ou Edit ») ;
+    - `$`, les accolades et les parenthèses, les commandes en arrière-plan ;
+    - tout chemin hors de la copie ;
+    - les secrets.
+  - **Inchangé** : les interdictions de fond (réseau, interpréteurs, Git en écriture, installations).
+  - **Lecture seule** du dossier du jeu (cible des modules partagés) et des captures du hub ; jamais d'écriture.
+  - **Rejoué** sur les 96 commandes refusées : 71 permises, 12 soumises à autorisation (accordée d'office en atelier), 13 toujours refusées, à raison.
+- **2. Capture du jeu** : les vérifications du hub (ADR-32) ont lieu désormais **entre le développeur et le testeur**. Le hub lance le jeu, prend une capture pleine page après 6 s (`.data/shots/<projet>/<chantier>.png`, hors du jeu) et transmet au testeur les faits mesurés (tests, lancement, régression ou non) ainsi que la capture, qu'il regarde avec Read. La capture apparaît dans le compte rendu de la discussion et sur la page du chantier. Une régression que le testeur valide quand même est journalisée (`tester.missed`, fiabilité du testeur).
+- **3. Carnet « État du jeu »** : après chaque fusion en atelier, un appel structuré réécrit un carnet court (« Ce qui existe », « Choix déjà faits », « Limites connues et reste à faire », 600 mots au plus) à partir du carnet précédent et du rapport du chantier. Le premier carnet part des 25 derniers chantiers fusionnés. Le carnet est :
+  - gardé par le hub (table `game_state`, aucune écriture Git, donc aucun risque pour les fusions) ;
+  - donné au directeur à chaque message et au développeur, au testeur et au planificateur à chaque run ;
+  - visible dans l'onglet « Le jeu ».
+
+  Un échec de mise à jour garde l'ancien carnet.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

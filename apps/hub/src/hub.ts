@@ -10,7 +10,7 @@ import { ProjectRegistry, type RegistryOptions } from "./projects/project-regist
 import { GitCli, type VcsPort } from "./vcs/git.ts";
 import { TaskService } from "./executor/task-service.ts";
 import { ExecutorError, type ExecutorPort } from "./executor/port.ts";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { ExtractionService } from "./vision/extraction.ts";
 import { SynthesisService } from "./vision/synthesis.ts";
 import { VisionService } from "./vision/vision-service.ts";
@@ -18,6 +18,8 @@ import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
+import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
+import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { SkillService } from "./skills/skill-service.ts";
 import { NotificationService } from "./remote/notifications.ts";
@@ -47,6 +49,8 @@ export type HubOptions = {
   pushFetch?: typeof fetch;
   /** Le Concepteur peut chercher sur le web (lecture seule). Défaut : oui (choix du 14/10). */
   conceptWeb?: boolean;
+  /** Vérifications du hub avant fusion : tests du jeu et lancement (ADR-32). Absent : aucune. */
+  checker?: CheckerPort;
 };
 
 export type Hub = {
@@ -67,6 +71,8 @@ export type Hub = {
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
+  checks: CheckService | null;
+  gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
   notifications: NotificationService;
@@ -135,6 +141,8 @@ export function createHub(options: HubOptions): Hub {
     tasks.onPlanSubmitted = (project, id) => pilot.onPlanSubmitted(project, id);
     tasks.onStatus = (task) => pilot.onTaskStatus(task);
     tasks.onRunFinished = (task, kind) => pilot.onRunFinished(task, kind);
+    tasks.onQueueEmpty = (project) => pilot.onQueueEmpty(project);
+    conversations.workshopState = (project) => pilot.workshopState(project);
     autopilot = pilot;
   }
   const statusHook = tasks.onStatus;
@@ -142,7 +150,27 @@ export function createHub(options: HubOptions): Hub {
     statusHook?.(task);
     skills.onTaskStatus(task);
   };
-  const quality = new QualityService({ db, clock, journal, projects, tasks });
+  // Carnet « État du jeu » (ADR-33) : réécrit après chaque fusion en atelier, lu par le directeur et le développeur.
+  const gameState = new GameStateService({ db, clock, journal, tasks, orchestrator });
+  tasks.gameState = (project) => gameState.get(project)?.text ?? null;
+  if (autopilot) autopilot.gameState = gameState;
+  const stateHook = tasks.onStatus;
+  tasks.onStatus = (task) => {
+    stateHook?.(task);
+    if (task.status === "merged" && projects.get(task.project).autonomy === "workshop") gameState.afterMerge(task);
+  };
+  const dataDir = options.dataDir ?? dirname(options.databasePath);
+  const checks = options.checker ? new CheckService({ db, clock, journal, projects, checker: options.checker, shotsDir: join(dataDir, "shots") }) : null;
+  if (autopilot) autopilot.checks = checks;
+  if (checks) {
+    // Entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33).
+    tasks.beforeVerify = async (task) => {
+      if (!task.worktree) return null;
+      const r = await checks.run(task.project, task.id, task.worktree);
+      return { summary: checksForTester(r), screenshot: r.launch.screenshot ?? null };
+    };
+  }
+  const quality = new QualityService({ db, clock, journal, projects, tasks, vcs, checks });
   quality.onRated = (project, task, r) => {
     // Un 👍 sans un mot n'apprend rien ; un 👎 ou un commentaire, si.
     if (r.rating === "down" || r.note) skills.learn(project, task, `Avis du directeur créatif : ${r.rating === "up" ? "👍 réussi" : "👎 pas ce qu'il voulait"}${r.note ? ` — « ${r.note} »` : ""}`);
@@ -162,10 +190,13 @@ export function createHub(options: HubOptions): Hub {
   tasks.onStatus = (task) => {
     notifyHook?.(task);
     const at = `#/p/${task.project}/tasks/${task.id}`;
-    if (task.status === "review") notifications.notify({ title: "✓ Chantier prêt à essayer", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
+    // En atelier ou en autonomie, un chantier à relire est fusionné tout seul ou corrigé ; le pilote prévient s'il a besoin de vous (ADR-31).
+    const delegated = autopilot !== null && task.origin !== null && ["workshop", "autonomous"].includes(projects.get(task.project).autonomy);
+    if (task.status === "review" && !delegated) notifications.notify({ title: "✓ Chantier prêt à essayer", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
     if (task.status === "failed") notifications.notify({ title: "✗ Chantier en échec", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
     if (task.status === "plan_review") notifications.notify({ title: "Un plan attend votre accord", body: `${task.title} — ${projectName(task.project)}`, url: at, tag: task.id });
   };
+  if (autopilot) autopilot.alert = (n) => notifications.notify(n);
   tasks.onEscalation = (esc) =>
     notifications.notify({ title: "✋ Autorisation demandée", body: `${esc.summary} — ${projectName(esc.project)}`, url: `#/p/${esc.project}/tasks/${esc.task}`, tag: esc.id });
   conceptions.onTurn = (c) => {
@@ -193,6 +224,8 @@ export function createHub(options: HubOptions): Hub {
     autopilot,
     previews,
     quality,
+    checks,
+    gameState,
     conceptions,
     skills,
     notifications,

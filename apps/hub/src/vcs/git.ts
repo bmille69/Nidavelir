@@ -30,6 +30,8 @@ export interface VcsPort {
   diff(repo: string, base: string, branch: string): Promise<{ files: { status: string; path: string }[]; patch: string }>;
   /** Fusion --no-ff de branch dans la branche courante ; annule proprement en cas de conflit. */
   merge(repo: string, branch: string, message: string): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }>;
+  /** Commits annulés par un « git revert » dans l'historique récent de la branche courante. */
+  revertedCommits(repo: string): Promise<string[]>;
 }
 
 export class GitCli implements VcsPort {
@@ -153,6 +155,11 @@ export class GitCli implements VcsPort {
       await this.#git(repo, ["merge", "--abort"]).catch(() => "");
       return { ok: false as const, conflicts };
     }
+  }
+
+  async revertedCommits(repo: string): Promise<string[]> {
+    const log = await this.#git(repo, ["log", "-n", "1000", "--format=%B"]).catch(() => "");
+    return [...log.matchAll(/This reverts commit ([0-9a-f]{7,40})/g)].map((m) => m[1]!);
   }
 }
 

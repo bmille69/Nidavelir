@@ -38,6 +38,7 @@ import {
   planningSystemPrompt,
   verificationPrompt,
   verificationSystemPrompt,
+  type ProjectContext,
 } from "./prompts.ts";
 
 export class TaskError extends Error {
@@ -51,6 +52,8 @@ const PLAN_SCHEMA = z.toJSONSchema(PlanOutput, { target: "draft-7" });
 const REPORT_SCHEMA = z.toJSONSchema(ExecutionReportOutput, { target: "draft-7" });
 const VERIFY_SCHEMA = z.toJSONSchema(VerificationOutput, { target: "draft-7" });
 const MAX_EVENTS = 500;
+/** Un chantier dans l'un de ces états occupe le projet : les suivants attendent leur tour (ADR-31). */
+const ACTIVE: readonly TaskStatus[] = ["planning", "plan_review", "approved", "running", "review", "changes_requested"];
 /** Modifications qui ne doivent jamais sortir d'un run, quoi qu'il arrive. */
 const FORBIDDEN_CHANGE = /^(studio|\.git|\.claude)(\/|$)/i;
 
@@ -68,7 +71,10 @@ type ActiveRun = {
   waiting: Map<string, (allowed: boolean) => void>;
 };
 
-export type RunOutcome = { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string };
+/** Ce que le hub a vérifié lui-même, transmis au testeur. */
+export type HubChecks = { summary: string; screenshot: string | null };
+
+export type RunOutcome ={ report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string };
 
 export type TaskServiceOptions = {
   dataDir: string;
@@ -94,14 +100,21 @@ export class TaskService {
   readonly #executor: ExecutorPort;
   readonly #opts: TaskServiceOptions;
   readonly #active = new Map<string, ActiveRun>();
+  readonly #starting = new Set<string>();
   /** Prévenu quand un plan attend une validation (pilote automatique, ADR-20). */
   onPlanSubmitted: ((project: string, id: string) => Promise<unknown> | void) | null = null;
   /** Prévenu à chaque changement de statut d'une tâche (nouvelles dans la discussion d'origine, ADR-24). */
   onStatus: ((task: Task) => void) | null = null;
   /** Prévenu quand une action attend votre autorisation (notification, ADR-30). */
   onEscalation: ((esc: Escalation) => void) | null = null;
-  /** Prévenu quand un run est terminé et enregistré (son résultat est alors lisible). */
-  onRunFinished: ((task: Task, kind: RunMode) => void) | null = null;
+  /** Prévenu quand un run est terminé et enregistré (son résultat est alors lisible). Une promesse rendue est attendue par idle(). */
+  onRunFinished: ((task: Task, kind: RunMode) => unknown) | null = null;
+  /** Carnet « État du jeu » donné aux agents (ADR-33). */
+  gameState: ((project: string) => string | null) | null = null;
+  /** Vérifications du hub entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33). */
+  beforeVerify: ((task: Task) => Promise<HubChecks | null>) | null = null;
+  /** Prévenu quand le projet est libre et qu'aucun chantier n'attend son tour (séance autonome, ADR-31). */
+  onQueueEmpty: ((project: string) => unknown) | null = null;
   /** Bibliothèque de compétences (ADR-29). */
   skills: SkillService | null = null;
   /** Compteur d'utilisation (jetons et limites rapportés par Claude Code). */
@@ -223,12 +236,19 @@ export class TaskService {
    * Mode atelier (ADR-24) : chantier lancé depuis une discussion quand vous dites « go ».
    * La consigne rédigée par le directeur tient lieu de cahier des charges ; la discussion est sa trace.
    */
-  createFromConversation(project: string, input: { title: string; goal: string; decisions?: string[] }, thread: string): Task {
+  createFromConversation(project: string, input: { title: string; goal: string; decisions?: string[]; reworks?: string[] }, thread: string): Task {
     if (this.#projects.get(project).autonomy === "supervised") throw new TaskError("Autonomie « Je valide tout » : c'est vous qui lancez les tâches");
-    return this.#create(project, { decisions: input.decisions ?? [], title: input.title, goal: input.goal }, { delegated: true, thread }, { thread });
+    // Seul un chantier déjà fusionné peut être « repris » (ADR-32).
+    const reworks = (input.reworks ?? []).filter((id) => this.list(project).some((t) => t.id === id && t.status === "merged"));
+    return this.#create(project, { decisions: input.decisions ?? [], title: input.title, goal: input.goal, reworks }, { delegated: true, thread, ...(reworks.length ? { reworks } : {}) }, { thread });
   }
 
-  #create(project: string, input: { decisions: string[]; title?: string; goal?: string }, extra: Record<string, unknown>, origin: { thread: string } | null = null): Task {
+  #create(
+    project: string,
+    input: { decisions: string[]; title?: string; goal?: string; reworks?: string[] },
+    extra: Record<string, unknown>,
+    origin: { thread: string } | null = null,
+  ): Task {
     this.#projects.get(project);
     if (!input.decisions.length && !origin) throw new TaskError("Une tâche doit s'appuyer sur au moins une décision validée");
     const decisions = input.decisions.map((id) => this.#vision.get(project, id));
@@ -243,6 +263,7 @@ export class TaskService {
       goal: input.goal?.trim() || decisions.map((d) => d.statement).join("\n\n"),
       authorized_by: decisions.map((d) => d.id),
       origin,
+      reworks: input.reworks ?? [],
       status: "draft",
       feedback: [],
       base_commit: null,
@@ -270,7 +291,7 @@ export class TaskService {
     const decisions = this.#decisions(task);
     const ctx = this.#context(task);
 
-    this.#spawn(task, "plan", new PolicyEngine({ mode: "plan", root: task.worktree! }), {
+    this.#spawn(task, "plan", new PolicyEngine({ mode: "plan", root: task.worktree!, readable: this.#readable(task) }), {
       systemPrompt: planningSystemPrompt(ctx),
       prompt: planningPrompt(task, decisions, changed),
       jsonSchema: PLAN_SCHEMA,
@@ -375,7 +396,14 @@ export class TaskService {
     if (autonomy !== "workshop") throw new TaskError("Exécution directe réservée au mode atelier");
     let task = this.get(project, id);
     if (task.status !== "draft") throw new TaskError(`Impossible de lancer depuis le statut « ${task.status} »`);
-    task = await this.#ensureWorktree(task);
+    // Le projet est occupé dès maintenant, pendant la création de la copie du jeu (file d'attente, ADR-31).
+    const key = `${project}/${id}`;
+    this.#starting.add(key);
+    try {
+      task = await this.#ensureWorktree(task);
+    } finally {
+      this.#starting.delete(key);
+    }
     const plan = this.#storePlan(task, {
       summary: `Consigne du directeur, réalisée directement (atelier) : ${task.title}`,
       summary_simple: task.goal.split("\n")[0]!.slice(0, 800),
@@ -403,7 +431,7 @@ export class TaskService {
       this.#approvals.consume(project, approval.id, { kind: "plan", id: plan.id, hash: plan.hash });
       this.#db.prepare("UPDATE plans SET status = 'approved' WHERE project = ? AND id = ?").run(project, plan.id);
     });
-    this.#update(task, { status: "approved", plan: plan.id, direct: true });
+    this.#update(task, { status: "approved", plan: plan.id, direct: true, queued_at: null });
     return this.#execute(project, id);
   }
 
@@ -412,7 +440,59 @@ export class TaskService {
     assertHumanSession(session);
     const level = this.#projects.get(project).autonomy;
     if (level !== "workshop") return this.startPlanning(project, id);
-    return this.startDirect(project, id, level);
+    return (await this.launch(project, id)).task;
+  }
+
+  // ── File d'attente (ADR-31) ──────────────────────────────────────────────
+
+  /** Chantier qui occupe le projet (en cours, à relire…), s'il y en a un. */
+  busy(project: string, except?: string): Task | null {
+    return this.list(project).find((t) => t.id !== except && (ACTIVE.includes(t.status) || this.#starting.has(`${project}/${t.id}`))) ?? null;
+  }
+
+  queued(project: string): Task[] {
+    return this.list(project)
+      .filter((t) => t.status === "draft" && t.queued_at)
+      .sort((a, b) => a.queued_at!.localeCompare(b.queued_at!) || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Atelier : un seul chantier à la fois par projet. Chacun part de la version du jeu qui contient
+   * les précédents, donc deux chantiers ne se marchent jamais dessus (incident du 14/10, T-0013).
+   * Si le projet est occupé, le chantier attend son tour et partira tout seul.
+   */
+  async launch(project: string, id: string): Promise<{ task: Task; after: Task | null }> {
+    const task = this.get(project, id);
+    if (task.status !== "draft") throw new TaskError(`Impossible de lancer depuis le statut « ${task.status} »`);
+    const after = this.busy(project, id) ?? this.queued(project).find((t) => t.id !== id) ?? null;
+    if (after) return { task: task.queued_at ? task : this.#update(task, { queued_at: this.#clock.now() }), after };
+    return { task: await this.startDirect(project, id, "workshop"), after: null };
+  }
+
+  /** Retire un chantier de la file : il redevient un brouillon à lancer vous-même. */
+  unqueue(project: string, id: string): Task {
+    const task = this.get(project, id);
+    return task.queued_at ? this.#update(task, { queued_at: null }) : task;
+  }
+
+  /** Projet libéré : le chantier suivant de la file démarre. */
+  async #pump(project: string): Promise<void> {
+    if (this.busy(project)) return;
+    const next = this.queued(project)[0];
+    if (!next) {
+      await this.onQueueEmpty?.(project);
+      return;
+    }
+    if (this.#projects.get(project).autonomy !== "workshop") {
+      this.unqueue(project, next.id);
+      return;
+    }
+    try {
+      await this.startDirect(project, next.id, "workshop");
+    } catch (err) {
+      this.#log(project, "queue.failed", next.id, { error: (err as Error).message.slice(0, 300) });
+      this.#update(this.get(project, next.id), { status: "failed", queued_at: null });
+    }
   }
 
   async #execute(project: string, id: string): Promise<Task> {
@@ -424,7 +504,7 @@ export class TaskService {
     const decisions = this.#decisions(task);
     const ctx = this.#context(task);
 
-    this.#spawn(running, "execute", new PolicyEngine({ mode: "execute", root: task.worktree!, plan }), {
+    this.#spawn(running, "execute", new PolicyEngine({ mode: "execute", root: task.worktree!, plan, readable: this.#readable(task) }), {
       systemPrompt: task.direct ? directExecutionSystemPrompt(ctx) : executionSystemPrompt(ctx),
       prompt: task.direct ? directExecutionPrompt(task, decisions) : executionPrompt(task, plan, decisions),
       jsonSchema: REPORT_SCHEMA,
@@ -440,10 +520,12 @@ export class TaskService {
         if (violations.length) {
           throw new TaskError(`Modifications interdites détectées : ${violations.map((v) => v.path).join(", ")}`);
         }
+        // Vérifications du hub d'abord (tests, lancement, capture) : le testeur en reçoit les résultats et l'image (ADR-33).
+        const hubChecks = await Promise.resolve(this.beforeVerify?.(this.get(project, id)) ?? null).catch(() => null);
         // Vérification QA automatique, en lecture seule.
-        this.#spawn(this.get(project, id), "verify", new PolicyEngine({ mode: "verify", root: task.worktree!, plan }), {
+        this.#spawn(this.get(project, id), "verify", new PolicyEngine({ mode: "verify", root: task.worktree!, plan, readable: this.#readable(task) }), {
           systemPrompt: verificationSystemPrompt(ctx),
-          prompt: verificationPrompt(task, plan, decisions, patch, report),
+          prompt: verificationPrompt(task, plan, decisions, patch, report, hubChecks),
           jsonSchema: VERIFY_SCHEMA,
           onResult: (v) => {
             const verification = VerificationOutput.parse(v.structured);
@@ -522,6 +604,28 @@ export class TaskService {
     const head = await this.#vcs.branchHead(repo, task.branch);
     const approval = this.#approvals.record(session, { project, subject: { kind: "merge", id: task.id, hash: sha256(headSha) }, verdict: "approved" });
     this.#approvals.consume(project, approval.id, { kind: "merge", id: task.id, hash: sha256(head ?? "") });
+    return this.#merge(task, approval.id);
+  }
+
+  /**
+   * Fusion déléguée (ADR-31) : en atelier ou en autonomie, quand le testeur a validé le chantier,
+   * ou quand vous avez dit « fusionne » dans la discussion. Annulable avec un « git revert ».
+   */
+  async autoMerge(project: string, id: string, autonomy: string, note: string): Promise<{ task: Task; sha: string }> {
+    if (!["workshop", "autonomous"].includes(autonomy)) throw new TaskError("Fusion automatique réservée à l'atelier et à l'autonomie");
+    const task = this.get(project, id);
+    if (task.status !== "review" || !task.branch) throw new TaskError("Seule une tâche en revue peut être fusionnée");
+    const head = await this.#vcs.branchHead(this.#projects.get(project).root, task.branch);
+    if (!head) throw new TaskError("Ce chantier n'a pas de modifications");
+    const subject = { kind: "merge" as const, id: task.id, hash: sha256(head) };
+    const approval = this.#approvals.recordDelegated({ project, subject, verdict: "approved", autonomy, run: "autopilot", note });
+    this.#approvals.consume(project, approval.id, subject);
+    return this.#merge(task, approval.id);
+  }
+
+  async #merge(task: Task, approval: string): Promise<{ task: Task; sha: string }> {
+    const { project, id } = task;
+    const repo = this.#projects.get(project).root;
     const dirty = await this.#vcs.trackedChanges(repo);
     if (dirty.length) {
       throw new TaskError(
@@ -529,10 +633,10 @@ export class TaskService {
       );
     }
     if (!(await this.#vcs.currentBranch(repo))) throw new TaskError("Votre projet n'est sur aucune branche (HEAD détachée)");
-    const res = await this.#vcs.merge(repo, task.branch, `studio: fusion de ${task.id} — ${task.title} (${approval.id})`);
+    const res = await this.#vcs.merge(repo, task.branch!, `studio: fusion de ${task.id} — ${task.title} (${approval})`);
     if (!res.ok) throw new TaskError(`Conflit de fusion sur : ${res.conflicts.join(", ") || "?"}. Rien n'a été modifié dans votre projet.`);
     await this.#cleanup(task);
-    this.#log(project, "task.merged", id, { approval: approval.id, commit: res.sha });
+    this.#log(project, "task.merged", id, { approval, commit: res.sha });
     return { task: this.#update(this.get(project, id), { status: "merged", worktree: null }), sha: res.sha };
   }
 
@@ -547,8 +651,25 @@ export class TaskService {
     return this.startPlanning(project, id);
   }
 
+  /**
+   * Atelier (ADR-31) : nouvelle passe du développeur dans la même copie du jeu, avec les remarques
+   * du testeur ou les vôtres (dites dans la discussion), puis nouvelle vérification.
+   */
+  async correct(project: string, id: string, feedback: string, by: "tester" | "you"): Promise<Task> {
+    const task = this.get(project, id);
+    if (task.status !== "review" || !task.direct || !task.plan) throw new TaskError("Seul un chantier d'atelier en revue peut être corrigé ainsi");
+    this.#update(task, { status: "approved", feedback: [...task.feedback, feedback.trim()].filter(Boolean) });
+    this.#log(project, "task.changes_requested", id, { feedback, direct: true, by });
+    return this.#execute(project, id);
+  }
+
   async abandon(session: HumanSession, project: string, id: string): Promise<Task> {
     assertHumanSession(session);
+    return this.abandonDelegated(project, id);
+  }
+
+  /** Abandon demandé dans la discussion (« laisse tomber ») : votre jeu reste intact. */
+  async abandonDelegated(project: string, id: string): Promise<Task> {
     const task = this.get(project, id);
     if (["merged", "abandoned"].includes(task.status)) throw new TaskError(`Tâche déjà ${task.status}`);
     if ([...this.#active.values()].some((r) => r.task === id && r.project === project)) throw new TaskError("Arrêtez d'abord l'exécution en cours");
@@ -562,6 +683,11 @@ export class TaskService {
     const now = this.#clock.now();
     this.#db.prepare("UPDATE runs SET status = 'failed', finished_at = ?, error = 'interrompu par l''arrêt du hub' WHERE status = 'running'").run(now);
     this.#db.prepare("UPDATE escalations SET status = 'expired', decided_at = ? WHERE status = 'pending'").run(now);
+    // Après un arrêt du hub, rien ne repart tout seul : les chantiers en file redeviennent des brouillons à lancer.
+    for (const row of this.#db.prepare("SELECT project, id FROM tasks WHERE status = 'draft'").all() as { project: string; id: string }[]) {
+      const t = this.get(row.project, row.id);
+      if (t.queued_at) this.#update(t, { queued_at: null });
+    }
     for (const row of this.#db.prepare("SELECT project, id FROM tasks WHERE status IN ('planning', 'running')").all() as { project: string; id: string }[]) {
       this.#update(this.get(row.project, row.id), { status: "failed" });
     }
@@ -723,7 +849,8 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
         this.#finished.set(id, run.events);
         this.#log(task.project, `run.${status}`, task.id, { run: id, kind, cost_usd: cost, error });
         try {
-          this.onRunFinished?.(this.get(task.project, task.id), kind);
+          const after = this.onRunFinished?.(this.get(task.project, task.id), kind);
+          if (after instanceof Promise) this.#track(after);
         } catch {
           /* un observateur ne doit jamais casser le chantier */
         }
@@ -815,13 +942,18 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
     if (task.branch && (await this.#vcs.branchHead(repo, task.branch))) await this.#vcs.deleteBranch(repo, task.branch).catch(() => {});
   }
 
+  /** Lisibles en plus de la copie : le jeu (modules partagés) et les captures du hub pour ce projet. */
+  #readable(task: Task): string[] {
+    return [this.#projects.get(task.project).root, join(this.#opts.dataDir, "shots", task.project)];
+  }
+
   #decisions(task: Task): ItemFrontmatter[] {
     return task.authorized_by.map((id) => this.#vision.get(task.project, id));
   }
 
-  #context(task: Task): { brief: string | null; claudeMd: string | null } {
+  #context(task: Task): ProjectContext {
     const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
-    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")) };
+    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")), state: this.gameState?.(task.project) ?? null };
   }
 
   #update(task: Task, patch: Partial<Task> & { status?: TaskStatus }): Task {
@@ -833,8 +965,19 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
       } catch {
         /* un observateur ne doit jamais casser le chantier */
       }
+      // Projet libéré : le chantier suivant de la file peut partir (après la fin de l'opération en cours).
+      if (ACTIVE.includes(task.status) && !ACTIVE.includes(next.status)) this.#track(Promise.resolve().then(() => this.#pump(next.project)));
     }
     return next;
+  }
+
+  #track(p: Promise<unknown>): void {
+    const safe = p.then(
+      () => {},
+      () => {},
+    );
+    this.#background.add(safe);
+    void safe.finally(() => this.#background.delete(safe));
   }
 
   #log(project: string, type: string, subject: string, payload: Record<string, unknown>): void {

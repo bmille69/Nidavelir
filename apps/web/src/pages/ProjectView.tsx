@@ -3,6 +3,7 @@ import { useStudio } from "../studio/context.tsx";
 import { AUTONOMY } from "../studio/Autonomy.tsx";
 import { DirectorPanel } from "../studio/Choices.tsx";
 import { WorkshopPanel } from "../studio/Workshop.tsx";
+import { Capture } from "../studio/Capture.tsx";
 import { navigate } from "../App.tsx";
 import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
@@ -42,6 +43,9 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   const [onlyHint, setOnlyHint] = useState(false);
   const [onlyNewChoice, setOnlyNew] = useState(true);
   const [shown, setShown] = useState(PAGE);
+  // Sur téléphone, un seul panneau à la fois : la discussion ou le panneau de droite.
+  const [pane, setPane] = useState<"chat" | "side">("chat");
+  const waiting = useStudio()?.projects.find((p) => p.slug === slug)?.waiting ?? 0;
   // En autonomie, rien n'est « à trier » : on montre tout ce qui est noté.
   const onlyNew = onlyNewChoice && !auto;
 
@@ -158,7 +162,16 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
   const runningJob = jobs.find((j) => j.status === "running");
 
   return (
-    <main className="project">
+    <main className={`project pane-${pane}`}>
+      <div className="pane-switch" role="tablist">
+        <button role="tab" aria-selected={pane === "chat"} className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>
+          Conversation
+        </button>
+        <button role="tab" aria-selected={pane === "side"} className={pane === "side" ? "on" : ""} onClick={() => setPane("side")}>
+          {workshop ? "Chantiers" : auto ? "Questions" : "Fiches"}
+          {waiting > 0 && <span className="count warn">{waiting}</span>}
+        </button>
+      </div>
       <aside className="threads">
         <h2>Discussions</h2>
         <button onClick={newThread}>Nouvelle discussion</button>
@@ -212,7 +225,7 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
           {messages.map((m) => (
             <div key={m.id} className={`msg ${m.role}`}>
               <div className="who">{m.role === "human" ? "Vous" : "Directeur (IA)"}</div>
-              <MessageText text={m.text} />
+              <MessageText text={m.text} slug={slug} />
               {m.role === "human" && m.extraction === "pending" && <div className="muted small">analyse en cours…</div>}
               {m.role === "human" && m.extraction === "failed" && <div className="error small">l'analyse de ce message a échoué</div>}
             </div>
@@ -378,20 +391,27 @@ export function ProjectView({ slug, threadId }: { slug: string; threadId?: strin
 
 const BRIEF_MARK = "§CONSIGNE§ ";
 
-/** Texte d'un message ; la consigne envoyée au développeur est repliée sous la réponse. */
-function MessageText({ text }: { text: string }) {
-  const at = text.indexOf(BRIEF_MARK);
-  if (at < 0) return <div className="text">{text}</div>;
-  const [title, ...rest] = text.slice(at + BRIEF_MARK.length).split("\n");
+const CAPTURE = /^§CAPTURE§ (T-\d+) (\S+)$/m;
+
+/** Texte d'un message ; chaque consigne envoyée au développeur est repliée sous la réponse, la capture du jeu est affichée. */
+function MessageText({ text, slug }: { text: string; slug: string }) {
+  const shot = CAPTURE.exec(text);
+  const [intro, ...briefs] = text.replace(CAPTURE, "").split(BRIEF_MARK);
   return (
     <>
-      {text.slice(0, at).trim() && <div className="text">{text.slice(0, at).trim()}</div>}
-      <details className="brief">
-        <summary>
-          <span className="brief-label">Consigne envoyée au Développeur</span> {title}
-        </summary>
-        <div className="text small">{rest.join("\n").trim()}</div>
-      </details>
+      {intro!.trim() && <div className="text">{intro!.trim()}</div>}
+      {shot && <Capture slug={slug} task={shot[1]!} version={shot[2]!} />}
+      {briefs.map((b, k) => {
+        const [title, ...rest] = b.split("\n");
+        return (
+          <details className="brief" key={k}>
+            <summary>
+              <span className="brief-label">Consigne envoyée au Développeur</span> {title}
+            </summary>
+            <div className="text small">{rest.join("\n").trim()}</div>
+          </details>
+        );
+      })}
     </>
   );
 }

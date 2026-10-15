@@ -133,7 +133,7 @@ describe("Tailscale", () => {
 });
 
 describe("notifications", () => {
-  it("un chantier prêt envoie une notification chiffrée que seul le téléphone peut lire", async () => {
+  it("un chantier qui attend votre avis envoie une notification chiffrée que seul le téléphone peut lire", async () => {
     // Le « téléphone » : ses clés d'abonnement.
     const ua = createECDH("prime256v1");
     ua.generateKeys();
@@ -163,11 +163,14 @@ describe("notifications", () => {
     await hub.projects.register(sb.human(), { path: root, slug: "d", name: "Destiny" });
     hub.notifications.subscribe(sb.human(), { endpoint: "https://fcm.googleapis.com/fcm/send/xyz", keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: auth.toString("base64url") } }, null);
 
-    exec.scripts.execute.push(async (t) => {
-      await t.write("src/a.ts", "export {};\n");
-      return REPORT;
-    });
-    exec.scripts.verify.push(() => VERIFIED);
+    // Le testeur refuse deux fois (correction automatique comprise) : le chantier attend votre avis, le téléphone est prévenu.
+    for (const k of [1, 2]) {
+      exec.scripts.execute.push(async (t) => {
+        await t.write("src/a.ts", `export const v = ${k};\n`);
+        return REPORT;
+      });
+      exec.scripts.verify.push(() => ({ ...VERIFIED, verdict: "fail" }));
+    }
     fake.replies.push("Ok.\n[[CHANTIER: Balles lumineuses]]\nObjectif : tirs premium.\n[[/CHANTIER]]");
     const t = hub.conversations.createThread("d", "x");
     await hub.conversations.send("d", t.id, "go");
@@ -195,6 +198,6 @@ describe("notifications", () => {
     d.setAuthTag(data.subarray(data.length - 16));
     const plain = Buffer.concat([d.update(data.subarray(0, data.length - 16)), d.final()]);
     expect(plain.at(-1)).toBe(2);
-    expect(JSON.parse(plain.subarray(0, -1).toString())).toMatchObject({ title: "✓ Chantier prêt à essayer", body: "Balles lumineuses — Destiny", url: "#/p/d/tasks/T-0001" });
+    expect(JSON.parse(plain.subarray(0, -1).toString())).toMatchObject({ title: "✋ Un chantier attend votre avis", body: "Balles lumineuses — le testeur a trouvé des problèmes", url: "#/p/d/tasks/T-0001" });
   });
 });

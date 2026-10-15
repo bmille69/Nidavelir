@@ -15,7 +15,7 @@ import { cleanupSandboxes, DIRECTOR, fakeClock, git, msg, sandbox, type Sandbox 
 
 const PORT = 4394;
 const BASE = `http://127.0.0.1:${PORT}`;
-const webDist = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDist = process.env.STUDIO_WEB_DIST ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const shots = process.env.STUDIO_SCREENSHOTS ?? join(process.cwd(), ".data", "screenshots");
 const P = "destiny";
 

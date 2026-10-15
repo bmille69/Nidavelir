@@ -29,9 +29,11 @@ export function WorkshopPanel({ slug }: { slug: string }) {
     t.pending_escalations > 0
       ? "Une autorisation vous attend"
       : t.status === "draft"
-        ? "Prêt à lancer"
+        ? t.queued_at
+          ? null
+          : "Prêt à lancer"
         : t.status === "review"
-        ? "À relire et fusionner"
+        ? "Votre avis : dites « fusionne » ou ce qu'il faut corriger"
         : t.status === "plan_review"
           ? "Plan à valider"
           : null;
@@ -53,19 +55,19 @@ export function WorkshopPanel({ slug }: { slug: string }) {
                 <span className="muted small">{t.id}</span>
                 <strong>{t.title}</strong>
                 <span className="row">
-                  <StatusBadge status={t.status} />
+                  <StatusBadge status={t.status} queued={!!t.queued_at} />
                   <span className="muted small">{ago(t.updated_at, now)}</span>
                   {t.cost_usd > 0 && <span className="muted small" title="Équivalent API, pris sur votre abonnement">≈ {money(t.cost_usd)}</span>}
                 </span>
                 {todo && <span className="todo-label">→ {todo}</span>}
               </a>
               {["planning", "approved", "running"].includes(t.status) && <LiveLog slug={slug} task={t.id} />}
-              {t.status === "draft" && <StartButton slug={slug} task={t.id} onStarted={load} />}
+              {t.status === "draft" && !t.queued_at && <StartButton slug={slug} task={t.id} onStarted={load} />}
               {t.status === "review" && (
                 <div className="row review-actions">
                   <TryButton slug={slug} task={t.id} small />
                   <a className="small" href={`#/p/${slug}/tasks/${t.id}`}>
-                    Voir les changements et fusionner →
+                    Voir les changements →
                   </a>
                 </div>
               )}

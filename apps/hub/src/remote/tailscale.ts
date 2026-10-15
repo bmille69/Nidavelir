@@ -21,9 +21,10 @@ const WINDOWS_PATH = "C:\\Program Files\\Tailscale\\tailscale.exe";
 
 /** Lance la commande `tailscale` officielle (lecture de l'état, publication du hub). */
 export function tailscaleRunner(): Runner {
-  const bin = process.platform === "win32" && existsSync(WINDOWS_PATH) ? WINDOWS_PATH : "tailscale";
   return (args) =>
     new Promise((resolve) => {
+      // Cherché à chaque appel : Tailscale peut être installé pendant que le hub tourne (constaté le 15/10).
+      const bin = process.platform === "win32" && existsSync(WINDOWS_PATH) ? WINDOWS_PATH : "tailscale";
       execFile(bin, args, { windowsHide: true, timeout: 30_000 }, (err, stdout, stderr) => {
         const code = err ? (typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : 127) : 0;
         resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? (err ? err.message : "")) });

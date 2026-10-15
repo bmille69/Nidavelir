@@ -11,12 +11,15 @@ export function VisionView({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [built, setBuilt] = useState<TaskRow[]>([]);
+  const [state, setState] = useState<{ text: string | null; updated_at: string | null } | null>(null);
 
   const refresh = useCallback(async () => {
     const [c, all] = await Promise.all([api.items(slug, "canon"), api.items(slug, "all")]);
     setCanon(c.items);
     setRev(c.vision_rev);
     setBuilt((await api.tasks(slug)).filter((t) => t.status === "merged").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1)));
+    // Un hub plus ancien ne connaît pas encore le carnet : on ne l'affiche pas, sans erreur.
+    setState(await api.gameState(slug).catch(() => null));
     setPast(all.items.filter((i) => i.type === "decision" && (i.status === "superseded" || i.status === "abandoned")));
   }, [slug]);
 
@@ -64,6 +67,16 @@ export function VisionView({ slug }: { slug: string }) {
           {decisions.length > 6 && <input className="bible-search" placeholder="Chercher dans la bible…" value={query} onChange={(e) => setQuery(e.target.value)} />}
         </div>
         {error && <p className="error">{error}</p>}
+        {state?.text && (
+          <section className="theme">
+            <h2 className="theme-title">État du jeu</h2>
+            <p className="muted small">
+              Ce que le directeur et le développeur savent du jeu avant chaque discussion et chaque chantier. Réécrit tout seul après chaque chantier fusionné
+              {state.updated_at ? ` (dernière mise à jour le ${formatDate(state.updated_at)})` : ""}.
+            </p>
+            <article className="entry game-state">{renderNotes(state.text)}</article>
+          </section>
+        )}
         {built.length > 0 && (
           <section className="theme">
             <h2 className="theme-title">Réalisé dans le jeu</h2>
@@ -277,3 +290,14 @@ function groupByTheme(list: Item[]): [string, Item[]][] {
 }
 
 const slugTheme = (t: string) => t.normalize("NFD").replace(/[^a-zA-Z]+/g, "-").toLowerCase();
+
+/** Le carnet est du Markdown simple : titres « ## » et listes « - », rendus sans bibliothèque. */
+function renderNotes(text: string) {
+  return text.split("\n").map((line, k) => {
+    const t = line.trim();
+    if (!t) return null;
+    if (/^#{1,4} /.test(t)) return <h3 key={k}>{t.replace(/^#+ /, "")}</h3>;
+    if (/^[-*] /.test(t)) return <p key={k} className="entry-text small game-state-item">• {t.slice(2).replace(/\*\*/g, "")}</p>;
+    return <p key={k} className="entry-text small">{t.replace(/\*\*/g, "")}</p>;
+  });
+}

@@ -6,12 +6,12 @@ import { useStudioRefresh } from "./context.tsx";
 export const AUTONOMY: Record<Autonomy, { label: string; short: string; explain: string[] }> = {
   workshop: {
     label: "Atelier",
-    short: "Vous parlez, le directeur fait coder, vous fusionnez.",
+    short: "Vous parlez, le directeur fait coder, le testeur valide, c'est fusionné.",
     explain: [
       "Le directeur, chef de projet, connaît votre code et propose des solutions concrètes.",
-      "Quand vous dites « go », il rédige la consigne et le Développeur se met au travail.",
-      "Un plan sans risque part tout seul ; s'il supprime des fichiers ou ajoute une bibliothèque, il vous demande.",
-      "Une seule validation à faire : relire le résultat et fusionner. Ni fiches ni décisions à gérer.",
+      "Quand vous dites « go », il rédige la consigne et le Développeur se met au travail. Un chantier à la fois : les suivants attendent leur tour.",
+      "Si le testeur valide, c'est fusionné dans votre jeu tout seul. Sinon le développeur corrige une fois, puis le chantier attend votre mot dans la discussion (« fusionne », « corrige… », « laisse tomber »).",
+      "« Bosse en autonomie 2 h » : il fait son plan de séance, enchaîne les chantiers et vous fait le bilan à la fin.",
     ],
   },
   supervised: {
