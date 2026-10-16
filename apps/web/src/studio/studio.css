@@ -1097,6 +1097,7 @@
 .dissect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
 .dissect-evidence { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; padding: 0; margin: 0.6rem 0; }
 .dissect-blocked { color: var(--error); display: flex; gap: 0.4rem; align-items: flex-start; }
+.dissect-updated { display: flex; gap: 0.5rem; align-items: flex-start; color: var(--warn); background: var(--warn-bg); border: 1px solid currentColor; border-radius: var(--radius); padding: 0.7rem 0.9rem; margin: 0 0 1rem; }
 .dissect-tool { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
 .dissect-modes { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .dissect-modes p { flex-basis: 100%; margin: 0.2rem 0 0; }

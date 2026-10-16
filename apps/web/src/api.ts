@@ -102,6 +102,8 @@ export type Dissection = {
   log: string[];
   files: number | null;
   mod_project: string | null;
+  updated: boolean;
+  previous: boolean;
 };
 export type DissectionNote = { id: number; dissection: string; title: string; question: string; body: string; status: "thinking" | "done" | "failed"; created_at: string };
 export type DissectionDetail = Dissection & { notes: DissectionNote[] };

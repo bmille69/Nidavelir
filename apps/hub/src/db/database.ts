@@ -318,6 +318,10 @@ const MIGRATIONS: string[] = [
   UPDATE settings SET value = json_set(value, '$.developer_big', 'fable', '$.developer', 'sonnet')
   WHERE key = 'models' AND json_extract(value, '$.developer') = 'fable';
   `,
+  `
+  -- ADR-42 : empreinte du jeu installé au moment du démontage, pour repérer ses mises à jour.
+  ALTER TABLE dissections ADD COLUMN fingerprint TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): Db {

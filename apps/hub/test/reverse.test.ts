@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHub } from "../src/hub.ts";
 import { buildChatArgs } from "../src/llm/claude-cli.ts";
 import { detectGame } from "../src/reverse/detect.ts";
+import { buildMap, typesIn } from "../src/reverse/map.ts";
 import type { RecoverInput, ReverseToolsPort, ToolInfo } from "../src/reverse/tools.ts";
 import { FakeOrchestrator } from "./fake-orchestrator.ts";
 import { cleanupSandboxes, fakeClock, sandbox } from "./helpers.ts";
@@ -23,6 +24,8 @@ function game(dir: string, files: string[]): string {
 class FakeTools implements ReverseToolsPort {
   installed = false;
   recovered: RecoverInput[] = [];
+  /** La version du jeu démontée : la 2 change les dégâts de Strike et ajoute une carte. */
+  version = 1;
   list(): ToolInfo[] {
     return [{ id: "gdre", name: "GDRE Tools", repo: "GDRETools/gdsdecomp", purpose: "…", size: "≈ 100 Mo", installed: this.installed, version: this.installed ? "v2.7.4" : null }];
   }
@@ -35,7 +38,8 @@ class FakeTools implements ReverseToolsPort {
     input.log("Recovering project…");
     mkdirSync(join(input.out, "src", "Cards"), { recursive: true });
     writeFileSync(join(input.out, "project.godot"), "[application]");
-    writeFileSync(join(input.out, "src", "Cards", "Strike.cs"), "class Strike { int damage = 6; }");
+    writeFileSync(join(input.out, "src", "Cards", "Strike.cs"), `class Strike { int damage = ${this.version === 1 ? 6 : 9}; }`);
+    if (this.version > 1) writeFileSync(join(input.out, "src", "Cards", "Bash.cs"), "class Bash : Card { }");
   }
 }
 
@@ -46,6 +50,7 @@ class Archeologue extends FakeOrchestrator {
     this.readDirs.push(input.readDir);
     this.calls.push({ kind: "reply", systemPrompt: input.systemPrompt, prompt: input.prompt });
     if (!input.readDir) return super.reply(input);
+    if (/Fais la fiche « Mise à jour/.test(input.prompt)) return { text: "# Mise à jour : ce qui a changé\n\nStrike passe de 6 à 9 dégâts.", costUsd: 0 };
     return { text: /Fais la fiche « Vue d'ensemble »/.test(input.prompt) ? "# Vue d'ensemble\n\nUn jeu de cartes. Les mods passent par Harmony." : "# Les cartes d'attaque\n\nStrike inflige 6 dégâts.", costUsd: 0 };
   }
 }
@@ -66,6 +71,30 @@ describe("détection du moteur (ADR-40)", () => {
     expect(detectGame(game(join(sb.dir, "ue"), ["Jeu.exe", "Jeu/Content/Paks/Jeu.pak"]))).toMatchObject({ engine: "unreal" });
     // Anti-triche : jamais démonté, même si le moteur est pris en charge.
     expect(detectGame(game(join(sb.dir, "protege"), ["Jeu.pck", "EasyAntiCheat/EasyAntiCheat_EOS_Setup.exe"]))).toMatchObject({ engine: "godot", protection: "Easy Anti-Cheat", tool: null });
+  });
+});
+
+describe("carte du jeu (ADR-42)", () => {
+  it("repère les types C# et GDScript, les familles et les autoloads", () => {
+    expect(typesIn("namespace Jeu.Cartes;\npublic sealed partial class Frappe : CarteBase, IJouable\n{\n}\ninternal record Effet(int Valeur);\nenum Rarete { Commune }", "a.cs")).toEqual([
+      { name: "Jeu.Cartes.Frappe", kind: "class", base: "CarteBase", file: "a.cs", line: 2 },
+      { name: "Jeu.Cartes.Effet", kind: "record", base: null, file: "a.cs", line: 5 },
+      { name: "Jeu.Cartes.Rarete", kind: "enum", base: null, file: "a.cs", line: 6 },
+    ]);
+    expect(typesIn("extends Node2D\nclass_name Joueur\n", "j.gd")).toEqual([{ name: "Joueur", kind: "class", base: "Node2D", file: "j.gd", line: 2 }]);
+
+    const sb = sandbox();
+    const root = join(sb.dir, "demonte");
+    mkdirSync(join(root, "src", "Cartes"), { recursive: true });
+    writeFileSync(join(root, "project.godot"), '[application]\nrun/main_scene="res://Menu.tscn"\n\n[autoload]\nPartie="*res://src/Partie.cs"\n');
+    writeFileSync(join(root, "src", "CarteBase.cs"), "namespace Jeu;\npublic abstract class CarteBase {}");
+    for (const c of ["Frappe", "Defense", "Coup"]) writeFileSync(join(root, "src", "Cartes", `${c}.cs`), `namespace Jeu.Cartes;\nclass ${c} : CarteBase {}`);
+    const { map, index, types } = buildMap(root, "Mon jeu");
+    expect(types).toBe(4);
+    expect(map).toMatch(/Scène de départ : `res:\/\/Menu.tscn`/);
+    expect(map).toMatch(/Partie : `res:\/\/src\/Partie.cs`/);
+    expect(map).toMatch(/`CarteBase` : 3 variantes \(définie dans `src\/CarteBase.cs:2`\)/);
+    expect(index).toMatch(/^Jeu\.Cartes\.Coup \| class : CarteBase \| src\/Cartes\/Coup.cs:2$/m);
   });
 });
 
@@ -109,10 +138,18 @@ describe("Atelier de démontage (ADR-40)", () => {
     expect(readFileSync(join(path, "SlayTheSpire2.pck"), "utf8")).toBe(before);
     expect(done.out.startsWith(join(sb.dir, "hub/.data"))).toBe(true);
 
-    // L'Archéologue a fait la fiche d'ensemble en lisant le dossier démonté, et seulement lui.
+    // L'Archéologue a fait la fiche d'ensemble en lisant le dossier du démontage, et seulement lui :
+    // le jeu démonté, la carte calculée par le hub, l'index du code et ses fiches (ADR-42).
+    const base = join(sb.dir, "hub/.data/dissections", d.id);
     expect(done.notes).toMatchObject([{ title: "Vue d'ensemble", status: "done" }]);
-    expect(fake.readDirs).toEqual([done.out]);
-    expect(existsSync(join(sb.dir, "hub/.data/dissections", d.id, "fiches", "001.md"))).toBe(true);
+    expect(fake.readDirs).toEqual([base]);
+    expect(done.out).toBe(join(base, "jeu"));
+    expect(existsSync(join(base, "fiches", "001.md"))).toBe(true);
+    expect(readFileSync(join(base, "carte.md"), "utf8")).toMatch(/# Carte de « Slay the Spire 2 »[\s\S]*1 types dans 1 fichiers/);
+    expect(readFileSync(join(base, "index-code.txt"), "utf8")).toBe("Strike | class | src/Cards/Strike.cs:1\n");
+    expect(readFileSync(join(base, "outil.log"), "utf8")).toMatch(/Recovering project/);
+    expect(fake.calls.at(-1)!.systemPrompt).toMatch(/Zones d'ombre/);
+    expect(done).toMatchObject({ updated: false, previous: false });
 
     hub.reverse.ask(sb.human(), d.id, "Comment marchent les cartes d'attaque ?");
     await hub.reverse.idle();
@@ -125,7 +162,7 @@ describe("Atelier de démontage (ADR-40)", () => {
     const { thread } = await hub.reverse.send(sb.human(), d.id, notes[1]!.id, "bordee");
     await hub.conversations.idle();
     const sent = hub.conversations.messages("bordee", thread)[0]!;
-    expect(sent.text).toMatch(/On ne copie pas le code d'origine[\s\S]*Strike inflige 6 dégâts/);
+    expect(sent.text).toMatch(/On ne copie pas le code d'origine[\s\S]*critères de recette[\s\S]*Strike inflige 6 dégâts/);
     expect(hub.conversations.getThread("bordee", thread).title).toBe("Inspiration : Les cartes d'attaque");
 
     // Mod : un projet à part, avec les fiches et le chemin des assemblages ; le directeur pose la base.
@@ -137,6 +174,28 @@ describe("Atelier de démontage (ADR-40)", () => {
     await hub.conversations.idle();
     expect(hub.conversations.messages(mod.project, mod.thread)[0]!.text).toMatch(/mod pour « Slay the Spire 2 »/);
     await expect(hub.reverse.createMod(sb.human(), d.id, join(sb.dir, "games"))).rejects.toThrow(/existe déjà/);
+
+    // Le jeu est mis à jour : le hub le voit, on redémonte, l'ancienne version est gardée et comparée (ADR-42).
+    writeFileSync(join(path, "SlayTheSpire2.pck"), "version 2 du jeu");
+    expect(hub.reverse.get(d.id).updated).toBe(true);
+    tools.version = 2;
+    hub.reverse.run(sb.human(), d.id, "code");
+    await hub.reverse.idle();
+    const again = hub.reverse.get(d.id);
+    expect(again).toMatchObject({ status: "extracted", updated: false, previous: true });
+    expect(readFileSync(join(base, "ancien", "src", "Cards", "Strike.cs"), "utf8")).toMatch(/damage = 6/);
+    const changes = readFileSync(join(base, "changements.md"), "utf8");
+    expect(changes).toMatch(/Fichiers modifiés \(1\)\n- `src\/Cards\/Strike.cs`/);
+    expect(changes).toMatch(/Fichiers ajoutés \(1\)\n- `src\/Cards\/Bash.cs`/);
+    expect(changes).toMatch(/Types \(classes…\) apparus \(1\)\n- `Bash`/);
+    // Pas de nouvelle vue d'ensemble : la fiche des changements, avec le risque pour le mod.
+    expect(again.notes.map((n) => n.title)).toEqual(["Vue d'ensemble", "Les cartes d'attaque", "Mise à jour : ce qui a changé"]);
+    expect(fake.calls.at(-1)!.prompt).toMatch(/casser un patch Harmony/);
+    // Envoyée au projet de mod, la fiche parle du mod, pas d'inspiration.
+    const toMod = await hub.reverse.send(sb.human(), d.id, again.notes[2]!.id, mod.project);
+    await hub.conversations.idle();
+    expect(hub.conversations.getThread(mod.project, toMod.thread).title).toBe("Fiche : Mise à jour : ce qui a changé");
+    expect(hub.conversations.messages(mod.project, toMod.thread)[0]!.text).toMatch(/le jeu que modifie ce projet[\s\S]*nos patches/);
   });
 
   it("un jeu protégé reste bloqué, et un moteur non pris en charge le dit", async () => {

@@ -104,6 +104,12 @@ describe("atelier de démontage", () => {
     await page.locator(".dissect-note h2", { hasText: "Les dégâts" }).waitFor({ timeout: 15_000 });
     await page.getByRole("button", { name: "Créer un projet de mod" }).waitFor();
     await page.screenshot({ path: join(shots, "demontage-2-archeologue.png"), fullPage: true });
+
+    // Le jeu est mis à jour : un bandeau invite à le redémonter pour voir ce qui a changé (ADR-42).
+    writeFileSync(join(game, "SlayTheSpire2.pck"), "version 2");
+    await page.reload();
+    await page.getByText(/Le jeu a été mis à jour depuis le démontage/).waitFor();
+    await page.getByText(/garde la version actuelle de côté/).waitFor();
     expect(errors).toEqual([]);
   });
 });

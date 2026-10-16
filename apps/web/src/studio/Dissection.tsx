@@ -147,7 +147,7 @@ export function DissectionView({ id }: { id: string }) {
 
   if (!d) return <main className="studio-page muted">{error ?? "Chargement…"}</main>;
   const tool = tools.find((t) => t.id === d.scan.tool);
-  const projects = snap?.projects.filter((p) => p.slug !== d.mod_project) ?? [];
+  const projects = snap?.projects ?? [];
   const archeo = snap?.models?.roles.find((r) => r.role === "archeologue");
   const note = d.notes.find((n) => n.id === open) ?? d.notes.find((n) => n.status === "done") ?? null;
 
@@ -166,6 +166,12 @@ export function DissectionView({ id }: { id: string }) {
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {d.updated && d.status === "extracted" && (
+        <p className="dissect-updated">
+          <Icon name="bolt" size={16} /> Le jeu a été mis à jour depuis le démontage. Redémontez-le : l'Archéologue vous dira ce qui a changé
+          {d.mod_project ? ", et ce qui pourrait casser votre mod" : ""}.
+        </p>
+      )}
 
       <section className="dissect-grid">
         <div className="panel-card">
@@ -234,6 +240,12 @@ export function DissectionView({ id }: { id: string }) {
                     Projet complet (images, sons…)
                   </button>
                   <p className="muted small">« Code seulement » prend quelques minutes. « Projet complet » récupère aussi les ressources : bien plus long, et plusieurs Go.</p>
+                  {d.status === "extracted" && (
+                    <p className="muted small">
+                      Redémonter (après une mise à jour du jeu) garde la version actuelle de côté pour la comparer à la nouvelle
+                      {d.previous ? " ; elle remplace l'ancienne comparaison" : ""}.
+                    </p>
+                  )}
                 </div>
               )}
               {d.status === "failed" && d.error && <p className="error small">{d.error}</p>}
