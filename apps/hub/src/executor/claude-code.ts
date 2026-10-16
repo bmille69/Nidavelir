@@ -43,7 +43,8 @@ export function buildExecArgs(req: Pick<ExecRequest, "tools" | "maxTurns" | "jso
   return args;
 }
 
-type PhaseModels = Partial<Record<ExecRequest["kind"], string>> & { default: string };
+/** `big` : modèle du développeur pour un chantier marqué « (gros) » (ADR-41). */
+type PhaseModels = Partial<Record<ExecRequest["kind"], string>> & { default: string; big?: string };
 
 export class ClaudeCodeExecutor implements ExecutorPort {
   readonly name = "claude-code";
@@ -81,7 +82,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
     );
     writeFileSync(system, req.systemPrompt, "utf8");
     const models = this.#models();
-    const model = models[req.kind] ?? models.default;
+    const model = (req.big && req.kind !== "verify" ? models.big : undefined) ?? models[req.kind] ?? models.default;
     const args = buildExecArgs(req, { settings, mcp, system }, model);
 
     return new Promise((resolve, reject) => {

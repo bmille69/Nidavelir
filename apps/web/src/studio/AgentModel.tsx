@@ -20,20 +20,23 @@ export function AgentModel({ agent, snap }: { agent: AgentId; snap: StudioSnapsh
       </div>
     );
   }
-  const setting = snap.models?.roles.find((r) => r.role === agent);
-  if (!setting) return null;
+  // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41).
+  const settings = (agent === "developer" ? (["developer", "developer_big"] as const) : [agent])
+    .map((role) => snap.models?.roles.find((r) => r.role === role))
+    .filter((s): s is NonNullable<typeof s> => !!s);
+  if (!settings.length) return null;
   const choices = snap.models.choices;
   const label = (id: string) => choices.find((c) => c.id === id)?.label ?? id;
+  const ROW_LABEL: Partial<Record<ModelRole, string>> = { developer: "Chantiers ordinaires", developer_big: "Gros chantiers" };
   const use = snap.usage.agents?.[agent];
   const total = Object.values(snap.usage.agents ?? {}).reduce((n, a) => n + a.week.tokens, 0);
   const share = use && total ? Math.round((use.week.tokens / total) * 100) : 0;
-  const recommended = setting.model === setting.recommended;
 
-  async function change(model: string) {
+  async function change(role: ModelRole, model: string) {
     setBusy(true);
     setError(null);
     try {
-      await api.setModel(agent as ModelRole, model);
+      await api.setModel(role, model);
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -44,30 +47,34 @@ export function AgentModel({ agent, snap }: { agent: AgentId; snap: StudioSnapsh
 
   return (
     <div className="agent-model" onClick={(e) => e.stopPropagation()}>
-      <div className="model-row">
-        <label className="model-pick">
-          Modèle
-          <select value={setting.model} disabled={busy} onChange={(e) => void change(e.target.value)} aria-label={`Modèle de ${agent}`} title={setting.why}>
-            {choices.map((c) => (
-              <option key={c.id} value={c.id} title={c.note}>
-                {c.label}
-                {c.id === setting.recommended ? " ★ recommandé" : ""}
-              </option>
-            ))}
-            {!choices.some((c) => c.id === setting.model) && <option value={setting.model}>{setting.model}</option>}
-          </select>
-        </label>
-        {recommended ? (
-          <span className="model-reco on" title={setting.why}>
-            ★ Recommandé
-          </span>
-        ) : (
-          <button className="model-reco" disabled={busy} onClick={() => void change(setting.recommended)} title={setting.why}>
-            Conseillé : {label(setting.recommended)}
-          </button>
-        )}
-      </div>
-      <p className="model-why">{setting.why}</p>
+      {settings.map((setting) => (
+        <div key={setting.role}>
+          <div className="model-row">
+            <label className="model-pick">
+              {ROW_LABEL[setting.role] ?? "Modèle"}
+              <select value={setting.model} disabled={busy} onChange={(e) => void change(setting.role, e.target.value)} aria-label={`Modèle de ${setting.role}`} title={setting.why}>
+                {choices.map((c) => (
+                  <option key={c.id} value={c.id} title={c.note}>
+                    {c.label}
+                    {c.id === setting.recommended ? " ★ recommandé" : ""}
+                  </option>
+                ))}
+                {!choices.some((c) => c.id === setting.model) && <option value={setting.model}>{setting.model}</option>}
+              </select>
+            </label>
+            {setting.model === setting.recommended ? (
+              <span className="model-reco on" title={setting.why}>
+                ★ Recommandé
+              </span>
+            ) : (
+              <button className="model-reco" disabled={busy} onClick={() => void change(setting.role, setting.recommended)} title={setting.why}>
+                Conseillé : {label(setting.recommended)}
+              </button>
+            )}
+          </div>
+          <p className="model-why">{setting.why}</p>
+        </div>
+      ))}
       <p className="agent-usage" title={use ? `Équivalent indicatif au tarif de l'API : ${use.week.costUsd.toFixed(2).replace(".", ",")} $ sur 7 jours (inclus dans votre abonnement)` : undefined}>
         {use ? (
           <>

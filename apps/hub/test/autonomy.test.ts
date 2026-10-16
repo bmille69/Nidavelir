@@ -403,6 +403,31 @@ describe("atelier (par défaut)", () => {
     expect(git(hub.projects.get(P).root, "show", "HEAD:src/grille.ts")).toBe("export const taille = 12;\n");
   });
 
+  it("ADR-41 : un chantier « (gros) » est signalé au développeur, et la file attend quand l'abonnement est presque épuisé", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    exec.scripts.execute.push(async (t) => {
+      await t.write("src/grille.ts", "export const taille = 10;\n");
+      // Claude Code rapporte une fenêtre de 5 heures presque pleine pendant ce chantier.
+      hub.usage.record({ agent: "developer", tokens: null, costUsd: null, limits: { status: "allowed", windows: { five_hour: { utilization: 0.9, resetsAt: "2026-10-13T14:00:00.000Z" } } } });
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
+    fake.replies.push("Deux étapes.\n[[CHANTIER: Grille (gros)]]\nObjectif : une grille.\n[[/CHANTIER]]\n[[CHANTIER: Grille plus grande]]\nObjectif : 12 cases.\n[[/CHANTIER]]");
+    const t = hub.conversations.createThread(P, "Règles");
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+
+    expect(exec.requests.map((r) => [r.kind, r.big])).toEqual([
+      ["execute", true],
+      ["verify", true],
+    ]);
+    const [second, first] = hub.tasks.list(P);
+    expect(first!.status).toBe("merged");
+    expect(second).toMatchObject({ status: "draft", queued_at: expect.any(String) });
+    expect(hub.journal.list({ subject: second!.id, latest: true }).find((e) => e.type === "queue.paused")).toMatchObject({ payload: { until: "2026-10-13T14:00:00.000Z", window: "five_hour" } });
+  });
+
   it("vos corrections dites dans la discussion repartent au développeur, dans la même copie", async () => {
     const { sb, hub, fake, exec } = await setup();
     hub.projects.setAutonomy(sb.human(), P, "workshop");

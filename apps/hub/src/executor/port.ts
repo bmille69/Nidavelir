@@ -21,6 +21,8 @@ export type ExecRequest = {
   jsonSchema: object;
   tools: string[];
   maxTurns: number;
+  /** Chantier marqué « (gros) » : le développeur prend son modèle des gros chantiers (ADR-41). */
+  big?: boolean;
   /** Plugin portant les compétences du studio pour ce run (ADR-29), chargé par --plugin-dir. */
   pluginDir?: string;
   /** Pour les exécuteurs en processus (tests). */

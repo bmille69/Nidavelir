@@ -2,7 +2,7 @@ import type { Db } from "../db/database.ts";
 import type { Journal } from "../journal/journal.ts";
 
 /** Les agents qui appellent un modèle. Le gardien applique des règles fixes : aucun modèle. */
-export const MODEL_ROLES = ["concepteur", "director", "archivist", "developer", "qa", "archeologue"] as const;
+export const MODEL_ROLES = ["concepteur", "director", "archivist", "developer", "developer_big", "qa", "archeologue"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 
 /** Modèles proposés, du plus capable au plus économe (alias acceptés par Claude Code). */
@@ -14,12 +14,13 @@ export const MODEL_CHOICES = [
 ] as const;
 export type ModelId = (typeof MODEL_CHOICES)[number]["id"];
 
-/** Ce que nous recommandons pour chaque rôle, et pourquoi (ADR-36, ADR-37). */
+/** Ce que nous recommandons pour chaque rôle, et pourquoi (ADR-36, ADR-37, ADR-41). */
 export const RECOMMENDED: Record<ModelRole, { model: ModelId; why: string }> = {
   concepteur: { model: "fable", why: "Appels rares et décisifs : le meilleur raisonnement vaut sa consommation." },
   director: { model: "sonnet", why: "Vous répond vite dans la discussion, avec des consignes claires." },
   archivist: { model: "sonnet", why: "Noter les idées et tenir le carnet ne demande pas plus." },
-  developer: { model: "fable", why: "Il écrit le code : moins d'erreurs, donc moins de chantiers repris." },
+  developer: { model: "sonnet", why: "Chantiers ordinaires : environ 10 fois moins cher que Fable par action, et largement suffisant." },
+  developer_big: { model: "fable", why: "Chantiers marqués « (gros) » : là, le meilleur raisonnement évite les chantiers repris." },
   qa: { model: "haiku", why: "Les vrais tests et le lancement du jeu font l'essentiel ; il relit." },
   archeologue: { model: "sonnet", why: "Il lit beaucoup de code : Sonnet comprend vite sans épuiser votre quota." },
 };

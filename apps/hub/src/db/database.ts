@@ -313,6 +313,11 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  `
+  -- ADR-41 : Fable seulement pour les chantiers « (gros) » ; les autres reviennent au modèle recommandé (Sonnet).
+  UPDATE settings SET value = json_set(value, '$.developer_big', 'fable', '$.developer', 'sonnet')
+  WHERE key = 'models' AND json_extract(value, '$.developer') = 'fable';
+  `,
 ];
 
 export function openDatabase(path: string): Db {

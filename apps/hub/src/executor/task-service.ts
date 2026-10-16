@@ -54,6 +54,12 @@ const VERIFY_SCHEMA = z.toJSONSchema(VerificationOutput, { target: "draft-7" });
 const MAX_EVENTS = 500;
 /** Un chantier dans l'un de ces états occupe le projet : les suivants attendent leur tour (ADR-31). */
 const ACTIVE: readonly TaskStatus[] = ["planning", "plan_review", "approved", "running", "review", "changes_requested"];
+
+/** Chantier marqué « (gros) » par le Concepteur ou le directeur : le développeur prend son modèle des gros chantiers (ADR-41). */
+export const isBigTask = (task: Pick<Task, "title">): boolean => /\(gros\)/i.test(task.title);
+
+/** Jauges d'abonnement au-delà desquelles la file attend la remise à zéro au lieu de lancer un chantier voué à l'échec (ADR-41). */
+const LIMIT_PAUSE = { five_hour: 0.85, seven_day: 0.95 } as const;
 /** Modifications qui ne doivent jamais sortir d'un run, quoi qu'il arrive. */
 const FORBIDDEN_CHANGE = /^(studio|\.git|\.claude)(\/|$)/i;
 
@@ -121,6 +127,8 @@ export class TaskService {
   skills: SkillService | null = null;
   /** Compteur d'utilisation (jetons et limites rapportés par Claude Code). */
   usage: UsageService | null = null;
+  /** File en pause jusqu'à la remise à zéro de l'abonnement, par projet. */
+  readonly #paused = new Map<string, NodeJS.Timeout>();
   readonly #finished = new Map<string, RunEvent[]>();
   readonly #background = new Set<Promise<void>>();
 
@@ -489,12 +497,39 @@ export class TaskService {
       this.unqueue(project, next.id);
       return;
     }
+    if (this.#paused.has(project)) return;
+    const wait = this.#limitWait();
+    if (wait) {
+      // Incident du 15/10 : T-0052 a tourné 40 min avant de buter sur la limite de session, puis deux chantiers ont échoué d'emblée.
+      this.#log(project, "queue.paused", next.id, { until: wait.until, window: wait.window });
+      this.#paused.set(
+        project,
+        setTimeout(() => {
+          this.#paused.delete(project);
+          this.#track(this.#pump(project));
+        }, wait.ms).unref(),
+      );
+      return;
+    }
     try {
       await this.startDirect(project, next.id, "workshop");
     } catch (err) {
       this.#log(project, "queue.failed", next.id, { error: (err as Error).message.slice(0, 300) });
       this.#update(this.get(project, next.id), { status: "failed", queued_at: null });
     }
+  }
+
+  /** Une jauge d'abonnement presque pleine : délai jusqu'à sa remise à zéro (plus une minute), sinon null. */
+  #limitWait(): { ms: number; until: string; window: string } | null {
+    const limits = this.usage?.snapshot().limits;
+    if (!limits) return null;
+    const now = Date.parse(this.#clock.now());
+    for (const window of ["five_hour", "seven_day"] as const) {
+      const w = limits.windows[window];
+      const reset = w ? Date.parse(w.resetsAt) : NaN;
+      if (w && w.utilization >= LIMIT_PAUSE[window] && reset > now) return { ms: reset - now + 60_000, until: w.resetsAt, window };
+    }
+    return null;
   }
 
   async #execute(project: string, id: string): Promise<Task> {
@@ -828,6 +863,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           tools: plugin ? [...TOOLS_BY_MODE[kind], "Skill"] : TOOLS_BY_MODE[kind],
           pluginDir: plugin?.dir,
           maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: 30 }[kind],
+          big: isBigTask(task),
           bridge,
           bridgeUrl: `${this.#opts.agentBaseUrl()}/${id}`,
           token,

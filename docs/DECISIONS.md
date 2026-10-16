@@ -455,6 +455,18 @@ Cette ADR **assouplit** le principe « rien n'entre au canon sans votre clic » 
 - **Modifier** (jeux C#) : « Créer un projet de mod » crée un dépôt à part dans vos jeux, avec les fiches et le chemin des assemblages du jeu. Le directeur en pose la base : projet C#, premier patch, installation dans le dossier de mods, sans toucher aux fichiers d'origine.
 - **Classifieur de Claude Code** : pendant ce chantier, le mode automatique a refusé plusieurs actions liées à la décompilation, même sur de faux jeux. Le directeur créatif a ajouté des règles d'autorisation (`.claude/settings.local.json`), puis est passé en mode manuel pour valider chaque action. Le premier vrai démontage se fait par lui, depuis Nidavellir.
 
+### ADR-41 : économies de consommation, deuxième passe
+**Statut** : **Validée** le 16/10/2026 (analyse demandée par le directeur créatif ; il a choisi « le modèle selon la taille du chantier »). Faits relevés dans `.data/hub.db` et dans les journaux des runs, du 14 au 16/10 (équivalent API, à titre indicatif) :
+- 106 $ au total, dont le **développeur pour 83 %**. Avant Fable (ADR-36), un chantier coûtait 0,20 à 0,70 $ pour 2 à 4 min ; après, 3 à 10 $ pour 10 à 29 min. Le 15/10 au soir, la **limite de session** a été atteinte : T-0052 a tourné 40 min pour rien, puis T-0053 et T-0054 ont échoué d'emblée.
+- Le coût d'un chantier est environ nombre d'actions × taille du contexte × prix du modèle : à chaque action, l'agent relit tout le contexte accumulé (jusqu'à 230 000 jetons, 100 à 140 actions pour les chantiers « (gros) »). Fable coûte environ 10 fois Sonnet par action, et 2 fois Opus. Des fichiers de 35 000 à 39 000 caractères du jeu étaient lus en entier, ainsi que `smoke.spec.ts` et le dossier de conception, à chaque chantier.
+
+Mesures :
+- **Deux modèles pour le développeur** : `developer` (chantiers ordinaires, Sonnet recommandé) et `developer_big` (titre contenant « (gros) », Fable recommandé ; variable `STUDIO_MODEL_DEV_BIG`). Les deux se choisissent sur la carte du développeur dans « Le studio en direct ». Le testeur garde son modèle. Migration : un réglage `developer = fable` devient `developer = sonnet` et `developer_big = fable`.
+- **Chantiers plus petits** : le Concepteur et le directeur visent une demi-heure de travail d'agent, et ne marquent « (gros) » que le travail vraiment indivisible ou délicat. Les estimations de coût du Concepteur sont mises à jour.
+- **Lecture économe** : le développeur cherche avant de lire, lit des extraits des gros fichiers, ne relit pas ce qu'il a déjà lu, lance d'abord les tests ciblés. Il consulte les sections utiles du dossier de conception au lieu de tout relire.
+- **File en pause avant le mur** : si la fenêtre de 5 heures dépasse 85 % (ou la semaine 95 %), le chantier suivant attend la remise à zéro, plus une minute, au lieu d'échouer. Le studio l'affiche (`queue.paused`).
+- **Non retenu pour l'instant** (environ 5 % du total) : l'archiviste qui réécrit tout le carnet « État du jeu » après chaque chantier, et le cache du directeur, peu réutilisé d'un message à l'autre. Les sessions de construction du hub, hors compteur, prennent aussi sur le même abonnement.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

@@ -74,7 +74,7 @@ export type UsageSnapshot = {
   agents: Record<string, AgentUsage>;
 };
 export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
-export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "qa" | "archeologue";
+export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue";
 export type GameScan = {
   path: string;
   name: string;

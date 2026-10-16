@@ -136,6 +136,11 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       return { agent: "guardian", text: "Le gardien vous demande une autorisation", tone: "warn" };
     case "policy.denied":
       return { agent: "guardian", text: "Le gardien a bloqué une action interdite", tone: "warn" };
+    case "queue.paused": {
+      const until = new Date(String(p.until)).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      const day = p.window === "seven_day" ? ` le ${new Date(String(p.until)).toLocaleDateString("fr-FR")}` : "";
+      return { agent: "director", text: `Abonnement presque épuisé : ${e.subject ?? "le chantier suivant"} attend ${until}${day}`, tone: "warn" };
+    }
     case "task.merged":
       return { agent: "you", text: `Fusionné dans votre jeu (${e.subject ?? ""})`, tone: "ok" };
     case "task.changes_requested":

@@ -304,7 +304,7 @@ export class ConceptionService {
       (ch) =>
         this.#tasks.createFromConversation(
           project,
-          { title: ch.title, goal: `${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Lis-le avant de commencer : piliers, choix faits, contraintes et étapes.`.slice(0, 4000) },
+          { title: ch.title, goal: `${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`.slice(0, 4000) },
           thread!,
         ).id,
     );

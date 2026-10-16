@@ -157,7 +157,8 @@ describe("modèles des agents (ADR-37)", () => {
       ["concepteur", "fable", "fable"],
       ["director", "sonnet", "sonnet"],
       ["archivist", "sonnet", "sonnet"],
-      ["developer", "fable", "fable"],
+      ["developer", "sonnet", "sonnet"],
+      ["developer_big", "fable", "fable"],
       ["qa", "haiku", "haiku"],
       ["archeologue", "sonnet", "sonnet"],
     ]);
@@ -166,18 +167,18 @@ describe("modèles des agents (ADR-37)", () => {
     sb.hub.usage.record({ project: null, agent: "developer", model: "fable", tokens: { input: 100, output: 50, cacheRead: 800, cacheWrite: 50 }, costUsd: 0.4 });
     sb.hub.usage.record({ project: null, agent: "lecons", model: "sonnet", tokens: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01 });
     sb.hub.usage.record({ project: null, agent: "compteur", model: "haiku", tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 0 });
-    const res = await post("/api/human/studio/models", { role: "developer", model: "sonnet" });
+    const res = await post("/api/human/studio/models", { role: "developer", model: "opus" });
     expect(res.statusCode).toBe(200);
     expect((await post("/api/human/studio/models", { role: "guardian", model: "sonnet" })).statusCode).toBe(400);
     expect((await post("/api/human/studio/models", { role: "qa", model: "gpt" })).statusCode).toBe(400);
 
     snap = (await get("/api/human/studio")).json() as StudioSnapshot;
-    expect(snap.models.roles.find((r) => r.role === "developer")).toMatchObject({ model: "sonnet", recommended: "fable" });
+    expect(snap.models.roles.find((r) => r.role === "developer")).toMatchObject({ model: "opus", recommended: "sonnet" });
     expect(snap.usage.agents.developer).toMatchObject({ today: { tokens: 1000, calls: 1 }, week: { tokens: 1000, calls: 1 }, models: { fable: 1000 } });
     // Les leçons passent par le modèle de l'archiviste ; l'appel « compteur » n'est pas un agent.
     expect(snap.usage.agents.archivist?.week.tokens).toBe(20);
     expect(snap.usage.agents.compteur).toBeUndefined();
-    expect(sb.hub.journal.list({ subject: "developer", latest: true }).find((e) => e.type === "model.changed")).toMatchObject({ subject: "developer", payload: { from: "fable", to: "sonnet" } });
+    expect(sb.hub.journal.list({ subject: "developer", latest: true }).find((e) => e.type === "model.changed")).toMatchObject({ subject: "developer", payload: { from: "sonnet", to: "opus" } });
 
     // Lu à chaque appel par le directeur et le développeur.
     const seen: string[] = [];
