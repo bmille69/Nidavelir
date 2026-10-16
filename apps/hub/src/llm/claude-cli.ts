@@ -28,6 +28,7 @@ export type ClaudeCall = {
   /**
    * Lecture d'un dossier (l'Archéologue, ADR-40) : Read, Grep et Glob seulement, le dossier comme
    * dossier de travail. Claude Code refuse de lui-même toute lecture en dehors (vérifié le 15/10/2026).
+   * Avec `tools` (WEB_TOOLS seulement) : la lecture du dossier plus la recherche web (Directeur artistique, ADR-43).
    */
   readDir?: string;
 };
@@ -55,7 +56,7 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
     "--safe-mode",
     "--strict-mcp-config",
     "--tools",
-    (call.readDir ? READ_TOOLS : (call.tools ?? [])).join(","),
+    (call.readDir ? [...READ_TOOLS, ...(call.tools ?? [])] : (call.tools ?? [])).join(","),
     "--no-session-persistence",
     "--output-format",
     "stream-json",
@@ -67,9 +68,13 @@ export function buildChatArgs(call: ClaudeCall, systemPromptFile: string): strin
   ];
   if (call.jsonSchema) args.push("--json-schema", JSON.stringify(call.jsonSchema));
   if (call.readDir) {
-    if (call.tools?.length) throw new ClaudeCliError("Un appel qui lit un dossier ne reçoit aucun autre outil");
-    // Aucun --allowedTools : seules les lectures dans le dossier de travail passent sans demande, donc sans refus.
-    args.push("--setting-sources", "", "--max-turns", "80");
+    const bad = (call.tools ?? []).filter((t) => !WEB_TOOLS.includes(t));
+    if (bad.length) throw new ClaudeCliError(`Un appel qui lit un dossier ne reçoit que la recherche web en plus : ${bad.join(", ")}`);
+    // Pas de --allowedTools pour la lecture : seules les lectures dans le dossier de travail passent sans demande.
+    // La recherche web, si elle est donnée, est autorisée explicitement (ADR-43).
+    args.push("--setting-sources", "");
+    if (call.tools?.length) args.push("--allowedTools", call.tools.join(","));
+    args.push("--max-turns", "80");
   } else if (call.tools?.length) {
     const bad = call.tools.filter((t) => !WEB_TOOLS.includes(t));
     if (bad.length) throw new ClaudeCliError(`Outil non autorisé pour un appel conversationnel : ${bad.join(", ")}`);
@@ -113,6 +118,8 @@ export class ClaudeCli {
   readonly #limit = new Semaphore(2);
   /** Les longues lectures de l'Archéologue ne bloquent jamais le directeur. */
   readonly #readers = new Semaphore(1);
+  /** Le Directeur artistique (lecture + web) a sa propre file : ni le directeur ni l'Archéologue ne l'attendent. */
+  readonly #art = new Semaphore(1);
   /** Reçoit l'usage de chaque appel (jetons, limites d'abonnement). */
   observer: ((e: UsageEvent) => void) | null = null;
 
@@ -124,7 +131,8 @@ export class ClaudeCli {
   }
 
   call(call: ClaudeCall): Promise<ClaudeResult> {
-    return (call.readDir ? this.#readers : this.#limit).run(() => this.#call(call));
+    const lane = call.readDir ? (call.tools?.length ? this.#art : this.#readers) : this.#limit;
+    return lane.run(() => this.#call(call));
   }
 
   async #call(call: ClaudeCall): Promise<ClaudeResult> {

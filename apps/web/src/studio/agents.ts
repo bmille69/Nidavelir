@@ -19,6 +19,12 @@ export const AGENTS: Record<AgentId, { name: string; role: string; tagline: stri
     tagline: "Discute avec vous et transforme vos idées en propositions claires.",
     idle: "Prêt à discuter.",
   },
+  art_director: {
+    name: "Le Directeur artistique",
+    role: "Direction artistique",
+    tagline: "Tient la bible visuelle, propose les visuels, juge les rendus et les fait brancher dans le jeu.",
+    idle: "Prêt à regarder vos inspirations.",
+  },
   archivist: {
     name: "L'Archiviste",
     role: "Mémoire du jeu",
@@ -161,6 +167,18 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       return { agent: "archivist", text: "Un jeu a été démonté : l'Archéologue l'étudie", tone: "ok" };
     case "dissection.failed":
       return { agent: "archivist", text: "Le démontage d'un jeu a échoué", tone: "error" };
+    case "art.bible_updated":
+      return { agent: "art_director", text: "Le Directeur artistique a mis la bible visuelle à jour" };
+    case "art.render_added":
+      return { agent: "you", text: `Vous avez déposé un rendu pour ${e.subject ?? "un visuel"}` };
+    case "art.asset_validated":
+      return { agent: p.by === "human" ? "you" : "art_director", text: `Visuel ${e.subject ?? ""} validé${p.by === "human" ? " par vous" : ""}`, tone: "ok" };
+    case "art.asset_rejected":
+      return { agent: p.by === "human" ? "you" : "art_director", text: `Visuel ${e.subject ?? ""} à retoucher`, tone: "warn" };
+    case "art.integration_requested":
+      return { agent: "you", text: `Intégration demandée pour ${e.subject ?? "un visuel"}` };
+    case "art.asset_integrated":
+      return { agent: "art_director", text: `Visuel ${e.subject ?? ""} intégré dans le jeu`, tone: "ok" };
     case "approval.recorded":
       return null;
     default:

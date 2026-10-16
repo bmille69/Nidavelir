@@ -211,6 +211,6 @@ describe("Atelier de démontage (ADR-40)", () => {
     const args = buildChatArgs({ systemPrompt: "s", prompt: "p", model: "sonnet", readDir: "C:/x" }, "sys.txt");
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
     expect(args).not.toContain("--allowedTools");
-    expect(() => buildChatArgs({ systemPrompt: "s", prompt: "p", model: "sonnet", readDir: "C:/x", tools: ["WebFetch"] }, "sys.txt")).toThrow();
+    expect(() => buildChatArgs({ systemPrompt: "s", prompt: "p", model: "sonnet", readDir: "C:/x", tools: ["Bash"] }, "sys.txt")).toThrow();
   });
 });

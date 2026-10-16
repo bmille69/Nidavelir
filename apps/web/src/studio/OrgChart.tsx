@@ -9,12 +9,14 @@ import { useNow } from "./context.tsx";
 const EDGES: [AgentId, AgentId][] = [
   ["you", "concepteur"],
   ["you", "director"],
+  ["you", "art_director"],
+  ["art_director", "developer"],
   ["director", "archivist"],
   ["director", "developer"],
   ["director", "qa"],
   ["developer", "guardian"],
 ];
-const ROWS: AgentId[][] = [["you"], ["concepteur", "director"], ["archivist", "developer", "qa"], ["guardian"]];
+const ROWS: AgentId[][] = [["you"], ["concepteur", "director", "art_director"], ["archivist", "developer", "qa"], ["guardian"]];
 
 type Path = { d: string; state: AgentState; key: string };
 

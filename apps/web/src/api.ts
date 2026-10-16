@@ -74,7 +74,12 @@ export type UsageSnapshot = {
   agents: Record<string, AgentUsage>;
 };
 export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
-export type ModelRole = "concepteur" | "director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue";
+export type ModelRole = "concepteur" | "director" | "art_director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue";
+export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
+export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
+export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
+export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
+export type ArtState = { bible: string | null; assets: ArtAsset[]; moodboard: { file: string; note: string | null }[]; messages: ArtMessage[]; busy: { replying: boolean; validating: string[] } };
 export type GameScan = {
   path: string;
   name: string;
@@ -143,7 +148,7 @@ export type SynthesisJob = {
 };
 export type Lineage = { item: ItemFrontmatter; ancestors: ItemFrontmatter[]; decidedBy: ItemFrontmatter[]; supersededBy: ItemFrontmatter | null; hash: string };
 export type DecideEdits = { title?: string; statement?: string; chosen_option?: string; exclude?: string[] };
-export type AgentId = "you" | "concepteur" | "director" | "archivist" | "developer" | "qa" | "guardian";
+export type AgentId = "you" | "concepteur" | "director" | "art_director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
 export type Activity = { project: string; text: string; detail?: string; href: string; since?: string };
 export type HubEvent = { seq: number; at: string; project: string | null; actor: { kind: string; role?: string }; type: string; subject: string | null; payload: Record<string, unknown> };
@@ -230,6 +235,23 @@ export const api = {
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
+  art: (slug: string) => request<ArtState>("GET", `/projects/${slug}/art`),
+  artSend: (slug: string, text: string) => request<ArtMessage>("POST", `/projects/${slug}/art/messages`, { text }),
+  /** Dépose une image (moodboard ou rendu d'un asset « A-0001 ») : corps binaire, pas de JSON. */
+  async artUpload(slug: string, target: string, file: File): Promise<{ file: string }> {
+    const res = await fetch(`/api/human/projects/${slug}/art/images?for=${encodeURIComponent(target)}&name=${encodeURIComponent(file.name.slice(0, 200))}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": file.type || "application/octet-stream", "x-csrf-token": csrf },
+      body: file,
+    });
+    const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+    if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? (res.status === 413 ? "Image trop lourde (15 Mo au plus)" : `Erreur ${res.status}`));
+    return data as { file: string };
+  },
+  artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
+  artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
+  artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
   reverseBrowse: () => request<{ path: string | null }>("POST", "/reverse/browse", {}),
   reverseCreate: (path: string) => request<Dissection>("POST", "/reverse", { path }),

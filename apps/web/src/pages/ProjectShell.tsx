@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import { AgentAvatar } from "../studio/AgentAvatar.tsx";
+import { ArtDirection } from "../studio/ArtDirection.tsx";
 import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
@@ -10,7 +11,7 @@ import { ProjectView } from "./ProjectView.tsx";
 import { TasksView } from "./TasksView.tsx";
 import { VisionView } from "./VisionView.tsx";
 
-type View = "discussion" | "decisions" | "vision" | "tasks";
+type View = "discussion" | "decisions" | "vision" | "tasks" | "art";
 
 /** Trois onglets ; « Décisions » n'existe qu'en mode « Je valide tout » (ADR-23). */
 const TABS: { view: View; label: string; icon: IconName; supervisedOnly?: boolean }[] = [
@@ -18,6 +19,7 @@ const TABS: { view: View; label: string; icon: IconName; supervisedOnly?: boolea
   { view: "decisions", label: "Décisions", icon: "scale", supervisedOnly: true },
   { view: "vision", label: "Le jeu", icon: "book" },
   { view: "tasks", label: "Chantiers", icon: "hammer" },
+  { view: "art", label: "Direction artistique", icon: "palette" },
 ];
 
 export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: string; view: View; threadId?: string; taskId?: string; fresh?: boolean }) {
@@ -96,6 +98,7 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
       {view === "decisions" && <DecisionsView slug={slug} />}
       {view === "vision" && <VisionView slug={slug} />}
       {view === "tasks" && <TasksView slug={slug} taskId={taskId} />}
+      {view === "art" && <ArtDirection slug={slug} />}
     </div>
   );
 }

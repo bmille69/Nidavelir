@@ -123,7 +123,7 @@ describe("vue Studio", () => {
     }
     // Une proposition attend votre arbitrage.
     await page.locator(".agent-card.agent-you.state-waiting").getByText("1 proposition(s) à arbitrer").waitFor();
-    expect(await page.locator(".org-links path.link-base").count()).toBe(6);
+    expect(await page.locator(".org-links path.link-base").count()).toBe(8);
     // Sous chaque agent : son modèle, celui que nous recommandons, et ce qu'il consomme (ADR-37).
     // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41).
     const dev = page.locator(".agent-card.agent-developer .model-setting.role-developer");

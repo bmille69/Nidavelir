@@ -77,7 +77,7 @@ export const Nature = z.enum(["creative", "technical"]);
 export type Nature = z.infer<typeof Nature>;
 export type Tier = z.infer<typeof Tier>;
 
-export const ROLES = ["director", "game_designer", "architect", "developer", "qa"] as const;
+export const ROLES = ["director", "game_designer", "art_director", "architect", "developer", "qa"] as const;
 export const Role = z.enum(ROLES);
 export type Role = z.infer<typeof Role>;
 

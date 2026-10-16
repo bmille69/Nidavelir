@@ -17,7 +17,7 @@ const gamesRoot = process.env.STUDIO_GAMES_ROOT ?? "C:\\Games";
 
 const cli = new ClaudeCli(join(dataDir, "claude-work"));
 // Modèles choisis dans « Le studio en direct », lus à chaque appel (ADR-37) ; défauts recommandés (ADR-36).
-const orchestrator = new DirectClaudeOrchestrator(cli, () => ({ chat: hub.models.get("director"), structured: hub.models.get("archivist"), concept: hub.models.get("concepteur"), archeologue: hub.models.get("archeologue") }));
+const orchestrator = new DirectClaudeOrchestrator(cli, () => ({ chat: hub.models.get("director"), structured: hub.models.get("archivist"), concept: hub.models.get("concepteur"), archeologue: hub.models.get("archeologue"), art: hub.models.get("art_director") }));
 
 const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
@@ -32,6 +32,7 @@ const hub = createHub({
     developer_big: process.env.STUDIO_MODEL_DEV_BIG,
     qa: process.env.STUDIO_MODEL_QA,
     archeologue: process.env.STUDIO_MODEL_ARCHEOLOGUE,
+    art_director: process.env.STUDIO_MODEL_ART,
   },
   dataDir,
   agentBaseUrl: () => `http://127.0.0.1:${port}/api/agent/runs`,

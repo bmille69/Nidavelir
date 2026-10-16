@@ -2,7 +2,7 @@ import type { Db } from "../db/database.ts";
 import type { Journal } from "../journal/journal.ts";
 
 /** Les agents qui appellent un modèle. Le gardien applique des règles fixes : aucun modèle. */
-export const MODEL_ROLES = ["concepteur", "director", "archivist", "developer", "developer_big", "qa", "archeologue"] as const;
+export const MODEL_ROLES = ["concepteur", "director", "archivist", "developer", "developer_big", "qa", "archeologue", "art_director"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 
 /** Modèles proposés, du plus capable au plus économe (alias acceptés par Claude Code). */
@@ -23,6 +23,7 @@ export const RECOMMENDED: Record<ModelRole, { model: ModelId; why: string }> = {
   developer_big: { model: "fable", why: "Chantiers marqués « (gros) » : là, le meilleur raisonnement évite les chantiers repris." },
   qa: { model: "haiku", why: "Les vrais tests et le lancement du jeu font l'essentiel ; il relit." },
   archeologue: { model: "sonnet", why: "Il lit beaucoup de code : Sonnet comprend vite sans épuiser votre quota." },
+  art_director: { model: "sonnet", why: "Regarde vos images, cherche des références et tient la bible : Sonnet suffit ; Opus pour un regard plus fin." },
 };
 
 export type ModelSetting = { role: ModelRole; model: string; recommended: ModelId; why: string };

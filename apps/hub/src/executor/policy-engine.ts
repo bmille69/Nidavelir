@@ -291,6 +291,8 @@ export class PolicyEngine {
     }
     if (pathProblem) return deny(pathProblem);
     if (this.#mode !== "plan" && this.#commands.has(s.text)) return allow("commande prévue dans le plan");
+    const art = this.#mode === "execute" ? this.#artCopy(s.words, cwd) : null;
+    if (art) return art;
     const script = this.#projectScript(s.words, cwd);
     if (script && this.#mode !== "plan") return allow(script);
     const del = /^(?:git )?rm ([\w\-./]+)$/.exec(s.text);
@@ -300,6 +302,27 @@ export class PolicyEngine {
     }
     if (this.#mode === "execute") return ask(`commande non prévue dans le plan : ${s.text}`);
     return deny(`commande non prévue pendant la phase « ${this.#mode} » : ${s.text}`);
+  }
+
+  /**
+   * Brancher un visuel du Directeur artistique (ADR-43) : Write ne sait pas écrire une image, donc on permet
+   * « cp studio/art/<fichier> <destination> » (un fichier, sans option) et « mkdir [-p] <dossier> », dans la copie, hors zones protégées.
+   */
+  #artCopy(words: string[], cwd: string): Decision | null {
+    const [head, ...rest] = words;
+    if (/^mkdir$/i.test(head ?? "")) {
+      const dirs = rest.filter((a) => a !== "-p");
+      if (!dirs.length || dirs.some((a) => a.startsWith("-"))) return null;
+      const rels = dirs.map((d) => this.#relInside(unixDrive(d), cwd));
+      if (rels.some((r) => r === null || r === "" || isReadOnly(r) || isSecret(r))) return null;
+      return allow(`création de dossier : ${rels.join(", ")}`);
+    }
+    if (!/^(cp|copy)$/i.test(head ?? "") || rest.length !== 2 || rest.some((a) => a.startsWith("-"))) return null;
+    const src = this.#relInside(unixDrive(rest[0]!), cwd);
+    const dest = this.#relInside(unixDrive(rest[1]!), cwd);
+    if (src === null || dest === null || !src.startsWith("studio/art/") || isSecret(src)) return null;
+    if (dest === "" || isReadOnly(dest) || isSecret(dest)) return null;
+    return allow(`copie d'un visuel du Directeur artistique : ${src} → ${dest}`);
   }
 
   /**

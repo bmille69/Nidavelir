@@ -322,6 +322,19 @@ const MIGRATIONS: string[] = [
   -- ADR-42 : empreinte du jeu installé au moment du démontage, pour repérer ses mises à jour.
   ALTER TABLE dissections ADD COLUMN fingerprint TEXT;
   `,
+  `
+  -- ADR-43 : la discussion avec le Directeur artistique, une par projet. Bible, moodboard et assets vivent dans studio/art du jeu.
+  CREATE TABLE art_messages (
+    id TEXT PRIMARY KEY,
+    project TEXT NOT NULL REFERENCES projects (slug),
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    at TEXT NOT NULL,
+    cost_usd REAL,
+    UNIQUE (project, seq)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

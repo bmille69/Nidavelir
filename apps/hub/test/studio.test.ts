@@ -25,6 +25,7 @@ describe("vue Studio", () => {
       ["you", "idle"],
       ["concepteur", "idle"],
       ["director", "idle"],
+      ["art_director", "idle"],
       ["archivist", "idle"],
       ["developer", "idle"],
       ["qa", "idle"],

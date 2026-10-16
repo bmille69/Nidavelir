@@ -15,6 +15,10 @@ export interface OrchestratorPort {
     meta?: CallMeta;
     /** Dossier à lire (Archéologue, ADR-40) : lecture seule, rien en dehors. */
     readDir?: string;
+    /** Avec readDir : recherche web en plus (Directeur artistique, ADR-43). */
+    tools?: string[];
+    /** « art » : modèle du Directeur artistique. */
+    role?: "art";
     timeoutMs?: number;
   }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */
@@ -27,6 +31,9 @@ export interface OrchestratorPort {
     tools?: string[];
     /** « concept » : modèle dédié à la conception (plus puissant, appels rares). */
     tier?: "concept";
+    /** Dossier à lire, et « art » pour le modèle du Directeur artistique (validateur, ADR-43). */
+    readDir?: string;
+    role?: "art";
   }): Promise<{
     data: unknown;
     costUsd: number | null;

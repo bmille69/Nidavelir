@@ -18,6 +18,7 @@ import { Autopilot, type AutopilotOptions } from "./autonomy/autopilot.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { ModelService, type ModelRole } from "./usage/model-service.ts";
 import { ReverseService } from "./reverse/reverse-service.ts";
+import { ArtService } from "./art/art-service.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
@@ -77,6 +78,7 @@ export type Hub = {
   usage: UsageService;
   models: ModelService;
   reverse: ReverseService;
+  art: ArtService;
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
@@ -231,8 +233,15 @@ export function createHub(options: HubOptions): Hub {
     vcs,
     dataDir,
   });
+  // Le Directeur artistique (ADR-43) : un asset passe « intégré » quand son chantier est fusionné.
+  const art = new ArtService({ db, clock, journal, projects, orchestrator, vcs, conversations });
+  const artHook = tasks.onStatus;
+  tasks.onStatus = (task) => {
+    artHook?.(task);
+    art.onTaskStatus(task);
+  };
   const extraHosts = new Set<string>();
-  const remote = options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
+  const remote =options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
   let closed = false;
   return {
     db,
@@ -251,6 +260,7 @@ export function createHub(options: HubOptions): Hub {
     usage,
     models,
     reverse,
+    art,
     autopilot,
     previews,
     quality,

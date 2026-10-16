@@ -5,6 +5,7 @@ const GLYPHS: Record<AgentId, string[]> = {
   you: ["★", "✦", "★"],
   concepteur: ["✎", "◇", "?"],
   director: ["✦", "?", "✦"],
+  art_director: ["◐", "✿", "◑"],
   archivist: ["✎", "¶", "✎"],
   developer: ["</>", "{ }", ";"],
   qa: ["✓", "✓", "✓"],
@@ -111,6 +112,12 @@ function Bot({ agent }: { agent: AgentId }) {
           </>
         )}
         {agent === "qa" && <path d="M55 75 l4 4 l8 -9" className="a-check" />}
+        {agent === "art_director" && (
+          <>
+            <ellipse cx="63" cy="27" rx="19" ry="6.5" className="a-dark" transform="rotate(-8 63 27)" />
+            <circle cx="70" cy="20" r="2.2" className="a-dark" />
+          </>
+        )}
       </g>
       <rect x="6" y="90" width="108" height="8" rx="3" className="a-desk" />
       <rect x="12" y="98" width="96" height="30" className="a-desk-front" />
@@ -140,6 +147,14 @@ function Bot({ agent }: { agent: AgentId }) {
         <g className="blueprint">
           <rect x="84" y="74" width="24" height="16" rx="1.5" className="a-blueprint" />
           <path d="M88 86 L96 78 L104 86" className="a-blueprint-line" />
+        </g>
+      )}
+      {agent === "art_director" && (
+        <g className="palette-prop">
+          <path d="M86 88 q-4 -14 9 -16 q13 -1 13 9 q0 6 -6 5 q-4 -0.5 -4 3 q0 3 -4 3 q-6 0 -8 -4 z" className="a-paper" />
+          <circle cx="92" cy="79" r="2" className="a-dot-1" />
+          <circle cx="99" cy="76.5" r="2" className="a-dot-2" />
+          <circle cx="104" cy="81" r="2" className="a-dot-3" />
         </g>
       )}
       {agent === "qa" && (

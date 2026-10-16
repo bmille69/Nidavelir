@@ -23,6 +23,7 @@ import { PreviewError } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
+import { ArtError } from "../art/art-service.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -46,6 +47,9 @@ const Body = {
   reverseRun: z.object({ mode: z.enum(["code", "complet"]) }),
   reverseAsk: z.object({ question: z.string().min(3).max(4000) }),
   reverseSend: z.object({ project: z.string().min(1).max(100) }),
+  artMessage: z.object({ text: z.string().min(1).max(20_000) }),
+  artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
+  artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({
@@ -146,6 +150,9 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     }
   });
 
+  // Images déposées pour le Directeur artistique (ADR-43) : corps binaire, 15 Mo au plus (au lieu de 256 Ko).
+  app.addContentTypeParser(["image/png", "image/jpeg", "image/webp"], { parseAs: "buffer", bodyLimit: 15 * 1024 * 1024 + 1 }, (_req, body, done) => done(null, body));
+
   app.register(async (api) => {
     api.addHook("preHandler", async (req, reply) => authenticate(hub, allowed, req, reply));
 
@@ -159,6 +166,28 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio", async () => studioSnapshot(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
+    // ── Directeur artistique (ADR-43) ──
+    api.get("/projects/:slug/art", async (req) => hub.art.state((req.params as { slug: string }).slug));
+    api.post("/projects/:slug/art/messages", async (req) => hub.art.send(req.human!, (req.params as { slug: string }).slug, Body.artMessage.parse(req.body).text));
+    api.post("/projects/:slug/art/images", async (req) => {
+      const { slug } = req.params as { slug: string };
+      const q = Body.artUpload.parse(req.query);
+      if (!Buffer.isBuffer(req.body)) throw new ArtError("Envoyez une image (PNG, JPEG ou WebP)");
+      return hub.art.upload(req.human!, slug, q.for, req.body, String(req.headers["content-type"] ?? "").split(";")[0]!.trim(), q.name);
+    });
+    api.post("/projects/:slug/art/assets/:id/decide", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.decide(req.human!, slug, id, Body.artDecide.parse(req.body).decision);
+    });
+    api.post("/projects/:slug/art/assets/:id/integrate", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.integrate(req.human!, slug, id);
+    });
+    api.get("/projects/:slug/art/files/*", async (req, reply) => {
+      const { slug, "*": rel } = req.params as { slug: string; "*": string };
+      const f = hub.art.file(slug, decodeURIComponent(rel));
+      return reply.type(f.mime).header("cache-control", "private, max-age=60").send(readFileSync(f.path));
+    });
     // ── Atelier de démontage (ADR-40) ──
     api.get("/reverse", async () => ({ dissections: hub.reverse.list(), tools: hub.reverse.tools() }));
     api.post("/reverse/browse", async () => ({ path: await options.folderPicker.pick(options.gamesRoot) }));
@@ -565,7 +594,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

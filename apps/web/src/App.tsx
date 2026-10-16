@@ -25,7 +25,7 @@ export type Route =
   | { page: "dissection"; id: string }
   | { page: "conceive"; project?: string; thread?: string }
   | { page: "conception"; id: string }
-  | { page: "project"; slug: string; thread?: string; task?: string; view?: "discussion" | "decisions" | "vision" | "tasks"; fresh?: boolean };
+  | { page: "project"; slug: string; thread?: string; task?: string; view?: "discussion" | "decisions" | "vision" | "tasks" | "art"; fresh?: boolean };
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
@@ -39,7 +39,7 @@ function parse(hash: string): Route {
   if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
   if (parts[0] === "p" && parts[1] && parts[2] === "concevoir") return { page: "conceive", project: parts[1], thread: parts[3] };
   if (parts[0] === "p" && parts[1]) {
-    if (parts[2] === "decisions" || parts[2] === "vision") return { page: "project", slug: parts[1], view: parts[2] };
+    if (parts[2] === "decisions" || parts[2] === "vision" || parts[2] === "art") return { page: "project", slug: parts[1], view: parts[2] };
     if (parts[2] === "tasks") return { page: "project", slug: parts[1], view: "tasks", task: parts[3] };
     // « nouvelle » : une page blanche ; la discussion n'existe qu'au premier message envoyé.
     if (parts[2] === "nouvelle") return { page: "project", slug: parts[1], view: "discussion", fresh: true };
@@ -60,7 +60,7 @@ export function href(route: Route): string {
   if (route.page === "conception") return `#/c/${route.id}`;
   if (route.page === "project") {
     const base = `#/p/${encodeURIComponent(route.slug)}`;
-    if (route.view === "decisions" || route.view === "vision") return `${base}/${route.view}`;
+    if (route.view === "decisions" || route.view === "vision" || route.view === "art") return `${base}/${route.view}`;
     if (route.view === "tasks") return `${base}/tasks${route.task ? `/${route.task}` : ""}`;
     if (route.fresh) return `${base}/nouvelle`;
     return `${base}${route.thread ? `/t/${route.thread}` : ""}`;

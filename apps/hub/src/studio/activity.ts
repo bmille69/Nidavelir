@@ -3,7 +3,7 @@ import type { Hub } from "../hub.ts";
 import type { UsageSnapshot } from "../usage/usage-service.ts";
 import { MODEL_CHOICES, type ModelSetting } from "../usage/model-service.ts";
 
-export type AgentId = "you" | "concepteur" | "director" | "archivist" | "developer" | "qa" | "guardian";
+export type AgentId = "you" | "concepteur" | "director" | "art_director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
 export type Activity = { project: string; text: string; detail?: string; href: string; since?: string };
 export type AgentSnapshot = { id: AgentId; state: AgentState; activities: Activity[] };
@@ -27,7 +27,7 @@ const RUN_TEXT = { plan: "Prépare un plan", execute: "Travaille", verify: "Vér
  * Lecture seule : ne déclenche rien, ne modifie rien.
  */
 export function studioSnapshot(hub: Hub): StudioSnapshot {
-  const acts: Record<AgentId, Activity[]> = { you: [], concepteur: [], director: [], archivist: [], developer: [], qa: [], guardian: [] };
+  const acts: Record<AgentId, Activity[]> = { you: [], concepteur: [], director: [], art_director: [], archivist: [], developer: [], qa: [], guardian: [] };
   const waiting: Partial<Record<AgentId, boolean>> = {};
   const projects = hub.projects.list();
   const names = new Map(projects.map((p) => [p.slug, p.name]));
@@ -49,6 +49,10 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
   for (const r of conv.replying) {
     acts.director.push({ project: r.project, text: `Vous répond dans « ${r.title} »`, href: `#/p/${r.project}/t/${r.thread}`, since: r.since });
     busy.add(r.project);
+  }
+  for (const a of hub.art.activity()) {
+    acts.art_director.push({ project: a.project, text: a.kind === "reply" ? "Vous répond (références, bible…)" : `Juge le rendu de ${a.asset}`, href: `#/p/${a.project}/art` });
+    busy.add(a.project);
   }
   for (const e of conv.extracting) {
     acts.archivist.push({ project: e.project, text: "Note les idées de votre dernier message", href: `#/p/${e.project}`, since: e.since });

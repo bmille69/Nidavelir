@@ -9,6 +9,7 @@ import { nextId } from "../util/ids.ts";
 import type { ExtractionService } from "../vision/extraction.ts";
 import type { VisionService } from "../vision/vision-service.ts";
 import { codeContext } from "../projects/code-context.ts";
+import { manifestSummary } from "../art/manifest.ts";
 import { directorSystemPrompt, renderCodeContext, directorTurnPrompt, hubTurnPrompt, renderContextPack, renderHistory } from "./prompts.ts";
 
 export class ConversationError extends Error {
@@ -232,7 +233,7 @@ export class ConversationService {
     const state = code ? (this.workshopState?.(project) ?? "") : "";
     const { text: raw, costUsd } = await this.#orchestrator.reply({
       systemPrompt: [
-        directorSystemPrompt(code ? [pack, renderCodeContext(code), state].filter(Boolean).join("\n\n") : pack, p.autonomy),
+        directorSystemPrompt([pack, code ? renderCodeContext(code) : "", manifestSummary(p.root) ?? "", state].filter(Boolean).join("\n\n"), p.autonomy),
         this.skills?.promptBlock("director", project) ?? "",
       ]
         .filter(Boolean)
