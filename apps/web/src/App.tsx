@@ -1,4 +1,5 @@
 import { DissectionHome, DissectionView } from "./studio/Dissection.tsx";
+import { ExpressHome, ExpressView } from "./studio/Express.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type SessionInfo } from "./api.ts";
 import { ImportFlow } from "./pages/ImportFlow.tsx";
@@ -22,6 +23,8 @@ export type Route =
   | { page: "skills" }
   | { page: "phone" }
   | { page: "dissections" }
+  | { page: "express" }
+  | { page: "expressGame"; id: string }
   | { page: "dissection"; id: string }
   | { page: "conceive"; project?: string; thread?: string }
   | { page: "conception"; id: string }
@@ -34,6 +37,7 @@ function parse(hash: string): Route {
   if (parts[0] === "qualite") return { page: "quality" };
   if (parts[0] === "competences") return { page: "skills" };
   if (parts[0] === "telephone") return { page: "phone" };
+  if (parts[0] === "express") return parts[1] ? { page: "expressGame", id: parts[1] } : { page: "express" };
   if (parts[0] === "demontage") return parts[1] ? { page: "dissection", id: parts[1] } : { page: "dissections" };
   if (parts[0] === "concevoir") return { page: "conceive" };
   if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
@@ -54,6 +58,8 @@ export function href(route: Route): string {
   if (route.page === "quality") return "#/qualite";
   if (route.page === "skills") return "#/competences";
   if (route.page === "phone") return "#/telephone";
+  if (route.page === "express") return "#/express";
+  if (route.page === "expressGame") return `#/express/${route.id}`;
   if (route.page === "dissections") return "#/demontage";
   if (route.page === "dissection") return `#/demontage/${route.id}`;
   if (route.page === "conceive") return route.project ? `#/p/${encodeURIComponent(route.project)}/concevoir${route.thread ? `/${route.thread}` : ""}` : "#/concevoir";
@@ -148,6 +154,8 @@ export function App() {
           {route.page === "quality" && <QualityView />}
           {route.page === "skills" && <SkillsView />}
           {route.page === "phone" && <PhoneView session={session} />}
+          {route.page === "express" && <ExpressHome />}
+          {route.page === "expressGame" && <ExpressView key={route.id} id={route.id} />}
           {route.page === "dissections" && <DissectionHome />}
           {route.page === "dissection" && <DissectionView key={route.id} id={route.id} />}
           {route.page === "conceive" && <ConceptionStart project={route.project} thread={route.thread} />}

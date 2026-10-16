@@ -82,7 +82,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
     );
     writeFileSync(system, req.systemPrompt, "utf8");
     const models = this.#models();
-    const model = (req.big && req.kind !== "verify" ? models.big : undefined) ?? models[req.kind] ?? models.default;
+    const model = req.model ?? (req.big && req.kind !== "verify" ? models.big : undefined) ?? models[req.kind] ?? models.default;
     const args = buildExecArgs(req, { settings, mcp, system }, model);
 
     return new Promise((resolve, reject) => {

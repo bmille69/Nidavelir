@@ -50,6 +50,8 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
     acts.director.push({ project: r.project, text: `Vous répond dans « ${r.title} »`, href: `#/p/${r.project}/t/${r.thread}`, since: r.since });
     busy.add(r.project);
   }
+  const express = hub.express.running();
+  if (express) acts.developer.push({ project: "", text: `Jeu express : ${express.title}`, href: `#/express/${express.id}`, since: express.started_at });
   for (const a of hub.art.activity()) {
     acts.art_director.push({ project: a.project, text: a.kind === "reply" ? "Vous répond (références, bible…)" : `Juge le rendu de ${a.asset}`, href: `#/p/${a.project}/art` });
     busy.add(a.project);

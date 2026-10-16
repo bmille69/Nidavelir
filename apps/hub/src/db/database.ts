@@ -335,6 +335,32 @@ const MIGRATIONS: string[] = [
     UNIQUE (project, seq)
   );
   `,
+  `
+  -- ADR-44 : le Jeu express, de l'idée à un jeu jouable en quelques minutes (dossier prototypes/ des jeux).
+  CREATE TABLE express_games (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    title TEXT NOT NULL,
+    idea TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    root TEXT NOT NULL,
+    concept_json TEXT,
+    summary TEXT,
+    how_to_play TEXT,
+    error TEXT,
+    project TEXT,
+    version INTEGER NOT NULL DEFAULT 0,
+    shot INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    events_json TEXT NOT NULL DEFAULT '[]'
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

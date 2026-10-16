@@ -199,6 +199,11 @@ export function Home() {
           <h2>Créer</h2>
         </div>
         <div className="create-grid">
+          <a className="create-tile express" href="#/express">
+            <Icon name="bolt" size={26} />
+            <strong>Jeu express</strong>
+            <span className="muted small">Une idée, quelques minutes : un jeu jouable tout de suite. Pour essayer une idée ou faire une démonstration.</span>
+          </a>
           <a className="create-tile concept" href="#/concevoir">
             <Icon name="sparkle" size={26} />
             <strong>Concevoir un nouveau jeu</strong>

@@ -87,6 +87,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 
       <p className="side-title">Créer</p>
       <nav className="side-nav">
+        {item("#/express", "bolt", "Jeu express", route.page === "express" || route.page === "expressGame")}
         {item("#/concevoir", "sparkle", "Nouveau projet", route.page === "conceive" && !route.project)}
         {item("#/import", "download", "Importer un jeu", route.page === "import")}
         {item("#/demontage", "hammer", "Démonter un jeu", route.page === "dissections" || route.page === "dissection")}

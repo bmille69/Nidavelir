@@ -24,6 +24,8 @@ import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
 import { ArtError } from "../art/art-service.ts";
+import { ExpressError } from "../express/express-service.ts";
+import { gameFile } from "../express/checker.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -50,6 +52,8 @@ const Body = {
   artMessage: z.object({ text: z.string().min(1).max(20_000) }),
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
+  expressCreate: z.object({ idea: z.string().min(3).max(4000), mode: z.enum(["eclair", "soigne"]) }),
+  expressImprove: z.object({ request: z.string().min(3).max(2000) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({
@@ -107,6 +111,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   await app.register(cookie);
   // « Transmets » au Concepteur peut créer un nouveau jeu dans la racine des jeux (ADR-34).
   hub.conceptions.gamesRoot = options.gamesRoot;
+  hub.express.gamesRoot = options.gamesRoot;
   const fixedHosts = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
   // Les hôtes Tailscale (« mon-pc.tail1234.ts.net ») s'ajoutent quand le hub y est publié (ADR-30).
   const allowed = { has: (h: string) => fixedHosts.has(h) || hub.extraHosts.has(h) };
@@ -166,6 +171,36 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio", async () => studioSnapshot(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
+    // ── Jeu express (ADR-44) ──
+    api.get("/express", async () => ({ games: hub.express.list().map((g) => ({ ...g, events: [] })), running: hub.express.running()?.id ?? null }));
+    api.post("/express", async (req) => {
+      const body = Body.expressCreate.parse(req.body);
+      return hub.express.create(req.human!, body.idea, body.mode);
+    });
+    api.get("/express/:id", async (req) => hub.express.get((req.params as { id: string }).id));
+    api.post("/express/:id/improve", async (req) => hub.express.improve(req.human!, (req.params as { id: string }).id, Body.expressImprove.parse(req.body).request));
+    api.post("/express/:id/cancel", async (req) => {
+      hub.express.cancel((req.params as { id: string }).id);
+      return { ok: true };
+    });
+    api.post("/express/:id/hide", async (req) => {
+      hub.express.hide(req.human!, (req.params as { id: string }).id);
+      return { ok: true };
+    });
+    api.post("/express/:id/promote", async (req) => hub.express.promote(req.human!, (req.params as { id: string }).id));
+    api.get("/express/:id/shot", async (req, reply) => {
+      const file = hub.express.shotPath((req.params as { id: string }).id);
+      if (!existsSync(file)) return reply.code(404).send({ error: "Pas encore de capture" });
+      return reply.type("image/png").header("cache-control", "private, max-age=30").send(readFileSync(file));
+    });
+    // Le jeu lui-même, servi par le hub : jouable aussitôt, sur le PC comme sur le téléphone.
+    api.get("/express/:id/play/*", async (req, reply) => {
+      const { id, "*": rel } = req.params as { id: string; "*": string };
+      const g = hub.express.get(id);
+      const f = g.root ? gameFile(g.root, rel) : null;
+      if (!f) return reply.code(404).send({ error: "Fichier introuvable" });
+      return reply.type(f.mime).header("cache-control", "no-store").send(readFileSync(f.path));
+    });
     // ── Directeur artistique (ADR-43) ──
     api.get("/projects/:slug/art", async (req) => hub.art.state((req.params as { slug: string }).slug));
     api.post("/projects/:slug/art/messages", async (req) => hub.art.send(req.human!, (req.params as { slug: string }).slug, Body.artMessage.parse(req.body).text));
@@ -573,6 +608,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const { run } = req.params as { run: string };
         const body = Body.agentTool.parse(req.body);
         try {
+          if (hub.express.owns(run)) return hub.express.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
           return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
         } catch (err) {
           return reply.code(403).send({ decision: "deny", reason: (err as Error).message });
@@ -582,6 +618,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const { run } = req.params as { run: string };
         const body = Body.agentTool.parse(req.body);
         try {
+          if (hub.express.owns(run)) return await hub.express.agentPermission(run, token(req), body.tool_name, body.tool_input);
           return await hub.tasks.agentPermission(run, token(req), body.tool_name, body.tool_input);
         } catch (err) {
           return reply.code(403).send({ behavior: "deny", message: (err as Error).message });
@@ -594,7 +631,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

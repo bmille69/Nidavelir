@@ -8,6 +8,7 @@
     "@fastify/static": "^10.1.6",
     "@studio/contracts": "*",
     "fastify": "^5.12.7",
+    "three": "^0.180.0",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   }

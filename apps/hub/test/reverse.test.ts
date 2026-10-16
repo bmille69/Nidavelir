@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHub } from "../src/hub.ts";
 import { buildChatArgs } from "../src/llm/claude-cli.ts";
 import { detectGame } from "../src/reverse/detect.ts";
@@ -98,7 +98,7 @@ describe("carte du jeu (ADR-42)", () => {
   });
 });
 
-describe("Atelier de démontage (ADR-40)", () => {
+describe("Atelier de démontage (ADR-40)", { timeout: 30_000 }, () => {
   it("installer l'outil sur demande, démonter, fiche d'ensemble, question, envoi au studio, projet de mod", async () => {
     const sb = sandbox();
     sb.hub.close();
@@ -196,6 +196,9 @@ describe("Atelier de démontage (ADR-40)", () => {
     await hub.conversations.idle();
     expect(hub.conversations.getThread(mod.project, toMod.thread).title).toBe("Fiche : Mise à jour : ce qui a changé");
     expect(hub.conversations.messages(mod.project, toMod.thread)[0]!.text).toMatch(/le jeu que modifie ce projet[\s\S]*nos patches/);
+    // La réponse du directeur tourne en arrière-plan : on l'attend avant d'effacer le bac à sable (sinon Windows refuse).
+    await vi.waitFor(() => expect(hub.conversations.messages(mod.project, toMod.thread)).toHaveLength(2), { timeout: 10_000 });
+    await hub.conversations.idle();
   });
 
   it("un jeu protégé reste bloqué, et un moteur non pris en charge le dit", async () => {

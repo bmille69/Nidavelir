@@ -19,6 +19,8 @@ import { UsageService } from "./usage/usage-service.ts";
 import { ModelService, type ModelRole } from "./usage/model-service.ts";
 import { ReverseService } from "./reverse/reverse-service.ts";
 import { ArtService } from "./art/art-service.ts";
+import { ExpressService } from "./express/express-service.ts";
+import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
 import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
@@ -59,6 +61,8 @@ export type HubOptions = {
   models?: Partial<Record<ModelRole, string | undefined>>;
   /** Outils de l'Atelier de démontage (ADR-40). Défaut : les vrais, téléchargés à votre demande. */
   reverseTools?: ReverseToolsPort;
+  /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
+  expressChecker?: ExpressChecker;
 };
 
 export type Hub = {
@@ -79,6 +83,7 @@ export type Hub = {
   models: ModelService;
   reverse: ReverseService;
   art: ArtService;
+  express: ExpressService;
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
@@ -240,8 +245,29 @@ export function createHub(options: HubOptions): Hub {
     artHook?.(task);
     art.onTaskStatus(task);
   };
+  // Le Jeu express (ADR-44) : de l'idée à un jeu jouable en quelques minutes.
+  const express = new ExpressService({
+    db,
+    clock,
+    journal,
+    orchestrator,
+    executor: options.executor ?? noExecutor,
+    vcs,
+    projects,
+    conversations,
+    checker: options.expressChecker ?? (options.checker ? new RealExpressChecker() : { check: async () => ({ ok: true, errors: [], screenshot: null }) }),
+    dataDir,
+    agentBaseUrl: options.agentBaseUrl ?? (() => "http://127.0.0.1:0/api/agent/runs"),
+  });
+  express.usage = usage;
+  express.onFinished = (g) =>
+    notifications.notify(
+      g.status === "ready"
+        ? { title: "⚡ Jeu express prêt", body: `${g.title} : à vous de jouer`, url: `#/express/${g.id}`, tag: `express-${g.id}` }
+        : { title: "Jeu express interrompu", body: g.error ?? g.title, url: `#/express/${g.id}`, tag: `express-${g.id}` },
+    );
   const extraHosts = new Set<string>();
-  const remote =options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
+  const remote = options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
   let closed = false;
   return {
     db,
@@ -261,6 +287,7 @@ export function createHub(options: HubOptions): Hub {
     models,
     reverse,
     art,
+    express,
     autopilot,
     previews,
     quality,

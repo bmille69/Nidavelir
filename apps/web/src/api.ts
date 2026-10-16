@@ -75,6 +75,32 @@ export type UsageSnapshot = {
 };
 export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
 export type ModelRole = "concepteur" | "director" | "art_director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue";
+export type ExpressMode = "eclair" | "soigne";
+export type ExpressPhase = "idee" | "code" | "test" | "correction" | "finition" | "amelioration" | "pret";
+export type ExpressConcept = { title: string; pitch: string; dimension: "2d" | "3d"; genre: string; controls: string[]; loop: string; goal: string; style: string; features: string[]; juice: string[] };
+export type ExpressEvent = { seq: number; at: string; kind: "phase" | "tool" | "text" | "info" | "error"; text: string };
+export type ExpressGame = {
+  id: string;
+  slug: string;
+  title: string;
+  idea: string;
+  mode: ExpressMode;
+  status: "running" | "ready" | "failed" | "cancelled";
+  phase: ExpressPhase;
+  root: string;
+  concept: ExpressConcept | null;
+  summary: string | null;
+  how_to_play: string | null;
+  error: string | null;
+  project: string | null;
+  version: number;
+  shot: boolean;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  events: ExpressEvent[];
+};
 export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
 export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
 export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
@@ -235,6 +261,15 @@ export const api = {
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
+  express: () => request<{ games: ExpressGame[]; running: string | null }>("GET", "/express"),
+  expressCreate: (idea: string, mode: ExpressMode) => request<ExpressGame>("POST", "/express", { idea, mode }),
+  expressGet: (id: string) => request<ExpressGame>("GET", `/express/${id}`),
+  expressImprove: (id: string, text: string) => request<ExpressGame>("POST", `/express/${id}/improve`, { request: text }),
+  expressCancel: (id: string) => request<{ ok: boolean }>("POST", `/express/${id}/cancel`, {}),
+  expressHide: (id: string) => request<{ ok: boolean }>("POST", `/express/${id}/hide`, {}),
+  expressPromote: (id: string) => request<{ project: string; thread: string }>("POST", `/express/${id}/promote`, {}),
+  expressShot: (g: { id: string; updated_at: string }) => `/api/human/express/${g.id}/shot?v=${encodeURIComponent(g.updated_at)}`,
+  expressPlay: (id: string) => `/api/human/express/${id}/play/index.html`,
   art: (slug: string) => request<ArtState>("GET", `/projects/${slug}/art`),
   artSend: (slug: string, text: string) => request<ArtMessage>("POST", `/projects/${slug}/art/messages`, { text }),
   /** Dépose une image (moodboard ou rendu d'un asset « A-0001 ») : corps binaire, pas de JSON. */

@@ -476,7 +476,28 @@ Mesures :
 - **Critères de recette** : une fiche envoyée au directeur pour s'en inspirer lui demande d'abord la liste des règles à reproduire (garder, adapter, laisser), qui servira au testeur. Les zones d'ombre sont des choix, pas des règles. Une fiche envoyée au projet de mod parle des patches, pas d'inspiration.
 - **Non retenu (REA)** : brancher REA lui-même. Pour nos cibles (Godot, C#), un décompilateur rend du code lisible, plus utile que l'analyse binaire de REA. REA demanderait Java et Ghidra et modifie la configuration des agents, et ses outils natifs s'adressent surtout aux jeux C/C++ (Unreal). À reconsidérer si un tel jeu devient une cible. L'observation du jeu en marche (REA « runtime ») est écartée : c'est intrusif, et le classifieur de Claude Code la bloquerait.
 
+### ADR-44 : le Jeu express
+**Statut** : **Validée** le 16/10/2026. Le directeur créatif veut une fonction de « pur vibecoding » : une idée, de quelques mots à quelques lignes, devient un jeu jouable en 5 à 10 minutes. Elle sert de vitrine quand il montre Nidavellir, et de premier essai pour un jeu. Ses choix (boutons) : 2D ou 3D selon l'idée, et deux vitesses.
+- **Parcours** : accueil « Jeu express » (menu Créer, tuile d'accueil) → idée et vitesse → écran en direct (chronomètre, étapes Idée → Code → Test → [Finition] → Jouable, fil des actions du développeur, dernière capture, fiche avec la palette) → le jeu se joue dans le studio, sur PC comme sur téléphone. Ensuite : « Améliorer » (une phrase, nouvelle version), « En faire un vrai projet » (enregistré dans le studio en mode Atelier, le directeur propose de le passer sur Vite avec des tests), ou « Retirer de la galerie » (le dossier reste).
+- **Vitesses** : Éclair sur Sonnet (environ 5 min) ; Soigné sur Opus (environ 10 min), avec une passe de finition. Les améliorations passent sur Sonnet. Le modèle est imposé par run (`ExecRequest.model`).
+- **Fabrication** :
+  - une fiche de jeu en un appel structuré, sans question à l'utilisateur ;
+  - un dossier neuf `prototypes/<nom>` dans la racine des jeux, avec Git ;
+  - un modèle de départ sans aucune installation : `index.html`, `style.css`, `src/main.js` ;
+  - un seul passage du développeur, sans plan, chronométré ;
+  - un test par le hub dans un navigateur invisible (petit serveur local, clic, Entrée et flèches, capture). En cas d'erreur, une seule correction automatique, puis un nouvel essai ;
+  - un commit à chaque étape.
+- **3D** : Three.js est une dépendance du hub (`three@0.180.0`). Il est copié dans `lib/three/` du prototype, avec les modules `controls`, `postprocessing`, `shaders` et `math`, et déclaré par une importmap. Il n'y a rien à télécharger pendant le chantier, où le réseau reste bloqué.
+- **Sécurité** : mêmes règles que les chantiers. Le gardien refuse ce qui est interdit (réseau, installation…). Le reste est permis dans le seul dossier du prototype, puisqu'il n'y a pas de plan. Ce sont des runs `XRUN-…` sur les mêmes routes d'agent.
+- **Garde-fous** :
+  - un seul jeu express à la fois ;
+  - refus de lancer si l'abonnement dépasse 90 % sur 5 heures (97 % sur la semaine), pour éviter un échec en pleine démonstration ;
+  - durée bornée par passage, au-delà de laquelle on garde ce qui est écrit ;
+  - notification sur le téléphone quand le jeu est prêt.
+- **Le jeu est servi par le hub lui-même** (`/api/human/express/:id/play/…`, chemins confinés au dossier, `.git` exclu). Il n'y a pas de serveur de développement : c'est ce qui rend le jeu jouable aussitôt.
+
 ### ADR-43 : le Directeur artistique (étape 1, avec Midjourney à la main)
+**En pause** depuis le 16/10/2026, à la demande du directeur créatif. C'est un élément important du flux de travail, à reprendre à l'étape 2.
 **Statut** : **Validée** le 16/10/2026. Le directeur créatif se dit faible en visuel et veut un agent à qui confier idées et moodboards, qui centralise, cherche des références, propose une direction cohérente, fait produire et valider les visuels, puis s'entend avec le développeur pour les brancher. Ses choix (boutons) : la DA a son propre espace dans le projet, on avance par étapes, et la 3D passera par Tripo + Blender. Il n'a pour l'instant que Midjourney, qui n'a pas d'API, et vise à terme une génération locale sur sa carte graphique (RTX 3080 Ti) pour la cohérence.
 - **Où vivent les visuels** : dans le dépôt du jeu, sous `studio/art/`, commité par le hub. On y trouve `bible.md` (la bible visuelle), `assets.json` (le manifeste : chaque visuel `A-0001` avec usage, spécifications, statut, prompts, rendus et verdict), `moodboard/` (vos images et `notes.json`) et `production/` (les rendus). `studio/` reste en lecture seule pour le développeur.
 - **L'agent** : nouveau rôle de modèle `art_director` (Sonnet recommandé, réglable ; variable `STUDIO_MODEL_ART`). Une discussion par projet (table `art_messages`), onglet « Direction artistique ». Chaque tour est un appel Claude Code qui lit `studio/art/` (images comprises, il les voit) et peut chercher sur le web : `buildChatArgs` accepte désormais `readDir` + `WebSearch`/`WebFetch`, et rien d'autre. Ces appels ont leur propre file, pour ne jamais retarder le directeur ni l'Archéologue. Sa réponse arrive en arrière-plan.
