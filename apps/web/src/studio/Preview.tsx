@@ -19,19 +19,16 @@ export function TryButton({ slug, task, label, small }: { slug: string; task?: s
     };
   }, [slug, task]);
 
+  // Le hub ouvre le jeu dans Edge (sur l'ordinateur) ; sinon, un onglet ici en secours.
   async function start() {
-    // L'onglet est ouvert tout de suite (sinon le navigateur le bloque), puis dirigé vers le jeu.
-    const tab = window.open("about:blank", "_blank");
     setState("starting");
     setError(null);
     try {
       const p = await api.startPreview(slug, task);
       setRunning(p);
-      if (tab) tab.location.href = p.url;
-      else window.open(p.url, "_blank");
+      if (!p.opened) window.open(p.url, "_blank");
       setState("idle");
     } catch (e) {
-      tab?.close();
       setError((e as Error).message);
       setState("error");
     }
@@ -46,9 +43,9 @@ export function TryButton({ slug, task, label, small }: { slug: string; task?: s
     <span className="try">
       {running ? (
         <>
-          <a className="try-open" href={running.url} target="_blank" rel="noreferrer">
+          <button className="link try-open" onClick={start}>
             ▶ Le jeu tourne : ouvrir
-          </a>
+          </button>
           <button className={`link ${small ? "small" : ""}`} onClick={stop}>
             arrêter
           </button>

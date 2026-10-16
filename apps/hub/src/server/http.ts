@@ -19,7 +19,7 @@ import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
 import { studioSnapshot } from "../studio/activity.ts";
 import { MODEL_CHOICES, MODEL_ROLES, type ModelId } from "../usage/model-service.ts";
-import { PreviewError } from "../executor/preview.ts";
+import { openInEdge, PreviewError, type Preview } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
@@ -540,15 +540,20 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     });
     // ── Essayer le jeu (ADR-25) ──
     api.get("/projects/:slug/previews", async (req) => hub.previews.list((req.params as { slug: string }).slug));
+    // Depuis l'ordinateur, le hub ouvre lui-même le jeu dans Edge ; depuis un téléphone, rien ne s'ouvre sur le PC.
+    const openPreview = (req: FastifyRequest, p: Preview) => {
+      const [sid] = readSessionCookie(req);
+      return { ...p, opened: !hub.sessions.isDevice(sid) && openInEdge(p.url) };
+    };
     api.post("/projects/:slug/preview", async (req) => {
       const { slug } = req.params as { slug: string };
-      return hub.previews.start(slug, null, hub.projects.get(slug).root);
+      return openPreview(req, await hub.previews.start(slug, null, hub.projects.get(slug).root));
     });
     api.post("/projects/:slug/tasks/:id/preview", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       const task = hub.tasks.get(slug, id);
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
-      return hub.previews.start(slug, id, task.worktree);
+      return openPreview(req, await hub.previews.start(slug, id, task.worktree));
     });
     // Carnet « État du jeu » (ADR-33).
     api.get("/projects/:slug/game-state", async (req) => {

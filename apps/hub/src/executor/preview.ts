@@ -165,6 +165,17 @@ export function workspaceDevDir(root: string, dev: string): string | null {
   return null;
 }
 
+/**
+ * Ouvre le jeu dans Microsoft Edge, quel que soit le navigateur par défaut (choix du directeur
+ * créatif). Windows uniquement ; renvoie false ailleurs, l'interface ouvre alors un onglet.
+ */
+export function openInEdge(url: string): boolean {
+  if (process.platform !== "win32" || !/^https?:\/\/(?:localhost|127\.0\.0\.1):\d+\/?$/.test(url)) return false;
+  // L'adresse est vérifiée ci-dessus (rien que cmd puisse interpréter) : la ligne passe telle quelle.
+  execFile("cmd.exe", ["/d", "/c", `start "" msedge ${url}`], { windowsHide: true, windowsVerbatimArguments: true }, () => {});
+  return true;
+}
+
 function killTree(pid: number | undefined): void {
   if (!pid) return;
   if (process.platform === "win32") execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});

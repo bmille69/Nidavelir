@@ -367,7 +367,8 @@ export const api = {
   quality: (project?: string) => request<QualityReport>("GET", `/quality${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   rateTask: (slug: string, id: string, rating: "up" | "down", note?: string) => request<Rating>("POST", `/projects/${slug}/tasks/${id}/rating`, { rating, note }),
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
-  startPreview: (slug: string, task?: string) => request<Preview>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
+  startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
   stopPreview: (slug: string) => request<{ stopped: boolean }>("POST", `/projects/${slug}/preview/stop`, {}),
   pendingEscalations: (slug: string) => request<Escalation[]>("GET", `/projects/${slug}/escalations`),
   decideEscalation: (slug: string, id: string, allowed: boolean) => request<Escalation>("POST", `/projects/${slug}/escalations/${id}/decide`, { allowed }),
