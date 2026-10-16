@@ -84,7 +84,8 @@ export function AutonomyPicker({ slug, level }: { slug: string; level: Autonomy 
           <i className={level !== "supervised" ? "on" : ""} />
           <i className={level === "autonomous" || level === "workshop" ? "on" : ""} />
         </span>
-        Autonomie : {AUTONOMY[level].label}
+        <span className="autonomy-prefix">Autonomie : </span>
+        {AUTONOMY[level].label}
       </button>
       {open && (
         <div className="autonomy-menu" role="dialog" aria-label="Niveau d'autonomie">

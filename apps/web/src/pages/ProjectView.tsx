@@ -10,6 +10,9 @@ import { ThreadList, useSeen } from "../studio/ThreadList.tsx";
 import { Icon } from "../studio/Icon.tsx";
 import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
+/** Même seuil que l'affichage téléphone de studio.css. */
+const PHONE = typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 860px)").matches;
+
 const TYPE_LABEL: Record<string, string> = {
   vision: "Vision",
   goal: "Objectif",
@@ -267,12 +270,14 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
                 void send();
               }
             }}
-            placeholder="Écrivez librement… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"
-            rows={3}
+            placeholder={PHONE ? "Écrivez au directeur…" : "Écrivez librement… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"}
+            rows={PHONE ? 1 : 3}
+            enterKeyHint="send"
             disabled={sending}
           />
-          <button onClick={send} disabled={!draft.trim() || sending}>
-            Envoyer
+          <button onClick={send} disabled={!draft.trim() || sending} aria-label="Envoyer">
+            <Icon name="arrow" size={18} className="send-icon" />
+            <span className="send-label">Envoyer</span>
           </button>
         </div>
       </section>

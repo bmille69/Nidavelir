@@ -1118,3 +1118,37 @@
   .dissect-notes nav { flex-direction: row; overflow-x: auto; }
   .dissect-ask { flex-direction: column; align-items: stretch; }
 }
+/* Bouton d'envoi : texte sur ordinateur, flèche sur téléphone */
+.composer .send-icon { display: none; }
+/* ═══ Téléphone : la discussion comme une messagerie. En-tête compact toujours visible,
+   seuls les messages défilent, saisie collée en bas (et onglets masqués pendant la frappe). ═══ */
+@media (max-width: 860px) {
+  .main:has(.project.pane-chat) { overflow: hidden; }
+  .project.pane-chat { overflow: hidden; }
+  .project.pane-chat > .conversation { flex: 1 1 auto; min-height: 0; }
+  .project.pane-chat .messages { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.7rem 0.75rem 0.5rem; }
+  .project.pane-chat .mode-bar { display: none; }
+  .project.pane-chat .composer { position: static; flex: none; margin: 0.3rem 0.6rem 0.5rem; padding: 0.3rem 0.3rem 0.3rem 0.5rem; border-radius: 24px; align-items: flex-end; }
+  .composer textarea { field-sizing: content; min-height: 2.5rem; max-height: 32vh; padding: 0.55rem 0.4rem; line-height: 1.4; }
+  .composer button { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+  .composer .send-icon { display: block; transform: rotate(-90deg); }
+  .composer .send-label { display: none; }
+  body:has(.composer textarea:focus) .tabbar { display: none; }
+  body:has(.composer textarea:focus) .main { padding-bottom: env(safe-area-inset-bottom); }
+  .project.pane-side { overflow-y: auto; }
+  /* En-tête du projet sur une ligne */
+  .project-head { padding: 0.45rem 0.9rem; flex-wrap: nowrap; }
+  .project-title { flex-wrap: nowrap; width: 100%; gap: 0.6rem; }
+  .project-title h1 { font-size: 1.05rem; }
+  .proj-initial.lg { width: 30px; height: 30px; font-size: 0.9rem; border-radius: 9px; flex: none; }
+  .project-actions { width: auto; margin-left: auto; flex-wrap: nowrap; gap: 0.4rem; }
+  .autonomy-prefix { display: none; }
+  .autonomy-btn, .concevoir-btn { padding: 0.3rem 0.65rem; min-height: 34px; }
+  .project-tabs a { padding: 0.5rem 0.65rem; min-height: 38px; }
+  .pane-switch { margin: 0.4rem 0.9rem 0; padding: 0.2rem; }
+  .pane-switch button { padding: 0.25rem; min-height: 32px; font-size: 0.86rem; }
+  .project.pane-chat > .threads { padding: 0.4rem 0.9rem 0.3rem; }
+  .threads > .new-thread { width: 38px; height: 34px; min-height: 34px; padding: 0; justify-content: center; border-radius: 999px; }
+  .new-thread-label { display: none; }
+  .threads li a { padding: 0.3rem 0.8rem; min-height: 34px; }
+}

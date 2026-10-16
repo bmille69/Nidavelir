@@ -48,7 +48,7 @@ export function AgentModel({ agent, snap }: { agent: AgentId; snap: StudioSnapsh
   return (
     <div className="agent-model" onClick={(e) => e.stopPropagation()}>
       {settings.map((setting) => (
-        <div key={setting.role}>
+        <div key={setting.role} className={`model-setting role-${setting.role}`}>
           <div className="model-row">
             <label className="model-pick">
               {ROW_LABEL[setting.role] ?? "Modèle"}

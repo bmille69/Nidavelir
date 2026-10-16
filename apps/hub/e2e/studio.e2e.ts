@@ -125,18 +125,21 @@ describe("vue Studio", () => {
     await page.locator(".agent-card.agent-you.state-waiting").getByText("1 proposition(s) à arbitrer").waitFor();
     expect(await page.locator(".org-links path.link-base").count()).toBe(6);
     // Sous chaque agent : son modèle, celui que nous recommandons, et ce qu'il consomme (ADR-37).
-    const dev = page.locator(".agent-card.agent-developer");
-    await expect.poll(() => dev.locator(".model-pick select").inputValue()).toBe("fable");
+    // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41).
+    const dev = page.locator(".agent-card.agent-developer .model-setting.role-developer");
+    const big = page.locator(".agent-card.agent-developer .model-setting.role-developer_big");
+    await expect.poll(() => dev.locator(".model-pick select").inputValue()).toBe("sonnet");
+    await expect.poll(() => big.locator(".model-pick select").inputValue()).toBe("fable");
     await dev.locator(".model-reco.on", { hasText: "Recommandé" }).waitFor();
     await page.locator(".agent-card.agent-guardian").getByText(/Aucun modèle/).waitFor();
-    await dev.locator(".model-pick select").selectOption("sonnet");
-    await dev.locator("button.model-reco", { hasText: "Conseillé : Fable 5" }).waitFor();
-    expect(hub.models.get("developer")).toBe("sonnet");
-    await page.locator(".feed-list", { hasText: "Le Développeur passe de Fable 5 à Sonnet" }).waitFor();
+    await dev.locator(".model-pick select").selectOption("opus");
+    await dev.locator("button.model-reco", { hasText: "Conseillé : Sonnet" }).waitFor();
+    expect(hub.models.get("developer")).toBe("opus");
+    await page.locator(".feed-list", { hasText: "Le Développeur passe de Sonnet à Opus" }).waitFor();
     await page.screenshot({ path: join(shots, "studio-modeles.png") });
     await dev.locator("button.model-reco").click();
     await dev.locator(".model-reco.on").waitFor();
-    expect(hub.models.get("developer")).toBe("fable");
+    expect(hub.models.get("developer")).toBe("sonnet");
     await page.screenshot({ path: join(shots, "studio-1-repos.png") });
   });
 

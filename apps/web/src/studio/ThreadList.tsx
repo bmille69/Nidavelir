@@ -80,7 +80,7 @@ export function ThreadList(props: {
     <aside className="threads">
       <h2>Discussions</h2>
       <button className={`new-thread ${props.fresh ? "on" : ""}`} onClick={props.onNew} title="Une page blanche : la discussion n'est créée qu'à votre premier message">
-        <Icon name="plus" size={16} /> Nouvelle discussion
+        <Icon name="plus" size={16} /> <span className="new-thread-label">Nouvelle discussion</span>
       </button>
       {error && <p className="error small">{error}</p>}
       <ul>

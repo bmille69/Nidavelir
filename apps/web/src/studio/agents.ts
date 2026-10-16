@@ -150,8 +150,10 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
     case "task.cancelled":
       return { agent: "you", text: `Travail arrêté par vous (${e.subject ?? ""})` };
     case "model.changed": {
-      const agent = (e.subject ?? "developer") as AgentId;
-      return { agent, text: `${AGENTS[agent]?.name ?? e.subject} passe de ${MODEL_NAME[String(p.from)] ?? String(p.from)} à ${MODEL_NAME[String(p.to)] ?? String(p.to)}` };
+      // Le modèle des gros chantiers est celui du développeur (ADR-41).
+      const big = e.subject === "developer_big";
+      const agent = (big ? "developer" : (e.subject ?? "developer")) as AgentId;
+      return { agent, text: `${AGENTS[agent]?.name ?? e.subject}${big ? " (gros chantiers)" : ""} passe de ${MODEL_NAME[String(p.from)] ?? String(p.from)} à ${MODEL_NAME[String(p.to)] ?? String(p.to)}` };
     }
     case "tool.installed":
       return { agent: "you", text: `Outil installé : ${e.subject ?? ""} ${String(p.version ?? "")}`.trim() };
