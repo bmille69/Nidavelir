@@ -5,11 +5,13 @@ import { join } from "node:path";
 import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
-import { parseArtDirectives } from "../src/art/prompts.ts";
+import { fluxWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
+import { parseArtDirectives, parseFormat } from "../src/art/prompts.ts";
+import { createHub } from "../src/hub.ts";
 import { PolicyEngine } from "../src/executor/policy-engine.ts";
 import { buildChatArgs } from "../src/llm/claude-cli.ts";
 import { FakeOrchestrator } from "./fake-orchestrator.ts";
-import { cleanupSandboxes, sandbox } from "./helpers.ts";
+import { cleanupSandboxes, fakeClock, sandbox } from "./helpers.ts";
 
 afterEach(() => cleanupSandboxes());
 
@@ -35,6 +37,42 @@ async function setup() {
   const repo = sb.makeGameRepo("games/bordee", { "CLAUDE.md": "# Bordée\nBataille navale 1900-1945 stylisée.\n" });
   await sb.hub.projects.register(sb.human(), { path: repo, slug: "bordee", name: "Bordée" });
   return { sb, fake, repo, art: sb.hub.art };
+}
+
+/** Le générateur local factice : il retient les demandes et rend une petite image PNG. */
+class FakeImageGen implements ImageGenPort {
+  installed = false;
+  requests: GenRequest[] = [];
+  state(): GenState {
+    return { installed: this.installed, installing: null, error: null, size: "≈ 19 Go" };
+  }
+  install(): void {
+    this.installed = true;
+  }
+  async generate(req: GenRequest): Promise<Buffer> {
+    this.requests.push(req);
+    return PNG;
+  }
+  close(): void {}
+}
+
+/** Le même projet, avec un générateur local branché. */
+async function setupLocal() {
+  const fake = new Artist();
+  const sb = sandbox(fake);
+  sb.hub.close();
+  const gen = new FakeImageGen();
+  sb.hub = createHub({
+    databasePath: join(sb.dir, "hub/.data/art.db"),
+    registry: { forbiddenTrees: [join(sb.dir, "hub")], forbiddenExact: [sb.dir] },
+    clock: fakeClock(),
+    orchestrator: fake,
+    dataDir: join(sb.dir, "hub/.data"),
+    imagegen: gen,
+  });
+  const repo = sb.makeGameRepo("games/bordee", { "CLAUDE.md": "# Bordée\nBataille navale 1900-1945 stylisée.\n" });
+  await sb.hub.projects.register(sb.human(), { path: repo, slug: "bordee", name: "Bordée" });
+  return { sb, fake, gen, repo, art: sb.hub.art };
 }
 
 const log = (repo: string) => execFileSync("git", ["-C", repo, "log", "--format=%s"], { encoding: "utf8" });
@@ -153,6 +191,80 @@ describe("Directeur artistique (ADR-43)", () => {
     art.send(sb.human(), "bordee", "Bonjour");
     await art.idle();
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Je n'ai pas pu répondre : limite atteinte/);
+  });
+});
+
+describe("générateur d'images local (ADR-46)", () => {
+  it("s'installe sur votre clic ; la DA fait fabriquer, le validateur choisit, le hub réessaie seul jusqu'à un essai conforme", async () => {
+    const { sb, fake, gen, repo, art } = await setupLocal();
+    // Pas encore installé : la DA donne des prompts Midjourney, et rien ne se fabrique.
+    expect(art.state("bordee").generator.installed).toBe(false);
+    fake.replies.push('[[ASSET]] {"name": "Icône de poudre", "type": "icône", "usage": "HUD", "specs": "64×64"} [[/ASSET]]');
+    art.send(sb.human(), "bordee", "Il me faut une icône de poudre");
+    await art.idle();
+    expect(fake.calls.at(-1)!.systemPrompt).toMatch(/pas encore installé[\s\S]*MIDJOURNEY/);
+    expect(() => art.generate(sb.human(), "bordee", "A-0001")).toThrow(/Installez d'abord/);
+
+    art.installGenerator(sb.human());
+    expect(art.state("bordee").generator.installed).toBe(true);
+
+    // Tour 1 refusé (le validateur corrige le prompt), tour 2 conforme avec le 2e essai.
+    fake.extractions.push({ best: 3, ok: false, summary: "Trop chargé.", points: ["Silhouette confuse"], prompt: "A gunpowder keg icon, bold flat shapes, plain background." } as never);
+    fake.extractions.push({ best: 2, ok: true, summary: "Lisible et dans la palette.", points: [], prompt: null } as never);
+    fake.replies.push("Je la fais fabriquer.\n[[GENERER: A-0001 | 1000x1000]] A gunpowder keg icon, plain background. [[/GENERER]]");
+    art.send(sb.human(), "bordee", "Vas-y");
+    await art.idle();
+    expect(fake.calls.find((c) => c.prompt.includes("Vas-y"))!.systemPrompt).toMatch(/générateur d'images local est prêt[\s\S]*GENERER/);
+
+    expect(gen.requests).toHaveLength(6);
+    expect(gen.requests[0]).toMatchObject({ prompt: "A gunpowder keg icon, plain background.", width: 1024, height: 1024 });
+    expect(gen.requests[3]!.prompt).toBe("A gunpowder keg icon, bold flat shapes, plain background.");
+    const a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "valide", format: "1024x1024", verdict: { ok: true, by: "validator", file: "production/a-0001-t2-e2.png" } });
+    expect(a.renders).toHaveLength(6);
+    expect(a.renders.at(-1)).toBe("production/a-0001-t2-e2.png");
+    expect(existsSync(join(repo, "studio", "art", "production", "a-0001-t1-e1.png"))).toBe(true);
+    // Le validateur a vu les trois essais de chaque tour.
+    const picks = fake.calls.filter((c) => c.kind === "structured");
+    expect(picks).toHaveLength(2);
+    expect(picks[0]!.prompt).toMatch(/1\. production\/a-0001-t1-e1.png\n2\. production\/a-0001-t1-e2.png\n3\. production\/a-0001-t1-e3.png/);
+    const messages = art.state("bordee").messages.map((m) => m.text);
+    expect(messages.some((t) => /pas encore\*\* \(tour 1 sur 3\)[\s\S]*Je relance un tour/.test(t))).toBe(true);
+    expect(messages.at(-1)).toMatch(/^§IMAGE§ production\/a-0001-t2-e1.png\n§IMAGE§ production\/a-0001-t2-e2.png[\s\S]*conforme\*\* \(essai 2, tour 2\)/);
+    expect(log(repo)).toMatch(/art: A-0001 validé \(validateur, tour 2\)/);
+    expect(art.state("bordee").busy.generating).toEqual([]);
+
+    // « Refaire » relance la fabrication ; trois tours refusés : le meilleur reste, vous tranchez.
+    for (let i = 0; i < 3; i++) fake.extractions.push({ best: 1, ok: false, summary: "Non.", points: [], prompt: null } as never);
+    await art.decide(sb.human(), "bordee", "A-0001", "refaire");
+    await art.idle();
+    expect(gen.requests).toHaveLength(15);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", verdict: { ok: false, file: "production/a-0001-t3-e1.png" } });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Trois tours sans essai conforme/);
+    expect((await art.decide(sb.human(), "bordee", "A-0001", "valider")).verdict).toMatchObject({ by: "human", file: "production/a-0001-t3-e1.png" });
+  }, 60_000);
+
+  it("une panne du générateur s'affiche et la fiche peut relancer", async () => {
+    const { sb, fake, gen, art } = await setupLocal();
+    gen.installed = true;
+    gen.generate = async () => {
+      throw new Error("ComfyUI ne démarre pas");
+    };
+    fake.replies.push('[[ASSET]] {"name": "Drapeau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A flag. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un drapeau");
+    await art.idle();
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Le générateur n'a pas pu fabriquer A-0001 : ComfyUI ne démarre pas/);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", prompts: ["A flag."] });
+  }, 30_000);
+
+  it("formats et graphe Flux", () => {
+    expect(parseFormat("1024x1536")).toBe("1024x1536");
+    expect(parseFormat(" 300 × 4000 ")).toBe("512x1536");
+    expect(parseFormat("carré")).toBeNull();
+    const g = fluxWorkflow({ prompt: "a ship", width: 768, height: 1024, seed: 7 }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(g["2"]!.inputs.text).toBe("a ship");
+    expect(g["5"]!.inputs).toMatchObject({ width: 768, height: 1024 });
+    expect(g["6"]!.inputs).toMatchObject({ seed: 7, cfg: 1 });
   });
 });
 

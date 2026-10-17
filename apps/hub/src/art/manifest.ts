@@ -38,6 +38,8 @@ export type Asset = {
   prompts: string[];
   /** Images du moodboard à joindre dans Midjourney (chemins relatifs à studio/art). */
   refs: string[];
+  /** Format du générateur local, « 1024x1536 » (ADR-46). */
+  format?: string | null;
   /** Rendus déposés, du plus ancien au plus récent (chemins relatifs à studio/art). */
   renders: string[];
   verdict: Verdict | null;

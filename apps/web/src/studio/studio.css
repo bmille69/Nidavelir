@@ -1178,6 +1178,9 @@
 .composer .attach { flex: none; align-self: flex-end; padding: 0.55rem; }
 .art-panel .tabs { flex-wrap: wrap; }
 .art-assets, .art-mood { display: flex; flex-direction: column; gap: 0.8rem; }
+.art-gen { display: flex; flex-direction: column; gap: 0.55rem; }
+.art-gen button { align-self: flex-start; }
+.art-gen-ready { display: flex; align-items: center; gap: 0.35rem; margin: 0; }
 .art-asset { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.8rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
 .art-asset.st-a_valider, .art-asset.st-valide { border-color: color-mix(in srgb, var(--c-art) 55%, transparent); }
 .art-asset header { display: flex; align-items: baseline; gap: 0.5rem; }

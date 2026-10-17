@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { navigate } from "../App.tsx";
-import { api, type ArtAsset, type ArtState, type AssetStatus } from "../api.ts";
+import { api, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
 import { Icon } from "./Icon.tsx";
 
@@ -24,7 +24,8 @@ type Tab = "assets" | "moodboard" | "bible";
 
 /**
  * L'espace du Directeur artistique (ADR-43) : vous lui parlez et lui confiez vos images d'inspiration ; il tient la
- * bible visuelle, propose les visuels à produire avec leurs prompts Midjourney, et son validateur juge vos rendus.
+ * bible visuelle, propose les visuels à produire, les fait fabriquer par le générateur local (ADR-46) ou vous donne des
+ * prompts Midjourney, et son validateur juge les rendus.
  */
 export function ArtDirection({ slug }: { slug: string }) {
   const [state, setState] = useState<ArtState | null>(null);
@@ -44,7 +45,7 @@ export function ArtDirection({ slug }: { slug: string }) {
     void load();
   }, [load]);
   // Pendant qu'il répond ou que le validateur juge : on suit de près ; sinon, de temps en temps.
-  const busy = !!state && (state.busy.replying || state.busy.validating.length > 0);
+  const busy = !!state && (state.busy.replying || state.busy.validating.length > 0 || state.busy.generating.length > 0 || !!state.generator.installing);
   useEffect(() => {
     const t = setInterval(() => void load(), busy ? 2500 : 10_000);
     return () => clearInterval(t);
@@ -213,9 +214,19 @@ export function ArtDirection({ slug }: { slug: string }) {
 
         {tab === "assets" && (
           <div className="art-assets">
+            <GeneratorCard generator={state.generator} act={act} />
             {state.assets.length === 0 && <p className="muted small">Aucun visuel pour l'instant. Le Directeur artistique en propose dès que la direction est posée.</p>}
             {ORDER.flatMap((s) => state.assets.filter((a) => a.status === s)).map((a) => (
-              <AssetCard key={a.id} slug={slug} asset={a} validating={state.busy.validating.includes(a.id)} onUpload={(f) => void upload(f, a.id)} act={act} />
+              <AssetCard
+                key={a.id}
+                slug={slug}
+                asset={a}
+                validating={state.busy.validating.includes(a.id)}
+                generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
+                local={state.generator.installed}
+                onUpload={(f) => void upload(f, a.id)}
+                act={act}
+              />
             ))}
           </div>
         )}
@@ -295,7 +306,56 @@ function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string
   );
 }
 
-function AssetCard({ slug, asset: a, validating, onUpload, act }: { slug: string; asset: ArtAsset; validating: boolean; onUpload: (f: FileList) => void; act: (fn: () => Promise<unknown>) => Promise<void> }) {
+/** Le générateur d'images local : à installer d'un clic, puis il fabrique et fait juger les visuels tout seul. */
+function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (fn: () => Promise<unknown>) => Promise<void> }) {
+  if (g.installed) return <p className="muted small art-gen-ready"><Icon name="check" size={14} /> Générateur d'images local prêt (Flux, sur votre carte graphique).</p>;
+  return (
+    <div className="art-gen panel-card">
+      <p className="small">
+        <b>Générateur d'images local</b> : le Directeur artistique fabrique lui-même les visuels sur votre carte graphique, fait juger plusieurs essais et
+        recommence seul jusqu'à un visuel conforme. Sans lui, vous passez par Midjourney à la main.
+      </p>
+      {g.installing ? (
+        <div className="meter">
+          <div className="meter-head">
+            <span>{g.installing.step}</span>
+            <b>{Math.round(g.installing.progress * 100)} %</b>
+          </div>
+          <div className="meter-track">
+            <div className="meter-fill" style={{ width: `${Math.round(g.installing.progress * 100)}%` }} />
+          </div>
+          <span className="muted small">Vous pouvez fermer cette page : l'installation continue. Si le hub redémarre, elle reprendra là où elle en était.</span>
+        </div>
+      ) : (
+        <>
+          {g.error && <p className="error small">L'installation s'est arrêtée : {g.error}</p>}
+          <button className="small" onClick={() => void act(() => api.artInstallGenerator())}>
+            <Icon name="upload" size={14} /> {g.error ? "Reprendre l'installation" : "Installer le générateur"} ({g.size})
+          </button>
+          <p className="muted small">ComfyUI (2 Go) et le modèle Flux (17 Go), depuis leurs pages officielles (GitHub, Hugging Face). Gratuit ; ensuite, tout se fait sur votre PC.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AssetCard({
+  slug,
+  asset: a,
+  validating,
+  generating,
+  local,
+  onUpload,
+  act,
+}: {
+  slug: string;
+  asset: ArtAsset;
+  validating: boolean;
+  generating: ArtGenerating | null;
+  local: boolean;
+  onUpload: (f: FileList) => void;
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState<number | null>(null);
   const last = a.renders.at(-1);
@@ -312,13 +372,20 @@ function AssetCard({ slug, asset: a, validating, onUpload, act }: { slug: string
       <header>
         <span className="muted small">{a.id}</span>
         <strong className="grow">{a.name}</strong>
-        <span className={`pill art-status st-${a.status}`}>{validating && a.status === "a_valider" ? "Le validateur regarde…" : STATUS[a.status]}</span>
+        <span className={`pill art-status st-${a.status}`}>
+          {generating ? `Fabrication, tour ${generating.round}/${generating.rounds}` : validating && a.status === "a_valider" ? "Le validateur regarde…" : STATUS[a.status]}
+        </span>
       </header>
       <p className="small">
         <span className="muted">{a.type} · </span>
         {a.usage}
       </p>
       {a.specs && <p className="muted small">{a.specs}</p>}
+      {generating && (
+        <p className="live-text small">
+          <span className="live-dot" /> {generating.step}…
+        </p>
+      )}
 
       {last && (
         <a className="art-render" href={api.artFile(slug, last)} target="_blank" rel="noreferrer">
@@ -342,7 +409,9 @@ function AssetCard({ slug, asset: a, validating, onUpload, act }: { slug: string
 
       {a.prompts.length > 0 && a.status !== "integre" && (
         <details className="art-prompts" open={a.status === "production"}>
-          <summary className="small">Prompts Midjourney ({a.prompts.length})</summary>
+          <summary className="small">
+            {local ? "Prompts" : "Prompts Midjourney"} ({a.prompts.length})
+          </summary>
           {a.prompts.map((p, k) => (
             <div key={k} className="art-prompt">
               <code>{p}</code>
@@ -365,6 +434,11 @@ function AssetCard({ slug, asset: a, validating, onUpload, act }: { slug: string
       )}
 
       <div className="art-actions">
+        {local && a.prompts.length > 0 && !generating && ["propose", "production", "a_valider", "valide"].includes(a.status) && (
+          <button className="small" disabled={validating} onClick={() => void act(() => api.artGenerate(slug, a.id))}>
+            <Icon name="sparkle" size={14} /> {last ? "Regénérer" : "Générer"}
+          </button>
+        )}
         {["propose", "production", "a_valider", "valide"].includes(a.status) && (
           <>
             <button className="secondary small" disabled={validating} onClick={() => input.current?.click()}>
@@ -373,7 +447,7 @@ function AssetCard({ slug, asset: a, validating, onUpload, act }: { slug: string
             <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => e.target.files?.length && onUpload(e.target.files)} />
           </>
         )}
-        {a.status === "production" && a.verdict && !a.verdict.ok && (
+        {a.status === "production" && a.verdict && !a.verdict.ok && !generating && (
           <button className="secondary small" onClick={() => void act(() => api.artDecide(slug, a.id, "valider"))}>
             Valider quand même
           </button>

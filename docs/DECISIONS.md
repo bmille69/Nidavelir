@@ -517,6 +517,15 @@ Mesures :
 - **Jeux déjà ajoutés** : au démarrage, le hub refait la détection des jeux restés sans outil. Les jeux Unity ajoutés avant ce changement reçoivent donc l'outil sans être retirés puis ajoutés de nouveau.
 - **Non vérifié en vrai** : le dialogue avec AssetRipper suit son code source (version 2.0.0) mais n'a pas tourné sur un vrai jeu. Le premier démontage, lancé par le directeur créatif, sert d'essai.
 
+### ADR-46 : le générateur d'images local du Directeur artistique (étape 2 d'ADR-43)
+**Statut** : **Validée** le 17/10/2026. Le directeur créatif veut « un workflow de création visuelle propre, qui génère les bons assets, avec validation automatique, et les intègre au jeu ». Il m'a laissé l'ordre des étapes : d'abord les images (elles servent aussi de point de départ à la 3D), puis la 3D (Tripo + Blender), puis l'intégration automatique avec la vérification dans le jeu.
+- **Outil** : ComfyUI, version autonome Windows NVIDIA (GitHub Comfy-Org/ComfyUI, environ 2 Go, Python compris), et le modèle Flux.1 dev en fp8 tout-en-un (Hugging Face Comfy-Org/flux1-dev, 17 Go, sans compte). Le tout fait environ 19 Go dans `.data/tools/comfyui`. L'installation se lance **sur votre clic**, en arrière-plan, avec son avancement à l'écran. Un téléchargement interrompu reprend là où il s'était arrêté. La RTX 3080 Ti (12 Go) et les 32 Go de mémoire suffisent pour la version fp8.
+- **Fonctionnement** : le hub démarre ComfyUI sans fenêtre (127.0.0.1, port libre) à la première demande. Il envoie le graphe Flux (20 étapes, guidance 3,5) par l'API `/prompt`, puis récupère l'image. Les demandes passent une par une. Le serveur s'arrête après 10 minutes sans demande, pour rendre la carte graphique aux jeux. Son journal va dans `comfyui.log`.
+- **Boucle automatique** : la DA écrit `[[GENERER: A-0001 | 1024x1024]] prompt Flux [[/GENERER]]`, en phrases anglaises, avec la « phrase de style » de la bible recopiée mot pour mot. Le hub fait 3 essais, puis le validateur les regarde tous, choisit le meilleur et le juge (`PICK_SCHEMA`). S'il refuse, le hub refait un tour avec le prompt corrigé, et au plus 3 tours. Ensuite, soit le visuel est « Validé », soit le meilleur essai attend votre décision (« Valider quand même », « Refaire »). « Refaire » relance la fabrication. Un bouton « Générer / Regénérer » existe sur chaque fiche.
+- **Repli** : tant que le générateur n'est pas installé, la DA continue de donner des prompts Midjourney. Son contexte lui dit lequel des deux utiliser.
+- **Pas encore** : référence de style par image (Flux Redux demande un compte Hugging Face), style entraîné (LoRA) sur les visuels validés, détourage (fond transparent) des icônes. Viendront ensuite l'étape 3 (3D) et l'intégration automatique.
+- **Non vérifié en vrai** : le dialogue avec ComfyUI suit son API documentée, et la décompression du `.7z` par le `tar` de Windows a été vérifiée. Mais rien n'a été installé ni généré sur le PC : le directeur créatif lance l'installation à son retour.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

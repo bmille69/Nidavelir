@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import type { Task } from "@studio/contracts";
 import { assertHumanSession, type HumanSession } from "../auth/human-session.ts";
 import type { Clock } from "../clock.ts";
@@ -11,7 +11,8 @@ import type { OrchestratorPort } from "../orchestrator/port.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
-import { ART_SYSTEM, DONE_MARK, IMAGE_MARK, parseArtDirectives, VALIDATOR_SYSTEM, VERDICT_SCHEMA, type ArtDirectives } from "./prompts.ts";
+import type { GenState, ImageGenPort } from "./imagegen.ts";
+import { ART_SYSTEM, DONE_MARK, IMAGE_MARK, parseArtDirectives, PICK_SCHEMA, VALIDATOR_SYSTEM, VERDICT_SCHEMA, type ArtDirectives } from "./prompts.ts";
 
 export class ArtError extends Error {
   constructor(message: string) {
@@ -27,9 +28,16 @@ export type ArtState = {
   assets: Asset[];
   moodboard: MoodImage[];
   messages: ArtMessage[];
-  /** Le Directeur artistique est en train de répondre, ou le validateur de juger. */
-  busy: { replying: boolean; validating: string[] };
+  /** Le Directeur artistique est en train de répondre, le validateur de juger, le générateur de fabriquer. */
+  busy: { replying: boolean; validating: string[]; generating: Generating[] };
+  /** Le générateur d'images local (ADR-46). */
+  generator: GenState;
 };
+export type Generating = { asset: string; round: number; rounds: number; step: string };
+
+/** Essais par tour et tours au plus : le générateur réessaie seul avec le prompt corrigé du validateur. */
+const VARIANTS = 3;
+const ROUNDS = 3;
 
 const MAX_IMAGE = 15 * 1024 * 1024;
 const HISTORY = 30;
@@ -57,8 +65,10 @@ export class ArtService {
   readonly #validating = new Map<string, Set<string>>();
   /** Un seul tour de DA à la fois par projet : les messages arrivés entre-temps partent au tour suivant. */
   readonly #queue = new Map<string, Promise<unknown>>();
+  readonly #imagegen: ImageGenPort;
+  readonly #generating = new Map<string, Map<string, Generating>>();
 
-  constructor(deps: { db: Db; clock: Clock; journal: Journal; projects: ProjectRegistry; orchestrator: OrchestratorPort; vcs: VcsPort; conversations: ConversationService }) {
+  constructor(deps: { db: Db; clock: Clock; journal: Journal; projects: ProjectRegistry; orchestrator: OrchestratorPort; vcs: VcsPort; conversations: ConversationService; imagegen: ImageGenPort }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
     this.#journal = deps.journal;
@@ -66,6 +76,7 @@ export class ArtService {
     this.#orchestrator = deps.orchestrator;
     this.#vcs = deps.vcs;
     this.#conversations = deps.conversations;
+    this.#imagegen = deps.imagegen;
   }
 
   #root(project: string): string {
@@ -88,7 +99,8 @@ export class ArtService {
       assets: readManifest(this.#projects.get(project).root).assets,
       moodboard,
       messages: this.messages(project),
-      busy: { replying: this.#replying.has(project), validating: [...(this.#validating.get(project) ?? [])] },
+      busy: { replying: this.#replying.has(project), validating: [...(this.#validating.get(project) ?? [])], generating: [...(this.#generating.get(project)?.values() ?? [])] },
+      generator: this.#imagegen.state(),
     };
   }
 
@@ -97,11 +109,32 @@ export class ArtService {
   }
 
   /** Activité en cours, pour « Le studio en direct ». */
-  activity(): { project: string; kind: "reply" | "validate"; asset?: string }[] {
+  activity(): { project: string; kind: "reply" | "validate" | "generate"; asset?: string }[] {
     return [
       ...[...this.#replying].map((project) => ({ project, kind: "reply" as const })),
       ...[...this.#validating].flatMap(([project, ids]) => [...ids].map((asset) => ({ project, kind: "validate" as const, asset }))),
+      ...[...this.#generating].flatMap(([project, gens]) => [...gens.keys()].map((asset) => ({ project, kind: "generate" as const, asset }))),
     ];
+  }
+
+  /** Installer le générateur d'images local, sur votre clic (environ 19 Go). L'avancement se lit dans l'état. */
+  installGenerator(session: HumanSession): GenState {
+    assertHumanSession(session);
+    this.#imagegen.install();
+    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.install_started", subject: "comfyui", payload: {} });
+    return this.#imagegen.state();
+  }
+
+  /** Fabriquer un asset avec le générateur local : essais, validateur, nouvelles tentatives, sans vous. */
+  generate(session: HumanSession, project: string, id: string): Asset {
+    assertHumanSession(session);
+    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    if (!this.#imagegen.state().installed) throw new ArtError("Installez d'abord le générateur d'images");
+    if (!asset.prompts.length) throw new ArtError("Pas encore de prompt : demandez-le au Directeur artistique");
+    if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    this.#startProduce(project, id);
+    return asset;
   }
 
   /** Votre message au Directeur artistique ; sa réponse arrive en arrière-plan (il peut chercher sur internet). */
@@ -158,7 +191,7 @@ export class ArtService {
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === id);
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
-    const file = asset.renders.at(-1);
+    const file = asset.verdict?.file ?? asset.renders.at(-1);
     if (decision === "valider") {
       if (!file) throw new ArtError("Aucun rendu à valider : déposez d'abord une image");
       asset.verdict = { ok: true, summary: "Validé par le directeur créatif.", points: asset.verdict?.points ?? [], prompt: null, file, by: "human", at: this.#clock.now() };
@@ -167,6 +200,8 @@ export class ArtService {
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: ${id} ${decision === "valider" ? "validé" : "à refaire"} (directeur créatif)`);
     this.#journal.append({ project, actor: { kind: "human" }, type: decision === "valider" ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "human" } });
+    // « Refaire » avec le générateur local : il repart tout seul.
+    if (decision === "refaire" && asset.prompts.length && this.#imagegen.state().installed) this.#startProduce(project, id);
     return asset;
   }
 
@@ -256,6 +291,8 @@ export class ArtService {
       const summary = applied.length ? `\n${DONE_MARK}${applied.join(" · ")}` : "";
       this.#insert(project, "art", `${text || "C'est noté."}${summary}`, costUsd);
       await this.#commit(p.root, `art: ${applied.join(", ") || "réponse du Directeur artistique"}`);
+      // Le générateur part de la fiche à jour, une fois le tour écrit et commité.
+      if (this.#imagegen.state().installed) for (const g of directives.generate) this.#startProduce(project, g.asset);
     } catch (err) {
       this.#insert(project, "art", `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null);
     } finally {
@@ -276,6 +313,9 @@ export class ArtService {
       `<projet nom="${p.name}">Le jeu dont tu es le Directeur artistique.</projet>`,
       claude ? `<consignes_du_projet source="CLAUDE.md">\n${claude}\n</consignes_du_projet>` : "",
       brief ? `<vision_du_jeu source="studio/BRIEF.md">\n${brief}\n</vision_du_jeu>` : "",
+      this.#imagegen.state().installed
+        ? "Le générateur d'images local est prêt : pour fabriquer un asset, utilise [[GENERER]] (Flux), pas Midjourney."
+        : "Le générateur d'images local n'est pas encore installé : pour fabriquer un asset, donne des prompts [[MIDJOURNEY]].",
       existsSync(join(artRoot(p.root), "bible.md"))
         ? "La bible existe (bible.md) : relis-la avant de proposer."
         : "Il n'y a pas encore de bible : si l'utilisateur n'a rien demandé d'autre, propose de la construire ensemble (deux ou trois questions de goût, puis une première version).",
@@ -333,7 +373,18 @@ export class ArtService {
       a.updated_at = now;
       done.push(`prompts Midjourney pour ${a.id}`);
     }
-    if (d.assets.length || d.midjourney.length) writeManifest(gameRoot, m);
+    const produce: string[] = [];
+    for (const g of d.generate) {
+      const a = m.assets.find((x) => x.id === g.asset);
+      if (!a || a.status === "integration" || a.status === "integre") continue;
+      a.prompts = g.prompts.map((p) => p.slice(0, 2000));
+      if (g.format) a.format = g.format;
+      if (a.status === "propose") this.#setStatus(a, "production");
+      a.updated_at = now;
+      produce.push(a.id);
+    }
+    if (produce.length) done.push(this.#imagegen.state().installed ? `génération lancée pour ${produce.join(", ")}` : `prompts prêts pour ${produce.join(", ")} (générateur pas encore installé)`);
+    if (d.assets.length || d.midjourney.length || d.generate.length) writeManifest(gameRoot, m);
     if (d.notes.length) {
       const notes = this.#notes(root);
       for (const n of d.notes) if (safeRel(n.file) && existsSync(join(root, n.file))) notes[n.file] = n.note;
@@ -341,6 +392,116 @@ export class ArtService {
       done.push(`${d.notes.length} image(s) commentée(s)`);
     }
     return done;
+  }
+
+  // ── Générateur local (ADR-46) ──
+
+  #startProduce(project: string, id: string): void {
+    const gens = this.#generating.get(project) ?? new Map<string, Generating>();
+    if (gens.has(id)) return;
+    gens.set(id, { asset: id, round: 1, rounds: ROUNDS, step: "En attente de la carte graphique" });
+    this.#generating.set(project, gens);
+    this.#track(this.#produce(project, id).finally(() => gens.delete(id)));
+  }
+
+  /** Jusqu'à trois tours : trois essais, le validateur choisit le meilleur ; s'il refuse, nouveau tour avec son prompt corrigé. */
+  async #produce(project: string, id: string): Promise<void> {
+    const gameRoot = this.#projects.get(project).root;
+    const root = artRoot(gameRoot);
+    const progress = this.#generating.get(project)!.get(id)!;
+    try {
+      for (let round = 1; round <= ROUNDS; round++) {
+        progress.round = round;
+        let asset = readManifest(gameRoot).assets.find((a) => a.id === id);
+        if (!asset?.prompts[0]) return;
+        const prompt = asset.prompts[0];
+        const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
+        const files: string[] = [];
+        for (let v = 1; v <= VARIANTS; v++) {
+          progress.step = `Essai ${v} sur ${VARIANTS}`;
+          const png = await this.#imagegen.generate({ prompt, width, height, seed: randomInt(2 ** 31) });
+          const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, ".png");
+          writeAtomic(join(root, file), png);
+          files.push(file);
+        }
+        let m = readManifest(gameRoot);
+        asset = m.assets.find((a) => a.id === id);
+        if (!asset) return;
+        asset.renders.push(...files);
+        this.#setStatus(asset, "a_valider");
+        writeManifest(gameRoot, m);
+        await this.#commit(gameRoot, `art: ${files.length} essais générés pour ${id} (tour ${round})`);
+
+        progress.step = "Le validateur compare les essais";
+        const v = await this.#pick(project, asset, files, prompt);
+        m = readManifest(gameRoot);
+        asset = m.assets.find((a) => a.id === id);
+        if (!asset) return;
+        const best = files[Math.min(files.length, Math.max(1, v.best)) - 1]!;
+        // Le meilleur essai passe en dernier : c'est lui que la fiche montre.
+        asset.renders = [...asset.renders.filter((r) => r !== best), best];
+        asset.verdict = { ok: v.ok, summary: v.summary, points: v.points, prompt: v.prompt, file: best, by: "validator", at: this.#clock.now() };
+        this.#setStatus(asset, v.ok ? "valide" : "production");
+        if (!v.ok && v.prompt) asset.prompts = [v.prompt, ...asset.prompts.filter((p) => p !== v.prompt)].slice(0, 6);
+        writeManifest(gameRoot, m);
+        await this.#commit(gameRoot, `art: ${id} ${v.ok ? "validé" : "à retoucher"} (validateur, tour ${round})`);
+        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: v.ok ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "validator", round } });
+        this.#insert(
+          project,
+          "art",
+          [
+            ...files.map((f) => `${IMAGE_MARK}${f}`),
+            v.ok
+              ? `**${id} « ${asset.name} » : conforme** (essai ${files.indexOf(best) + 1}, tour ${round}). ${v.summary}`
+              : `**${id} « ${asset.name} » : pas encore** (tour ${round} sur ${ROUNDS}). ${v.summary}`,
+            ...v.points.map((p) => `- ${p}`),
+            v.ok
+              ? "Vous pouvez le faire intégrer dans le jeu depuis sa fiche."
+              : round === ROUNDS
+                ? "Trois tours sans essai conforme : le meilleur est sur la fiche. À vous de trancher (« Valider quand même » ou « Refaire »), ou dites-moi ce qui cloche."
+                : "Je relance un tour avec un prompt corrigé.",
+          ].join("\n"),
+          null,
+        );
+        if (v.ok) return;
+      }
+    } catch (err) {
+      this.#insert(project, "art", `Le générateur n'a pas pu fabriquer ${id} : ${(err as Error).message.slice(0, 300)}. Vous pouvez relancer depuis sa fiche.`, null);
+      const m = readManifest(gameRoot);
+      const a = m.assets.find((x) => x.id === id);
+      if (a?.status === "a_valider") {
+        this.#setStatus(a, "production");
+        writeManifest(gameRoot, m);
+      }
+    }
+  }
+
+  /** Le validateur regarde tous les essais d'un tour, choisit le meilleur et le juge. */
+  async #pick(project: string, asset: Asset, files: string[], prompt: string): Promise<{ best: number; ok: boolean; summary: string; points: string[]; prompt: string | null }> {
+    const busy = this.#validating.get(project) ?? new Set<string>();
+    busy.add(asset.id);
+    this.#validating.set(project, busy);
+    try {
+      const { data } = await this.#orchestrator.structured({
+        systemPrompt: VALIDATOR_SYSTEM,
+        prompt: [
+          `Le générateur local (Flux) a fait ${files.length} essais pour l'asset ${asset.id} « ${asset.name} » (${asset.type}). Regarde-les tous :`,
+          ...files.map((f, k) => `${k + 1}. ${f}`),
+          "Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer tel quel dans le jeu.",
+          `Usage : ${asset.usage}`,
+          `Spécifications : ${asset.specs || "aucune"}`,
+          `Prompt utilisé (Flux) : ${prompt}`,
+        ].join("\n"),
+        jsonSchema: PICK_SCHEMA,
+        readDir: artRoot(this.#projects.get(project).root),
+        role: "art",
+        meta: { project, agent: "art_director" },
+      });
+      const v = data as { best: number; ok: boolean; summary: string; points: string[]; prompt: string | null };
+      return { best: Number(v.best) || 1, ok: !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 8), prompt: v.prompt ?? null };
+    } finally {
+      busy.delete(asset.id);
+    }
   }
 
   // ── Validateur ──

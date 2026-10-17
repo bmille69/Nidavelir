@@ -214,6 +214,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.decide(req.human!, slug, id, Body.artDecide.parse(req.body).decision);
     });
+    api.post("/projects/:slug/art/assets/:id/generate", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.generate(req.human!, slug, id);
+    });
+    api.post("/art/generator/install", async (req) => hub.art.installGenerator(req.human!));
     api.post("/projects/:slug/art/assets/:id/integrate", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.integrate(req.human!, slug, id);

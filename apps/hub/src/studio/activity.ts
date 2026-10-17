@@ -53,7 +53,7 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
   const express = hub.express.running();
   if (express) acts.developer.push({ project: "", text: `Jeu express : ${express.title}`, href: `#/express/${express.id}`, since: express.started_at });
   for (const a of hub.art.activity()) {
-    acts.art_director.push({ project: a.project, text: a.kind === "reply" ? "Vous répond (références, bible…)" : `Juge le rendu de ${a.asset}`, href: `#/p/${a.project}/art` });
+    acts.art_director.push({ project: a.project, text: a.kind === "reply" ? "Vous répond (références, bible…)" : a.kind === "generate" ? `Fabrique ${a.asset} (générateur local)` : `Juge le rendu de ${a.asset}`, href: `#/p/${a.project}/art` });
     busy.add(a.project);
   }
   for (const e of conv.extracting) {

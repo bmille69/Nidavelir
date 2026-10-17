@@ -19,6 +19,7 @@ import { UsageService } from "./usage/usage-service.ts";
 import { ModelService, type ModelRole } from "./usage/model-service.ts";
 import { ReverseService } from "./reverse/reverse-service.ts";
 import { ArtService } from "./art/art-service.ts";
+import { ComfyImageGen, type ImageGenPort } from "./art/imagegen.ts";
 import { ExpressService } from "./express/express-service.ts";
 import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
@@ -61,6 +62,8 @@ export type HubOptions = {
   models?: Partial<Record<ModelRole, string | undefined>>;
   /** Outils de l'Atelier de démontage (ADR-40). Défaut : les vrais, téléchargés à votre demande. */
   reverseTools?: ReverseToolsPort;
+  /** Générateur d'images local du Directeur artistique (ADR-46). Défaut : ComfyUI + Flux, installé à votre demande. */
+  imagegen?: ImageGenPort;
   /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
   expressChecker?: ExpressChecker;
 };
@@ -239,7 +242,8 @@ export function createHub(options: HubOptions): Hub {
     dataDir,
   });
   // Le Directeur artistique (ADR-43) : un asset passe « intégré » quand son chantier est fusionné.
-  const art = new ArtService({ db, clock, journal, projects, orchestrator, vcs, conversations });
+  const imagegen = options.imagegen ?? new ComfyImageGen(dataDir);
+  const art = new ArtService({ db, clock, journal, projects, orchestrator, vcs, conversations, imagegen });
   const artHook = tasks.onStatus;
   tasks.onStatus = (task) => {
     artHook?.(task);
@@ -303,6 +307,7 @@ export function createHub(options: HubOptions): Hub {
       closed = true;
       void previews.stopAll();
       autopilot?.close();
+      imagegen.close();
       db.close();
     },
   };

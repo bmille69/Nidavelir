@@ -103,9 +103,18 @@ export type ExpressGame = {
 };
 export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
 export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
-export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
+export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
-export type ArtState = { bible: string | null; assets: ArtAsset[]; moodboard: { file: string; note: string | null }[]; messages: ArtMessage[]; busy: { replying: boolean; validating: string[] } };
+export type ArtGenerating = { asset: string; round: number; rounds: number; step: string };
+export type ArtGenerator = { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
+export type ArtState = {
+  bible: string | null;
+  assets: ArtAsset[];
+  moodboard: { file: string; note: string | null }[];
+  messages: ArtMessage[];
+  busy: { replying: boolean; validating: string[]; generating: ArtGenerating[] };
+  generator: ArtGenerator;
+};
 export type GameScan = {
   path: string;
   name: string;
@@ -285,6 +294,8 @@ export const api = {
     return data as { file: string };
   },
   artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
+  artGenerate: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/generate`, {}),
+  artInstallGenerator: () => request<ArtGenerator>("POST", "/art/generator/install", {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
