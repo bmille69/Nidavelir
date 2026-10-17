@@ -27,7 +27,10 @@ class FakeTools implements ReverseToolsPort {
   /** La version du jeu démontée : la 2 change les dégâts de Strike et ajoute une carte. */
   version = 1;
   list(): ToolInfo[] {
-    return [{ id: "gdre", name: "GDRE Tools", repo: "GDRETools/gdsdecomp", purpose: "…", size: "≈ 100 Mo", installed: this.installed, version: this.installed ? "v2.7.4" : null }];
+    return [
+      { id: "gdre", name: "GDRE Tools", repo: "GDRETools/gdsdecomp", purpose: "…", size: "≈ 100 Mo", installed: this.installed, version: this.installed ? "v2.7.4" : null },
+      { id: "assetripper", name: "AssetRipper", repo: "AssetRipper/AssetRipper", purpose: "…", size: "≈ 45 Mo", installed: this.installed, version: this.installed ? "2.0.0" : null },
+    ];
   }
   async install(): Promise<ToolInfo> {
     this.installed = true;
@@ -66,8 +69,11 @@ describe("détection du moteur (ADR-40)", () => {
     expect(sts.assembly).toMatch(/data_sts2_windows_x86_64[\\/]sts2\.dll$/);
 
     expect(detectGame(game(join(sb.dir, "gd"), ["Jeu.exe", "Jeu.pck"]))).toMatchObject({ engine: "godot", tool: "gdre" });
-    expect(detectGame(game(join(sb.dir, "mono"), ["UnityPlayer.dll", "Jeu_Data/Managed/Assembly-CSharp.dll"]))).toMatchObject({ engine: "unity-mono", tool: null });
-    expect(detectGame(game(join(sb.dir, "il2cpp"), ["UnityPlayer.dll", "GameAssembly.dll", "Jeu_Data/"]))).toMatchObject({ engine: "unity-il2cpp" });
+    const mono = detectGame(game(join(sb.dir, "mono"), ["UnityPlayer.dll", "Jeu_Data/Managed/Assembly-CSharp.dll"]));
+    expect(mono).toMatchObject({ engine: "unity-mono", tool: "assetripper" });
+    expect(mono.pck).toMatch(/Jeu_Data$/);
+    expect(mono.assembly).toMatch(/Assembly-CSharp\.dll$/);
+    expect(detectGame(game(join(sb.dir, "il2cpp"), ["UnityPlayer.dll", "GameAssembly.dll", "Jeu_Data/"]))).toMatchObject({ engine: "unity-il2cpp", tool: "assetripper", assembly: null });
     expect(detectGame(game(join(sb.dir, "ue"), ["Jeu.exe", "Jeu/Content/Paks/Jeu.pak"]))).toMatchObject({ engine: "unreal" });
     // Anti-triche : jamais démonté, même si le moteur est pris en charge.
     expect(detectGame(game(join(sb.dir, "protege"), ["Jeu.pck", "EasyAntiCheat/EasyAntiCheat_EOS_Setup.exe"]))).toMatchObject({ engine: "godot", protection: "Easy Anti-Cheat", tool: null });
@@ -99,6 +105,40 @@ describe("carte du jeu (ADR-42)", () => {
 });
 
 describe("Atelier de démontage (ADR-40)", { timeout: 30_000 }, () => {
+  it("démonte un jeu Unity IL2CPP avec AssetRipper : carte des scènes, indice pour l'Archéologue", async () => {
+    const sb = sandbox();
+    sb.hub.close();
+    const tools = new FakeTools();
+    tools.installed = true;
+    tools.recover = async (input) => {
+      tools.recovered.push(input);
+      mkdirSync(join(input.out, "ExportedProject", "ProjectSettings"), { recursive: true });
+      mkdirSync(join(input.out, "ExportedProject", "Assets", "Scripts"), { recursive: true });
+      writeFileSync(join(input.out, "ExportedProject", "ProjectSettings", "EditorBuildSettings.asset"), "m_Scenes:\n  - enabled: 1\n    path: Assets/Scenes/Menu.unity\n  - enabled: 1\n    path: Assets/Scenes/Gameplay.unity\n");
+      writeFileSync(join(input.out, "ExportedProject", "Assets", "Scripts", "Weapon.cs"), "public class Weapon : MonoBehaviour { }");
+    };
+    const fake = new Archeologue();
+    const hub = createHub({
+      databasePath: join(sb.dir, "hub/.data/unity.db"),
+      registry: { forbiddenTrees: [join(sb.dir, "hub")], forbiddenExact: [sb.dir] },
+      clock: fakeClock(),
+      orchestrator: fake,
+      dataDir: join(sb.dir, "hub/.data"),
+      reverseTools: tools,
+    });
+    sb.hub = hub;
+    const path = game(join(sb.dir, "steam", "Vampire Survivors"), ["VampireSurvivors.exe", "UnityPlayer.dll", "GameAssembly.dll", "VampireSurvivors_Data/il2cpp_data/Metadata/global-metadata.dat"]);
+    const d = hub.reverse.create(sb.human(), path);
+    expect(d.scan).toMatchObject({ engine: "unity-il2cpp", tool: "assetripper" });
+    hub.reverse.run(sb.human(), d.id, "complet");
+    await hub.reverse.idle();
+    expect(hub.reverse.get(d.id)).toMatchObject({ status: "extracted", files: 2 });
+    expect(tools.recovered[0]).toMatchObject({ tool: "assetripper", game: path });
+    const carte = readFileSync(join(sb.dir, "hub/.data/dissections", d.id, "carte.md"), "utf8");
+    expect(carte).toMatch(/## Projet Unity[\s\S]*`Assets\/Scenes\/Menu.unity`[\s\S]*`Assets\/Scenes\/Gameplay.unity`/);
+    expect(fake.calls.at(-1)!.prompt).toMatch(/IL2CPP, le code récupéré n'a que sa structure/);
+  });
+
   it("installer l'outil sur demande, démonter, fiche d'ensemble, question, envoi au studio, projet de mod", async () => {
     const sb = sandbox();
     sb.hub.close();
@@ -206,8 +246,8 @@ describe("Atelier de démontage (ADR-40)", { timeout: 30_000 }, () => {
     const protege = sb.hub.reverse.create(sb.human(), game(join(sb.dir, "p"), ["Jeu.pck", "BattlEye/BEService.exe"]));
     expect(protege.status).toBe("blocked");
     expect(() => sb.hub.reverse.run(sb.human(), protege.id, "code")).toThrow(/protégé \(BattlEye\)/);
-    const unity = sb.hub.reverse.create(sb.human(), game(join(sb.dir, "u"), ["UnityPlayer.dll", "J_Data/Managed/Assembly-CSharp.dll"]));
-    expect(() => sb.hub.reverse.run(sb.human(), unity.id, "code")).toThrow(/pas encore pris en charge/);
+    const unreal = sb.hub.reverse.create(sb.human(), game(join(sb.dir, "u"), ["Jeu.exe", "Jeu/Content/Paks/Jeu.pak"]));
+    expect(() => sb.hub.reverse.run(sb.human(), unreal.id, "code")).toThrow(/pas encore pris en charge/);
   });
 
   it("l'Archéologue ne reçoit que lire, chercher, lister, dans le dossier démonté", () => {

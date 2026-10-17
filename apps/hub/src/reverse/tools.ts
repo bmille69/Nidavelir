@@ -1,6 +1,8 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { request } from "node:http";
+import { createServer } from "node:net";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -18,6 +20,10 @@ export type ToolInfo = {
 };
 
 export type RecoverInput = {
+  /** L'outil du catalogue choisi par la détection. */
+  tool: string;
+  /** Le dossier du jeu installé (lu, jamais écrit). */
+  game: string;
   pck: string;
   assembly: string | null;
   out: string;
@@ -29,7 +35,7 @@ export type RecoverInput = {
 export interface ReverseToolsPort {
   list(): ToolInfo[];
   install(id: string): Promise<ToolInfo>;
-  /** Démonte un jeu Godot (pack et code C#) dans `out`, sans jamais écrire dans le dossier du jeu. */
+  /** Démonte un jeu (Godot ou Unity) dans `out`, sans jamais écrire dans le dossier du jeu. */
   recover(input: RecoverInput): Promise<void>;
 }
 
@@ -41,7 +47,16 @@ const CATALOG = [
     purpose: "Démonte les jeux Godot : scènes, ressources, scripts, et le code C# décompilé.",
     size: "≈ 100 Mo",
     asset: /windows\.zip$/i,
-    exe: "gdre_tools.exe",
+    exe: /^gdre_tools\.exe$/i,
+  },
+  {
+    id: "assetripper",
+    name: "AssetRipper",
+    repo: "AssetRipper/AssetRipper",
+    purpose: "Démonte les jeux Unity : le code C# (lisible pour Mono, la structure seulement pour IL2CPP), les scènes, images et sons.",
+    size: "≈ 45 Mo",
+    asset: /win_x64\.zip$/i,
+    exe: /^AssetRipper[\w.]*\.exe$/i,
   },
 ] as const;
 
@@ -87,12 +102,13 @@ export class RealReverseTools implements ReverseToolsPort {
     await new Promise<void>((resolve, reject) => execFile("tar", ["-xf", zip, "-C", dest], { windowsHide: true }, (err) => (err ? reject(new Error(`Archive illisible : ${err.message}`)) : resolve())));
     rmSync(zip, { force: true });
     const exe = findFile(dest, tool.exe);
-    if (!exe) throw new Error(`${tool.exe} introuvable dans l'archive`);
+    if (!exe) throw new Error(`Le programme de ${tool.name} est introuvable dans l'archive`);
     writeFileSync(join(root, "installed.json"), JSON.stringify({ version: release.tag_name, exe }, null, 2));
     return this.list().find((t) => t.id === id)!;
   }
 
   recover(input: RecoverInput): Promise<void> {
+    if (input.tool === "assetripper") return this.#assetRipper(input);
     const meta = this.#meta("gdre");
     if (!meta) return Promise.reject(new Error("GDRE Tools n'est pas installé"));
     mkdirSync(input.out, { recursive: true });
@@ -120,12 +136,95 @@ export class RealReverseTools implements ReverseToolsPort {
       });
     });
   }
+
+  /**
+   * AssetRipper n'a pas de ligne de commande : c'est un petit serveur web local. On le lance sans fenêtre, on lui fait
+   * lire le dossier du jeu, puis exporter le projet Unity dans `out`. Il exporte toujours tout (code et ressources).
+   */
+  async #assetRipper(input: RecoverInput): Promise<void> {
+    const meta = this.#meta("assetripper");
+    if (!meta) throw new Error("AssetRipper n'est pas installé");
+    const port = await freePort();
+    const args = ["--port", String(port), "--headless", "--log-path", join(dirname(input.out), "assetripper.log")];
+    const child = spawn(meta.exe, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let exited: string | null = null;
+    child.on("error", (e) => (exited = `AssetRipper ne se lance pas : ${e.message}`));
+    child.on("close", (code) => (exited ??= `AssetRipper s'est arrêté (code ${code}), voir assetripper.log`));
+    pipeLog(child, input.log);
+    const onAbort = () => killTree(child.pid);
+    input.signal.addEventListener("abort", onAbort, { once: true });
+    const base = `http://127.0.0.1:${port}`;
+    const check = () => {
+      if (input.signal.aborted) throw new Error("Démontage arrêté");
+      if (exited) throw new Error(exited);
+    };
+    try {
+      for (let i = 0; ; i++) {
+        check();
+        if ((await httpCall(`${base}/IO/Directory/Exists?Path=.`, null, "GET").catch(() => 0)) > 0) break;
+        if (i > 120) throw new Error("AssetRipper ne répond pas");
+        await wait(500);
+      }
+      input.log("AssetRipper lit le jeu…");
+      // Selon la version, la lecture se fait pendant la requête ou en arrière-plan : on enchaîne de toute façon sur l'export.
+      await httpCall(`${base}/LoadFolder`, { Path: input.game });
+      input.log("Export du projet Unity (code, scènes, ressources)…");
+      // L'export ne fait rien tant que la lecture n'est pas finie : on réessaie jusqu'à ce que des fichiers arrivent.
+      const deadline = Date.now() + 3 * 3600_000;
+      for (;;) {
+        check();
+        await httpCall(`${base}/Export/UnityProject`, { Path: input.out });
+        check();
+        if (existsSync(input.out) && readdirSync(input.out).length) break;
+        if (Date.now() > deadline) throw new Error("AssetRipper n'a pas réussi à lire le jeu, voir assetripper.log");
+        await wait(5000);
+      }
+      input.log("Export terminé.");
+    } finally {
+      input.signal.removeEventListener("abort", onAbort);
+      killTree(child.pid);
+    }
+  }
 }
 
-function findFile(dir: string, name: string): string | null {
+function pipeLog(child: ChildProcess, log: (line: string) => void): void {
+  const onData = (b: Buffer) => {
+    for (const line of b.toString("utf8").split(/\r?\n/)) if (line.trim()) log(line.trim().slice(0, 400));
+  };
+  child.stdout?.on("data", onData);
+  child.stderr?.on("data", onData);
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => (address && typeof address === "object" ? resolve(address.port) : reject(new Error("Aucun port libre"))));
+    });
+  });
+}
+
+/** Une requête locale sans limite de durée (une lecture ou un export peut prendre de longues minutes), le code HTTP en retour. */
+function httpCall(url: string, form: Record<string, string> | null, method = "POST"): Promise<number> {
+  const body = form ? new URLSearchParams(form).toString() : "";
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method, headers: form ? { "content-type": "application/x-www-form-urlencoded", "content-length": Buffer.byteLength(body) } : {} }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(res.statusCode ?? 0));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+function findFile(dir: string, name: RegExp): string | null {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
-    if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase()) return p;
+    if (entry.isFile() && name.test(entry.name)) return p;
     if (entry.isDirectory()) {
       const found = findFile(p, name);
       if (found) return found;

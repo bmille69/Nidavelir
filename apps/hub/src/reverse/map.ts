@@ -9,7 +9,7 @@ import { extname, join, relative } from "node:path";
 
 /** Fichiers de code et de données : ceux qu'on indexe et qu'on compare d'une version à l'autre. */
 const CODE = new Set([".cs", ".gd"]);
-const DATA = new Set([".json", ".tres", ".tscn", ".csv", ".cfg", ".ini", ".txt", ".xml", ".yaml", ".yml", ".godot"]);
+const DATA = new Set([".json", ".tres", ".tscn", ".csv", ".cfg", ".ini", ".txt", ".xml", ".yaml", ".yml", ".godot", ".asset"]);
 const MAX_READ = 2_000_000;
 const MAX_FILES = 200_000;
 
@@ -99,6 +99,19 @@ export function buildMap(root: string, name: string): { map: string; index: stri
       lines.push("- Autoloads (systèmes toujours chargés, souvent les « chefs d'orchestre » du jeu) :");
       for (const s of singletons.slice(0, 40)) lines.push(`  - ${s[1]} : \`${s[2]}\``);
     }
+    lines.push("");
+  }
+
+  // Projet Unity (AssetRipper) : les scènes dans l'ordre du jeu ; la première est celle du démarrage.
+  const build = files.find((f) => f.rel.endsWith("ProjectSettings/EditorBuildSettings.asset"));
+  if (build) {
+    const scenes = [...read(root, build.rel).matchAll(/path:\s*(\S+\.unity)/g)].map((m) => m[1]!);
+    lines.push("## Projet Unity");
+    if (scenes.length) {
+      lines.push("- Scènes, dans l'ordre du jeu (la première est celle du démarrage) :");
+      for (const sc of scenes.slice(0, 40)) lines.push(`  - \`${sc}\``);
+    }
+    lines.push("- Le code est dans `Assets/Scripts/` ; les données réglables (ScriptableObjects) sont les fichiers `.asset`.");
     lines.push("");
   }
 

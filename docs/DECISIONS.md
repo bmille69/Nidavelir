@@ -507,6 +507,16 @@ Mesures :
 - **Vers le jeu** : « Faire intégrer » ouvre une discussion avec le directeur du projet, avec le fichier, l'usage et la consigne de titrer le chantier par l'identifiant. Le directeur voit aussi dans son contexte les visuels validés en attente. Quand un chantier dont le titre ou la consigne cite `A-xxxx` est fusionné, le visuel passe « dans le jeu ». La politique du développeur autorise `cp studio/art/<fichier> <destination>` et `mkdir [-p]` dans la copie, hors zones protégées, car Write ne sait pas écrire une image.
 - **Plus tard** : étape 2, génération locale (ComfyUI + Flux installés sur clic, style par référence puis un style entraîné sur les visuels validés, le validateur qui boucle) ; étape 3, la 3D (Tripo pour le modèle, le squelette et les animations à la place de Mixamo, qui n'a pas d'API ; Blender en arrière-plan pour nettoyer, alléger et exporter en `.glb`, et faire un rendu sous tous les angles pour le validateur).
 
+### ADR-45 : l'Atelier de démontage prend en charge Unity (AssetRipper)
+**Statut** : **Validée** le 17/10/2026, à la demande du directeur créatif, pour Mycopunk (Unity Mono) et les deux Vampire Survivors (Unity IL2CPP).
+- **Outil** : AssetRipper (github.com/AssetRipper/AssetRipper, version Windows x64, environ 45 Mo), ajouté au catalogue fermé et installé seulement sur votre clic, comme GDRE Tools.
+- **Pilotage** : AssetRipper n'a pas de ligne de commande, c'est un petit serveur web local. Le hub le lance sans fenêtre (`--headless`, port libre sur 127.0.0.1), lui fait lire le dossier du jeu (`/LoadFolder`), puis exporter le projet Unity dans `jeu/` (`/Export/UnityProject`). Il réessaie l'export tant que la lecture n'est pas finie (3 h au plus), puis arrête le serveur. Le journal d'AssetRipper va dans `assetripper.log`, à côté du démontage.
+- **Un seul mode** : AssetRipper exporte tout d'un coup (code, scènes, images, sons). Pour Unity, la page n'affiche donc qu'un bouton « Démonter ».
+- **Ce qu'on récupère** : pour Mono, le code C# lisible, et le projet de mod reste possible (`Assembly-CSharp.dll`). Pour IL2CPP, seulement la structure du code (classes, champs, méthodes vides) : l'Archéologue est prévenu et cherche les règles dans les données (`.asset`, `.json`). Pas de projet de mod pour IL2CPP pour l'instant.
+- **Carte du jeu** : section « Projet Unity », avec les scènes dans l'ordre du jeu (`EditorBuildSettings.asset`). Les `.asset` (ScriptableObjects, souvent les nombres du jeu) comptent comme données et entrent dans la comparaison entre versions. L'empreinte des mises à jour suit le dossier `_Data`, `Assembly-CSharp.dll` ou `GameAssembly.dll`.
+- **Jeux déjà ajoutés** : au démarrage, le hub refait la détection des jeux restés sans outil. Les jeux Unity ajoutés avant ce changement reçoivent donc l'outil sans être retirés puis ajoutés de nouveau.
+- **Non vérifié en vrai** : le dialogue avec AssetRipper suit son code source (version 2.0.0) mais n'a pas tourné sur un vrai jeu. Le premier démontage, lancé par le directeur créatif, sert d'essai.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

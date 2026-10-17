@@ -42,7 +42,7 @@ const OVERVIEW = "Vue d'ensemble";
 
 const SYSTEM = `Tu es l'Archéologue de Nidavellir, le studio de jeux vidéo de l'utilisateur. Ton dossier de travail contient un jeu
 démonté que l'utilisateur possède et étudie pour son usage personnel :
-- jeu/ : le projet récupéré (projet Godot, code C# décompilé) ;
+- jeu/ : le projet récupéré (projet Godot ou Unity, code C# décompilé) ;
 - carte.md : la carte du jeu calculée par le hub (dossiers, systèmes chargés au démarrage, familles de classes, données, gros fichiers) ;
 - index-code.txt : tous les types du code, une ligne par type (nom | sorte : parent | fichier:ligne) ;
 - fiches/ : tes fiches précédentes ; outil.log : le journal de l'outil de démontage ;
@@ -123,6 +123,16 @@ export class ReverseService {
     // Un démontage interrompu par un redémarrage du hub n'est plus en cours.
     this.#db.prepare("UPDATE dissections SET status = 'failed', error = 'Interrompu par un redémarrage du hub' WHERE status = 'running'").run();
     this.#db.prepare("UPDATE dissection_notes SET status = 'failed', body = 'Interrompu par un redémarrage du hub' WHERE status = 'thinking'").run();
+    // Un jeu ajouté avant qu'un outil prenne en charge son moteur (Unity) : on refait la détection.
+    for (const r of this.#db.prepare("SELECT id, path, scan_json FROM dissections WHERE status = 'detected'").all() as Pick<Row, "id" | "path" | "scan_json">[]) {
+      if ((JSON.parse(r.scan_json) as GameScan).tool) continue;
+      try {
+        const scan = detectGame(r.path);
+        if (scan.tool) this.#db.prepare("UPDATE dissections SET scan_json = ? WHERE id = ?").run(JSON.stringify(scan), r.id);
+      } catch {
+        /* jeu désinstallé : la fiche reste telle quelle */
+      }
+    }
   }
 
   tools(): ToolInfo[] {
@@ -189,7 +199,7 @@ export class ReverseService {
     this.#running.set(id, abort);
     this.#track(
       this.#tools
-        .recover({ pck: d.scan.pck, assembly: d.scan.assembly, out: d.out, scriptsOnly: mode === "code", signal: abort.signal, log: (l) => this.#log(id, l) })
+        .recover({ tool: d.scan.tool, game: d.path, pck: d.scan.pck, assembly: d.scan.assembly, out: d.out, scriptsOnly: mode === "code", signal: abort.signal, log: (l) => this.#log(id, l) })
         .then(
           () => {
             const files = countFiles(d.out);
@@ -197,7 +207,7 @@ export class ReverseService {
             const map = buildMap(d.out, d.name);
             writeFileSync(join(base, "carte.md"), map.map, "utf8");
             writeFileSync(join(base, "index-code.txt"), map.index, "utf8");
-            this.#db.prepare("UPDATE dissections SET files = ?, fingerprint = ? WHERE id = ?").run(files, fingerprint([d.scan.pck, d.scan.assembly]), id);
+            this.#db.prepare("UPDATE dissections SET files = ?, fingerprint = ? WHERE id = ?").run(files, fingerprint(watched(d.scan)), id);
             this.#set(id, { status: "extracted", error: null });
             const compared = existsSync(previous);
             this.#journal.append({ project: null, actor: { kind: "system" }, type: "dissection.extracted", subject: id, payload: { mode, files, types: map.types, compared } });
@@ -244,6 +254,9 @@ export class ReverseService {
       `Jeu : ${d.name} (${d.scan.engineLabel}).`,
       known.length ? `Fiches déjà écrites (relis celles qui touchent la question) :\n${known.join("\n")}` : "",
       d.scan.moddable ? `Indice : le jeu embarque ${d.scan.moddable}.` : "",
+      d.scan.engine === "unity-il2cpp"
+        ? "Attention : jeu Unity IL2CPP, le code récupéré n'a que sa structure (classes, champs, méthodes vides). Les nombres et règles sont surtout dans les données (fichiers .asset, .json, textes) : cherche-les là, et dis-le quand une règle n'est visible que par son nom."
+        : "",
       `Question du directeur créatif :\n${question}`,
     ]
       .filter(Boolean)
@@ -392,8 +405,12 @@ export class ReverseService {
 type Row = { id: string; name: string; path: string; status: string; scan_json: string; mode: string | null; error: string | null; created_at: string; updated_at: string; mod_project: string | null; files: number | null; fingerprint: string | null };
 
 function fingerprintOf(r: Row): string {
-  const scan = JSON.parse(r.scan_json) as GameScan;
-  return fingerprint([scan.pck, scan.assembly]);
+  return fingerprint(watched(JSON.parse(r.scan_json) as GameScan));
+}
+
+/** Les fichiers du jeu installé qui changent à chaque mise à jour. */
+function watched(scan: GameScan): (string | null)[] {
+  return [scan.pck, scan.assembly, scan.engine === "unity-il2cpp" ? join(scan.path, "GameAssembly.dll") : null];
 }
 
 function countFiles(dir: string, limit = 200_000): number {

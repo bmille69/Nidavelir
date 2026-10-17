@@ -233,13 +233,27 @@ export function DissectionView({ id }: { id: string }) {
                 </>
               ) : (
                 <div className="dissect-modes">
-                  <button disabled={busy !== null} onClick={() => void act("run", () => api.reverseRun(d.id, "code"))}>
-                    <Icon name="bolt" size={16} /> Code seulement
-                  </button>
-                  <button className="secondary" disabled={busy !== null} onClick={() => void act("run", () => api.reverseRun(d.id, "complet"))}>
-                    Projet complet (images, sons…)
-                  </button>
-                  <p className="muted small">« Code seulement » prend quelques minutes. « Projet complet » récupère aussi les ressources : bien plus long, et plusieurs Go.</p>
+                  {tool.id === "assetripper" ? (
+                    <>
+                      <button disabled={busy !== null} onClick={() => void act("run", () => api.reverseRun(d.id, "complet"))}>
+                        <Icon name="bolt" size={16} /> Démonter
+                      </button>
+                      <p className="muted small">
+                        AssetRipper récupère tout d'un coup : le code, les scènes, les images et les sons. Comptez de quelques minutes à une demi-heure, et parfois plusieurs Go.
+                        {d.scan.engine === "unity-il2cpp" && " Ce jeu est en IL2CPP : le code ne ressortira qu'en squelette (noms des classes et des fonctions), les règles se liront surtout dans les données."}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <button disabled={busy !== null} onClick={() => void act("run", () => api.reverseRun(d.id, "code"))}>
+                        <Icon name="bolt" size={16} /> Code seulement
+                      </button>
+                      <button className="secondary" disabled={busy !== null} onClick={() => void act("run", () => api.reverseRun(d.id, "complet"))}>
+                        Projet complet (images, sons…)
+                      </button>
+                      <p className="muted small">« Code seulement » prend quelques minutes. « Projet complet » récupère aussi les ressources : bien plus long, et plusieurs Go.</p>
+                    </>
+                  )}
                   {d.status === "extracted" && (
                     <p className="muted small">
                       Redémonter (après une mise à jour du jeu) garde la version actuelle de côté pour la comparer à la nouvelle

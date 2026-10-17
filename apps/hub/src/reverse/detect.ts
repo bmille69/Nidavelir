@@ -11,7 +11,7 @@ export type GameScan = {
   engineLabel: string;
   /** Indices trouvés, en clair (« SlayTheSpire2.pck », « sts2.dll »…). */
   evidence: string[];
-  /** Pack Godot à démonter, assemblage C# principal, s'il y en a. */
+  /** Ce que l'outil lit (pack Godot, dossier de données Unity), assemblage C# principal, s'il y en a. */
   pck: string | null;
   assembly: string | null;
   /** Protection qui interdit le démontage (anti-triche, anti-copie), ou null. */
@@ -50,8 +50,8 @@ const RECOVERABLE: Record<Engine, string> = {
   unknown: "Probablement un jeu compilé en C/C++ : peu de choses récupérables lisiblement.",
 };
 
-/** Seul Godot est pris en charge pour l'instant (GDRE Tools) ; les autres moteurs viendront à la demande. */
-const TOOL: Partial<Record<Engine, string>> = { "godot-dotnet": "gdre", godot: "gdre" };
+/** Godot (GDRE Tools) et Unity (AssetRipper) sont pris en charge ; les autres moteurs viendront à la demande. */
+const TOOL: Partial<Record<Engine, string>> = { "godot-dotnet": "gdre", godot: "gdre", "unity-mono": "assetripper", "unity-il2cpp": "assetripper" };
 
 /** Anti-triche et anti-copie : on n'y touche jamais (bannissement possible, et interdit). */
 const PROTECTIONS: [RegExp, string][] = [
@@ -122,6 +122,7 @@ export function detectGame(path: string): GameScan {
     } else engine = "godot";
   } else if (unityPlayer || unityData) {
     evidence.push(unityPlayer ?? unityData!);
+    if (unityData) pck = join(path, unityData);
     if (has(/^GameAssembly\.dll$/i)) {
       engine = "unity-il2cpp";
       evidence.push("GameAssembly.dll");
