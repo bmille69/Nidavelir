@@ -26,6 +26,11 @@ class Artist extends FakeOrchestrator {
   override async reply(input: { systemPrompt: string; prompt: string; readDir?: string }) {
     if (!input.readDir) return super.reply(input);
     const last = input.prompt.slice(input.prompt.lastIndexOf('<message de="directeur créatif">'));
+    if (/cuirassé en 3D/.test(last))
+      return {
+        text: '[[ASSET]] {"name": "Cuirassé", "type": "modèle 3D", "usage": "navire du joueur"} [[/ASSET]]\n[[MODELE3D: A-0002 | taille 12 | triangles 6000]]',
+        costUsd: 0,
+      };
     if (/Construisons ensemble/.test(last))
       return {
         text: "Partons de votre bataille navale. Une première question de goût :\n\n[[CHOIX: Quelle ambiance générale ?]] Affiche d'époque | Maquette de musée | Carte d'état-major [[/CHOIX]]",
@@ -113,10 +118,19 @@ describe("direction artistique", () => {
     await page.locator(".art-verdict.ok", { hasText: "Conforme" }).waitFor({ timeout: 15_000 });
     await page.locator(".art-render img").waitFor();
     await page.screenshot({ path: join(shots, "art-2-verdict.png") });
-    await page.getByRole("button", { name: /Faire intégrer/ }).click();
-    await page.waitForURL(/#\/p\/bordee\/t\//);
-    await page.getByText(/Fais-le brancher dans le jeu/).first().waitFor();
+    // Validé : il part tout seul au directeur du projet (ADR-48).
+    await page.locator(".msg.art", { hasText: "part dans le jeu" }).waitFor({ timeout: 15_000 });
     expect(hub.art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(hub.conversations.listThreads("bordee").some((t) => t.title === "Intégrer A-0001 : Icône de poudre")).toBe(true);
+
+    // Un modèle 3D : l'atelier 3D se présente (Blender à installer, clé Tripo à coller).
+    await page.locator(".composer textarea").fill("Il nous faut le cuirassé en 3D");
+    await page.locator(".composer textarea").press("Enter");
+    await page.locator(".art-asset", { hasText: "Cuirassé" }).waitFor({ timeout: 15_000 });
+    await page.locator(".art-gen", { hasText: "Atelier 3D" }).waitFor();
+    await page.getByRole("button", { name: /Installer Blender/ }).waitFor();
+    await page.locator(".art-asset", { hasText: "Modèle 3D : 12 m, 6000 triangles" }).waitFor();
+    await page.screenshot({ path: join(shots, "art-5-atelier-3d.png") });
     expect(errors).toEqual([]);
   }
 

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Model3DSpec } from "./model3d.ts";
 
 /**
  * Le manifeste des assets (ADR-43) : `studio/art/assets.json` dans le dépôt du jeu. C'est le contrat entre le
@@ -40,12 +41,34 @@ export type Asset = {
   refs: string[];
   /** Format du générateur local, « 1024x1536 » (ADR-46). */
   format?: string | null;
+  /** L'asset est un modèle 3D : ses mesures et animations (ADR-47). L'image validée sert de modèle à Tripo. */
+  model3d?: Model3DSpec | null;
+  /** Le modèle fabriqué (dernier tour) et son jugement. */
+  model?: ModelInfo | null;
+  /** Vérification dans le jeu, après la fusion du chantier d'intégration (capture du hub). */
+  ingame?: InGame | null;
   /** Rendus déposés, du plus ancien au plus récent (chemins relatifs à studio/art). */
   renders: string[];
   verdict: Verdict | null;
   created_at: string;
   updated_at: string;
 };
+
+export type ModelInfo = {
+  /** Fichier .glb fini (chemin relatif à studio/art). */
+  file: string;
+  /** Image validée qui a servi de modèle. */
+  source: string;
+  /** Photos sous quatre angles, pour le validateur et pour vous. */
+  renders: string[];
+  tris: number;
+  /** Dimensions en mètres (x, y, z de Blender : largeur, profondeur, hauteur). */
+  dims: number[];
+  animations: string[];
+  verdict: Verdict | null;
+};
+
+export type InGame = { task: string; file: string; visible: boolean; ok: boolean; summary: string; points: string[]; retried: boolean; at: string };
 
 export type Manifest = { version: 1; assets: Asset[] };
 
@@ -93,7 +116,10 @@ export function manifestSummary(gameRoot: string): string | null {
   ];
   if (ready.length) {
     lines.push("Validés, à brancher dans le jeu (le chantier d'intégration porte l'identifiant A-xxxx dans son titre) :");
-    for (const a of ready.slice(0, 20)) lines.push(`- ${a.id} ${a.name} (${a.type}) : ${a.usage} — fichier ${a.verdict?.file ? `studio/art/${a.verdict.file}` : "?"}`);
+    for (const a of ready.slice(0, 20)) {
+      const file = a.model?.file ?? a.verdict?.file;
+      lines.push(`- ${a.id} ${a.name} (${a.type}) : ${a.usage} — fichier ${file ? `studio/art/${file}` : "?"}`);
+    }
   }
   return lines.join("\n");
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { navigate } from "../App.tsx";
-import { api, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtState, type AssetStatus } from "../api.ts";
+import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
 import { Icon } from "./Icon.tsx";
 
@@ -45,7 +45,8 @@ export function ArtDirection({ slug }: { slug: string }) {
     void load();
   }, [load]);
   // Pendant qu'il répond ou que le validateur juge : on suit de près ; sinon, de temps en temps.
-  const busy = !!state && (state.busy.replying || state.busy.validating.length > 0 || state.busy.generating.length > 0 || !!state.generator.installing);
+  const busy =
+    !!state && (state.busy.replying || state.busy.validating.length > 0 || state.busy.generating.length > 0 || !!state.generator.installing || !!state.workshop3d.blender.installing);
   useEffect(() => {
     const t = setInterval(() => void load(), busy ? 2500 : 10_000);
     return () => clearInterval(t);
@@ -215,6 +216,7 @@ export function ArtDirection({ slug }: { slug: string }) {
         {tab === "assets" && (
           <div className="art-assets">
             <GeneratorCard generator={state.generator} act={act} />
+            {state.assets.some((a) => a.model3d) && <Workshop3DCard workshop={state.workshop3d} act={act} />}
             {state.assets.length === 0 && <p className="muted small">Aucun visuel pour l'instant. Le Directeur artistique en propose dès que la direction est posée.</p>}
             {ORDER.flatMap((s) => state.assets.filter((a) => a.status === s)).map((a) => (
               <AssetCard
@@ -224,6 +226,7 @@ export function ArtDirection({ slug }: { slug: string }) {
                 validating={state.busy.validating.includes(a.id)}
                 generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
                 local={state.generator.installed}
+                ready3d={state.workshop3d.blender.installed && state.workshop3d.tripo.configured}
                 onUpload={(f) => void upload(f, a.id)}
                 act={act}
               />
@@ -339,12 +342,72 @@ function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (f
   );
 }
 
+/** L'atelier 3D : Blender (sur votre clic) et votre clé Tripo, avec le plafond du mois. */
+function Workshop3DCard({ workshop: w, act }: { workshop: Art3D; act: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const [key, setKey] = useState("");
+  const b = w.blender;
+  if (b.installed && w.tripo.configured)
+    return (
+      <p className="muted small art-gen-ready">
+        <Icon name="check" size={14} /> Atelier 3D prêt (Tripo + Blender) · {w.tripo.credits} crédits Tripo utilisés ce mois-ci, plafond {w.tripo.cap}.
+      </p>
+    );
+  return (
+    <div className="art-gen panel-card">
+      <p className="small">
+        <b>Atelier 3D</b> : Tripo transforme l'image validée en modèle 3D (avec squelette et animations pour les personnages), Blender le met aux mesures du jeu et le
+        photographie sous tous les angles pour le validateur.
+      </p>
+      {!b.installed &&
+        (b.installing ? (
+          <div className="meter">
+            <div className="meter-head">
+              <span>{b.installing.step}</span>
+              <b>{Math.round(b.installing.progress * 100)} %</b>
+            </div>
+            <div className="meter-track">
+              <div className="meter-fill" style={{ width: `${Math.round(b.installing.progress * 100)}%` }} />
+            </div>
+          </div>
+        ) : (
+          <>
+            {b.error && <p className="error small">L'installation de Blender s'est arrêtée : {b.error}</p>}
+            <button className="small" onClick={() => void act(() => api.artInstallBlender())}>
+              <Icon name="upload" size={14} /> Installer Blender ({b.size})
+            </button>
+          </>
+        ))}
+      {b.installed && <p className="muted small">Blender est installé.</p>}
+      {!w.tripo.configured ? (
+        <div className="art-key">
+          <p className="muted small">
+            Tripo est un service en ligne payant : créez un compte sur{" "}
+            <a href="https://platform.tripo3d.ai" target="_blank" rel="noreferrer">
+              platform.tripo3d.ai
+            </a>
+            , prenez des crédits, puis collez ici une clé « API Key » (elle commence par tsk_). Plafond : {w.tripo.cap} crédits par mois.
+          </p>
+          <div className="art-key-row">
+            <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="tsk_…" autoComplete="off" />
+            <button className="small" disabled={key.trim().length < 8} onClick={() => void act(() => api.artTripoKey(key.trim()).then(() => setKey("")))}>
+              Enregistrer
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="muted small">Clé Tripo enregistrée · {w.tripo.credits} crédits utilisés ce mois-ci, plafond {w.tripo.cap}.</p>
+      )}
+    </div>
+  );
+}
+
 function AssetCard({
   slug,
   asset: a,
   validating,
   generating,
   local,
+  ready3d,
   onUpload,
   act,
 }: {
@@ -353,6 +416,7 @@ function AssetCard({
   validating: boolean;
   generating: ArtGenerating | null;
   local: boolean;
+  ready3d: boolean;
   onUpload: (f: FileList) => void;
   act: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
@@ -381,6 +445,12 @@ function AssetCard({
         {a.usage}
       </p>
       {a.specs && <p className="muted small">{a.specs}</p>}
+      {a.model3d && (
+        <p className="muted small">
+          <Icon name="cube" size={12} /> Modèle 3D : {a.model3d.size} m, {a.model3d.tris} triangles
+          {a.model3d.animations.length ? `, animations ${a.model3d.animations.join(", ")}` : a.model3d.rig ? ", avec squelette" : ""}
+        </p>
+      )}
       {generating && (
         <p className="live-text small">
           <span className="live-dot" /> {generating.step}…
@@ -391,6 +461,44 @@ function AssetCard({
         <a className="art-render" href={api.artFile(slug, last)} target="_blank" rel="noreferrer">
           <img src={api.artFile(slug, last)} alt={`Rendu de ${a.name}`} loading="lazy" />
         </a>
+      )}
+      {a.model && (
+        <div className="art-model">
+          <div className="art-model-shots">
+            {a.model.renders.map((r) => (
+              <a key={r} href={api.artFile(slug, r)} target="_blank" rel="noreferrer">
+                <img src={api.artFile(slug, r)} alt={r} loading="lazy" />
+              </a>
+            ))}
+          </div>
+          <p className="muted small">
+            {a.model.dims.map((d) => `${d} m`).join(" × ")} · {a.model.tris} triangles{a.model.animations.length ? ` · ${a.model.animations.join(", ")}` : ""}
+          </p>
+          {a.model.verdict && (
+            <div className={`art-verdict ${a.model.verdict.ok ? "ok" : "ko"}`}>
+              <p className="small">
+                <b>3D {a.model.verdict.ok ? "conforme" : "à retoucher"}</b> {a.model.verdict.by === "human" ? "(votre décision)" : "(validateur)"} — {a.model.verdict.summary}
+              </p>
+              {a.model.verdict.points.length > 0 && (
+                <ul className="small">
+                  {a.model.verdict.points.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {a.ingame && (
+        <div className={`art-verdict ${a.ingame.ok ? "ok" : "ko"}`}>
+          <p className="small">
+            <b>Dans le jeu : {!a.ingame.visible ? "pas visible sur la capture" : a.ingame.ok ? "rend bien" : "à retoucher"}</b> — {a.ingame.summary}
+          </p>
+          <a className="art-render" href={api.artFile(slug, a.ingame.file)} target="_blank" rel="noreferrer">
+            <img src={api.artFile(slug, a.ingame.file)} alt={`${a.name} dans le jeu`} loading="lazy" />
+          </a>
+        </div>
       )}
       {a.verdict && (
         <div className={`art-verdict ${a.verdict.ok ? "ok" : "ko"}`}>
@@ -447,7 +555,17 @@ function AssetCard({
             <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => e.target.files?.length && onUpload(e.target.files)} />
           </>
         )}
-        {a.status === "production" && a.verdict && !a.verdict.ok && !generating && (
+        {a.model3d && a.verdict?.ok && ready3d && !generating && ["production", "a_valider", "valide"].includes(a.status) && (
+          <button className="small" disabled={validating} onClick={() => void act(() => api.artModel(slug, a.id))}>
+            <Icon name="cube" size={14} /> {a.model ? "Refaire la 3D" : "Fabriquer la 3D"}
+          </button>
+        )}
+        {a.status === "production" && a.model?.verdict && !a.model.verdict.ok && !generating && (
+          <button className="secondary small" onClick={() => void act(() => api.artDecide(slug, a.id, "valider"))}>
+            Valider la 3D quand même
+          </button>
+        )}
+        {a.status === "production" && !a.model && a.verdict && !a.verdict.ok && !generating && (
           <button className="secondary small" onClick={() => void act(() => api.artDecide(slug, a.id, "valider"))}>
             Valider quand même
           </button>

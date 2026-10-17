@@ -52,6 +52,7 @@ const Body = {
   artMessage: z.object({ text: z.string().min(1).max(20_000) }),
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
+  tripoKey: z.object({ key: z.string().min(8).max(200) }),
   expressCreate: z.object({ idea: z.string().min(3).max(4000), mode: z.enum(["eclair", "soigne"]) }),
   expressImprove: z.object({ request: z.string().min(3).max(2000) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
@@ -219,6 +220,12 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return hub.art.generate(req.human!, slug, id);
     });
     api.post("/art/generator/install", async (req) => hub.art.installGenerator(req.human!));
+    api.post("/art/blender/install", async (req) => hub.art.installBlender(req.human!));
+    api.post("/art/tripo/key", async (req) => hub.art.setTripoKey(req.human!, Body.tripoKey.parse(req.body).key));
+    api.post("/projects/:slug/art/assets/:id/model", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.generateModel(req.human!, slug, id);
+    });
     api.post("/projects/:slug/art/assets/:id/integrate", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.integrate(req.human!, slug, id);

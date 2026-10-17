@@ -526,6 +526,20 @@ Mesures :
 - **Pas encore** : référence de style par image (Flux Redux demande un compte Hugging Face), style entraîné (LoRA) sur les visuels validés, détourage (fond transparent) des icônes. Viendront ensuite l'étape 3 (3D) et l'intégration automatique.
 - **Non vérifié en vrai** : le dialogue avec ComfyUI suit son API documentée, et la décompression du `.7z` par le `tar` de Windows a été vérifiée. Mais rien n'a été installé ni généré sur le PC : le directeur créatif lance l'installation à son retour.
 
+### ADR-47 : l'atelier 3D du Directeur artistique (Tripo + Blender)
+**Statut** : **Validée** le 17/10/2026, à la demande du directeur créatif (« fais tout ce qu'il faut », même jour qu'ADR-46).
+- **Quand** : la DA marque un asset `[[MODELE3D: A-0001 | taille 12 | triangles 6000 | animations walk, slash]]`. La taille est la plus grande dimension, en mètres. Avec « squelette » ou des animations, le modèle est animé. Un objet rigide (navire, caisse) n'a ni l'un ni l'autre. On fabrique et on valide d'abord l'image, de face ou de trois-quarts, objet entier et fond uni. Une fois validée (par le validateur ou par vous), elle part seule à l'atelier 3D.
+- **Tripo** (service en ligne payant, API v3 `openapi.tripo3d.ai`, d'après le SDK officiel) : envoi de l'image (`/v3/files`), puis modèle (`/v3/generation/image-to-model`, `face_limit` = budget). Si besoin : vérification (`rig-check`), squelette (`rig`) et animations toutes prêtes (`retarget`, 5 au plus, sur place). La clé (`tsk_…`) se colle dans l'onglet Visuels. Elle est vérifiée auprès de Tripo, puis gardée dans `.data/tools/tripo/`, jamais dans un dépôt. **Plafond mensuel** : 2000 crédits par défaut (`STUDIO_TRIPO_MONTHLY_CREDITS`), comptés à partir des crédits que Tripo annonce pour chaque tâche.
+- **Blender 4.5 LTS** (environ 400 Mo, téléchargé depuis download.blender.org sur votre clic, dans `.data/tools/blender`), lancé sans fenêtre avec un script. Il allège au budget de triangles, met à la taille, pose au sol et centre le modèle. Il réduit les textures à 1024 px, puis exporte un `.glb` (Y en haut, 1 unité = 1 m, animations comprises) dans `studio/art/models/`. Il prend enfin quatre photos (face, trois-quarts, profil, dos) dans `production/`. Le modèle brut de Tripo n'entre pas dans le dépôt.
+- **Validateur 3D** : il compare les photos à l'image de départ et à la bible, et vérifie les mesures, le budget et les défauts. Au plus 2 tours, car chaque tour coûte des crédits. Ensuite, vous tranchez (« Valider la 3D quand même », « Refaire la 3D »).
+- **Non vérifié en vrai** : ni Tripo ni Blender n'ont tourné sur le PC (pas d'installation ni de clé en l'absence du directeur créatif). La syntaxe du script Blender est vérifiée, et le reste du circuit est testé avec des outils factices.
+
+### ADR-48 : l'intégration automatique et la vérification dans le jeu
+**Statut** : **Validée** le 17/10/2026, à la demande du directeur créatif (« intègre directement au jeu »).
+- **Automatique** : un visuel validé part seul au directeur du projet, dans une discussion « Intégrer A-xxxx », que la validation vienne du validateur ou de vous. Pour un modèle 3D, c'est le modèle validé qui part, avec ses mesures et ses animations. En atelier, le directeur lance le chantier sans attendre (ADR-31). « Faire intégrer » reste disponible à la main.
+- **Vérification en situation** : à la fusion du chantier, le validateur regarde la capture du jeu prise par les vérifications du hub (ADR-32), copiée dans `production/<id>-en-jeu-<chantier>.png`. Il dit d'abord si le visuel est visible ; s'il ne l'est pas (menu, autre scène), il le dit sans deviner. S'il est visible mais rend mal, une retouche part au directeur, **une seule fois** (discussion « Retoucher A-xxxx dans le jeu »), sans changer le fichier validé. Le résultat s'affiche sur la fiche (« Dans le jeu : … »). Sans capture, la DA le signale.
+- La consigne d'intégration demande au directeur de rendre le visuel visible au lancement quand c'est raisonnable, pour que la capture serve.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

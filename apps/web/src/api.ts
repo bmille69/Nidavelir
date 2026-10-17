@@ -103,8 +103,15 @@ export type ExpressGame = {
 };
 export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
 export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
-export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
+export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; model3d?: ArtModelSpec | null; model?: ArtModel | null; ingame?: ArtInGame | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
+export type ArtModelSpec = { size: number; tris: number; rig: boolean; animations: string[] };
+export type ArtModel = { file: string; source: string; renders: string[]; tris: number; dims: number[]; animations: string[]; verdict: ArtVerdict | null };
+export type ArtInGame = { task: string; file: string; visible: boolean; ok: boolean; summary: string; points: string[]; retried: boolean; at: string };
+export type Art3D = {
+  blender: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
+  tripo: { configured: boolean; month: string; credits: number; cap: number };
+};
 export type ArtGenerating = { asset: string; round: number; rounds: number; step: string };
 export type ArtGenerator = { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
 export type ArtState = {
@@ -114,6 +121,7 @@ export type ArtState = {
   messages: ArtMessage[];
   busy: { replying: boolean; validating: string[]; generating: ArtGenerating[] };
   generator: ArtGenerator;
+  workshop3d: Art3D;
 };
 export type GameScan = {
   path: string;
@@ -296,6 +304,9 @@ export const api = {
   artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
   artGenerate: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/generate`, {}),
   artInstallGenerator: () => request<ArtGenerator>("POST", "/art/generator/install", {}),
+  artInstallBlender: () => request<Art3D>("POST", "/art/blender/install", {}),
+  artTripoKey: (key: string) => request<Art3D>("POST", "/art/tripo/key", { key }),
+  artModel: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/model`, {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),

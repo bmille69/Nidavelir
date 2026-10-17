@@ -250,7 +250,7 @@ function locate(dir: string): { python: string; main: string } | null {
 }
 
 /** Téléchargement dans un « .part », repris là où il s'était arrêté, puis renommé. */
-async function download(url: string, file: string, progress: (done: number) => void): Promise<void> {
+export async function download(url: string, file: string, progress: (done: number) => void): Promise<void> {
   const part = `${file}.part`;
   const have = existsSync(part) ? statSync(part).size : 0;
   const res = await fetch(url, { headers: { ...UA, ...(have ? { range: `bytes=${have}-` } : {}) } });
@@ -312,7 +312,7 @@ function http(url: string, method: "GET" | "POST", body?: string): Promise<strin
   });
 }
 
-function killTree(pid: number | undefined): void {
+export function killTree(pid: number | undefined): void {
   if (!pid) return;
   if (process.platform === "win32") execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
   else {

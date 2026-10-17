@@ -20,6 +20,7 @@ import { ModelService, type ModelRole } from "./usage/model-service.ts";
 import { ReverseService } from "./reverse/reverse-service.ts";
 import { ArtService } from "./art/art-service.ts";
 import { ComfyImageGen, type ImageGenPort } from "./art/imagegen.ts";
+import { RealModel3D, type Model3DPort } from "./art/model3d.ts";
 import { ExpressService } from "./express/express-service.ts";
 import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
@@ -64,6 +65,8 @@ export type HubOptions = {
   reverseTools?: ReverseToolsPort;
   /** Générateur d'images local du Directeur artistique (ADR-46). Défaut : ComfyUI + Flux, installé à votre demande. */
   imagegen?: ImageGenPort;
+  /** Atelier 3D du Directeur artistique : Tripo et Blender (ADR-47). Défaut : les vrais, sur votre clic et votre clé. */
+  model3d?: Model3DPort;
   /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
   expressChecker?: ExpressChecker;
 };
@@ -243,7 +246,19 @@ export function createHub(options: HubOptions): Hub {
   });
   // Le Directeur artistique (ADR-43) : un asset passe « intégré » quand son chantier est fusionné.
   const imagegen = options.imagegen ?? new ComfyImageGen(dataDir);
-  const art = new ArtService({ db, clock, journal, projects, orchestrator, vcs, conversations, imagegen });
+  const art = new ArtService({
+    db,
+    clock,
+    journal,
+    projects,
+    orchestrator,
+    vcs,
+    conversations,
+    imagegen,
+    model3d: options.model3d ?? new RealModel3D(dataDir),
+    // La capture prise par les vérifications avant la fusion sert à juger le visuel dans le jeu (ADR-48).
+    screenshot: (project, task) => checks?.screenshotPath(project, task) ?? null,
+  });
   const artHook = tasks.onStatus;
   tasks.onStatus = (task) => {
     artHook?.(task);
