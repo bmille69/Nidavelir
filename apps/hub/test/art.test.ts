@@ -305,6 +305,25 @@ describe("générateur d'images local (ADR-46)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", prompts: ["A flag."] });
   }, 30_000);
 
+  it("3D demandée après coup sur une image déjà validée : l'atelier 3D part tout de suite", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, summary: "Bien.", points: [], prompt: null } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    // Comme pour le Titan : le DA repasse la fiche en production et ajoute la 3D.
+    fake.replies.push('[[ASSET]] {"id": "A-0001", "type": "personnage 3D", "status": "production"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, walk]]');
+    fake.extractions.push({ ok: true, summary: "Fidèle.", points: [], prompt: null } as never);
+    art.send(sb.human(), "bordee", "Fais-le en 3D");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model: { file: "models/a-0001-t1.glb" } });
+  }, 30_000);
+
   it("3D : l'image validée part chez Tripo puis Blender, le validateur juge les photos, l'asset part au jeu et y est vérifié", async () => {
     const { sb, fake, gen, m3d, repo, art } = await setupLocal();
     gen.installed = true;

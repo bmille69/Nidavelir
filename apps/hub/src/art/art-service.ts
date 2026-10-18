@@ -463,6 +463,12 @@ export class ArtService {
       await this.#commit(p.root, `art: ${applied.join(", ") || "réponse du Directeur artistique"}`);
       // Le générateur part de la fiche à jour, une fois le tour écrit et commité.
       if (this.#imagegen.state().installed) for (const g of directives.generate) this.#startProduce(project, g.asset);
+      // Une 3D demandée sur une image déjà validée : l'atelier 3D part tout de suite (sinon elle suivra l'image).
+      const assets = readManifest(p.root).assets;
+      for (const t of directives.model3d) {
+        const a = assets.find((x) => x.id === t.asset);
+        if (a?.model3d && a.verdict?.ok && !a.model && a.status === "production" && !directives.generate.some((g) => g.asset === a.id)) this.#startModel(project, a.id);
+      }
     } catch (err) {
       this.#insert(project, "art", `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null);
     } finally {
