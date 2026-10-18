@@ -707,7 +707,7 @@ export class ArtService {
         const spec = asset.model3d;
         mkdirSync(join(root, "models"), { recursive: true });
         const raw = join(root, "models", `.${id.toLowerCase()}-brut.glb`);
-        const { glb, credits } = await this.#model3d.tripo({
+        const { glb, credits, extras = [], animations } = await this.#model3d.tripo({
           image: readFileSync(join(root, source)),
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
           spec,
@@ -715,11 +715,16 @@ export class ArtService {
           step: (s) => (progress.step = s),
         });
         writeAtomic(raw, glb);
+        const extraFiles = extras.map((b, i) => {
+          const f = join(root, "models", `.${id.toLowerCase()}-brut-${i + 2}.glb`);
+          writeAtomic(f, b);
+          return f;
+        });
         progress.step = "Blender met le modèle aux mesures du jeu";
         const file = `models/${id.toLowerCase()}-t${round}.glb`;
         const done = await this.#model3d
-          .finish({ input: raw, output: join(root, file), rendersDir: join(root, "production"), prefix: `${id.toLowerCase()}-3d-t${round}`, spec })
-          .finally(() => rmSync(raw, { force: true }));
+          .finish({ input: raw, output: join(root, file), rendersDir: join(root, "production"), prefix: `${id.toLowerCase()}-3d-t${round}`, spec, extras: extraFiles, animations })
+          .finally(() => [raw, ...extraFiles].forEach((f) => rmSync(f, { force: true })));
         const renders = done.renders.map((r) => relative(root, r).replace(/\\/g, "/"));
         let m = readManifest(gameRoot);
         let a = m.assets.find((x) => x.id === id);

@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { download, killTree } from "./imagegen.ts";
@@ -17,7 +18,8 @@ export type Model3DState = {
 /** Ce que la fiche demande pour la 3D. */
 export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[] };
 
-export type TripoResult = { glb: Buffer; credits: number };
+/** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
+export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[] };
 export type FinishResult = { renders: string[]; tris: number; dims: number[]; animations: string[] };
 
 export interface Model3DPort {
@@ -28,7 +30,7 @@ export interface Model3DPort {
   /** Image → modèle .glb, avec squelette et animations si demandé. `step` raconte où on en est. */
   tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void }): Promise<TripoResult>;
   /** Blender : mesures du jeu, budget de triangles, textures, export .glb et photos sous quatre angles. */
-  finish(req: { input: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }): Promise<FinishResult>;
+  finish(req: { input: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec; extras?: string[]; animations?: string[] }): Promise<FinishResult>;
 }
 
 /** Les animations toutes prêtes de Tripo (noms courts, sans « preset: »). */
@@ -101,7 +103,7 @@ export class RealModel3D implements Model3DPort {
     writeFileSync(join(root, "installed.json"), JSON.stringify({ version: `4.5.${patch}`, exe }, null, 2));
   }
 
-  async finish(req: { input: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }): Promise<FinishResult> {
+  async finish(req: { input: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec; extras?: string[]; animations?: string[] }): Promise<FinishResult> {
     const exe = this.#blender();
     if (!exe) throw new Error("Blender n'est pas installé");
     const work = join(this.#dir, "blender", "work");
@@ -114,7 +116,7 @@ export class RealModel3D implements Model3DPort {
     rmSync(stats, { force: true });
     writeFileSync(
       cfgFile,
-      JSON.stringify({ input: req.input, output: req.output, renders_dir: req.rendersDir, prefix: req.prefix, size: req.spec.size, max_tris: req.spec.tris, max_texture: 1024, stats }),
+      JSON.stringify({ input: req.input, output: req.output, renders_dir: req.rendersDir, prefix: req.prefix, size: req.spec.size, max_tris: req.spec.tris, max_texture: 1024, stats, extras: req.extras ?? [], animations: req.animations ?? [] }),
       "utf8",
     );
     const log: string[] = [];
@@ -187,6 +189,7 @@ export class RealModel3D implements Model3DPort {
     const u = this.#usage();
     if (u.credits >= this.#cap) throw new Error(`Plafond mensuel Tripo atteint (${u.credits} crédits sur ${this.#cap}) : il repart le mois prochain`);
     let credits = 0;
+    let reused = false;
     const run = async (label: string, path: string, body: Record<string, unknown>): Promise<TripoTask> => {
       req.step(label);
       const { task_id } = (await this.#api(key, "POST", path, body)) as { task_id: string };
@@ -204,42 +207,85 @@ export class RealModel3D implements Model3DPort {
         if (typeof t.progress === "number") req.step(`${label} (${t.progress} %)`);
       }
     };
+    // Un modèle déjà payé dont la suite (squelette, animations) a échoué : on repart de lui au lieu de le refaire.
+    const reuse = { image: createHash("sha256").update(req.image).digest("hex"), tris: req.spec.tris };
+    const pending = this.#pending();
     try {
-      const token = await this.#upload(key, req.image, req.ext);
-      const model = await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", {
-        input: token,
-        model: TRIPO_MODEL,
-        face_limit: Math.max(1000, req.spec.tris),
-        model_seed: req.seed,
-        texture_seed: req.seed,
-      });
+      let model: TripoTask;
+      if (pending && pending.image === reuse.image && pending.tris === reuse.tris) {
+        req.step("Tripo reprend le modèle déjà fabriqué");
+        model = { task_id: pending.task, status: "success" };
+        reused = true;
+      } else {
+        const token = await this.#upload(key, req.image, req.ext);
+        model = await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", {
+          input: token,
+          model: TRIPO_MODEL,
+          face_limit: Math.max(1000, req.spec.tris),
+          model_seed: req.seed,
+          texture_seed: req.seed,
+        });
+        if (req.spec.rig) this.#setPending({ ...reuse, task: model.task_id });
+      }
       let last = model;
+      const extras: Buffer[] = [];
+      let names: string[] = [];
       if (req.spec.rig) {
         const check = await run("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input: model.task_id });
         if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
-        const type = String(check.output?.rig_type ?? check.output?.topology ?? "biped").toLowerCase();
-        const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: "v1.0-20240301", ...(type !== "biped" ? { rig_type: type } : {}) });
+        const type = String(check.output?.rig_type ?? "biped").toLowerCase();
+        // L'ancien squelette (v1.0) ne connaît que les bipèdes : quatre pattes, ailes, serpents… passent par le v2.5.
+        const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: type === "biped" ? "v1.0-20240301" : "v2.5-20260210", rig_type: type });
         last = rig;
-        const animations = req.spec.animations.filter((a) => TRIPO_ANIMATIONS.includes(a)).slice(0, 5);
-        if (animations.length) {
-          last = await run("Tripo applique les animations", "/v3/animations/retarget", {
+        names = rigAnimations(type, req.spec.animations);
+        // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
+        for (const [i, name] of names.entries()) {
+          const anim = await run(`Tripo applique l'animation « ${name} » (${i + 1}/${names.length})`, "/v3/animations/retarget", {
             input: rig.task_id,
-            animations: animations.map((a) => `preset:${a}`),
+            animation: `preset:${name}`,
+            out_format: "glb",
             export_with_geometry: true,
             animate_in_place: true,
           });
+          if (i === 0) last = anim;
+          else extras.push(await this.#fetchModel(anim, req.step));
         }
       }
-      const o = last.output ?? {};
-      const url = [o.model_url, o.pbr_model_url, o.model, o.pbr_model].find((v): v is string => typeof v === "string" && v.startsWith("http"));
-      if (!url) throw new Error("Tripo n'a pas rendu de modèle");
-      req.step("Téléchargement du modèle");
-      const res = await fetch(url, { headers: UA });
-      if (!res.ok) throw new Error(`Téléchargement du modèle impossible (${res.status})`);
-      return { glb: Buffer.from(await res.arrayBuffer()), credits };
+      const glb = await this.#fetchModel(last, req.step);
+      this.#setPending(null);
+      return { glb, credits, extras, animations: names };
+    } catch (err) {
+      // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
+      if (reused) this.#setPending(null);
+      throw err;
     } finally {
       if (credits) this.#spend(credits);
     }
+  }
+
+  async #fetchModel(task: TripoTask, step: (s: string) => void): Promise<Buffer> {
+    const o = task.output ?? {};
+    const url = [o.model_url, o.pbr_model_url, o.model, o.pbr_model].find((v): v is string => typeof v === "string" && v.startsWith("http"));
+    if (!url) throw new Error("Tripo n'a pas rendu de modèle");
+    step("Téléchargement du modèle");
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) throw new Error(`Téléchargement du modèle impossible (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  #pending(): { image: string; tris: number; task: string } | null {
+    try {
+      return JSON.parse(readFileSync(join(this.#dir, "tripo", "pending.json"), "utf8")) as { image: string; tris: number; task: string };
+    } catch {
+      return null;
+    }
+  }
+
+  #setPending(p: { image: string; tris: number; task: string } | null): void {
+    const file = join(this.#dir, "tripo", "pending.json");
+    if (!p) return rmSync(file, { force: true });
+    mkdirSync(join(this.#dir, "tripo"), { recursive: true });
+    writeFileSync(file, JSON.stringify(p), "utf8");
   }
 
   async #upload(key: string, image: Buffer, ext: string): Promise<string> {
@@ -270,6 +316,20 @@ export class RealModel3D implements Model3DPort {
   }
 }
 
+/**
+ * Les animations demandées que ce squelette sait jouer : « walk » sur quatre pattes devient « quadruped:walk » ;
+ * un bipède ne prend que les animations sans préfixe. Cinq au plus.
+ */
+export function rigAnimations(type: string, wanted: string[]): string[] {
+  const out = new Set<string>();
+  for (const w of wanted) {
+    const [kind, move] = w.includes(":") ? w.split(":") : [null, w];
+    const name = type === "biped" ? (kind ? null : move) : kind ? (kind === type ? w : null) : `${type}:${move}`;
+    if (name && TRIPO_ANIMATIONS.includes(name)) out.add(name);
+  }
+  return [...out].slice(0, 5);
+}
+
 function findExe(dir: string, name: string): string | null {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
@@ -295,7 +355,31 @@ cfg = json.load(open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8"))
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=cfg["input"])
 scene = bpy.context.scene
-meshes = [o for o in scene.objects if o.type == "MESH"]
+names = cfg.get("animations") or []
+
+def name_new(actions, name):
+    for a in actions:
+        a.name = name if len(actions) == 1 else "%s_%s" % (name, a.name)
+        a.use_fake_user = True
+
+if names:
+    name_new(list(bpy.data.actions), names[0])
+# Animations suivantes (meme squelette) : on garde l'action, on jette le reste du fichier.
+for i, extra in enumerate(cfg.get("extras") or []):
+    objs, acts = set(bpy.data.objects), set(bpy.data.actions)
+    bpy.ops.import_scene.gltf(filepath=extra)
+    name_new([a for a in bpy.data.actions if a not in acts], names[i + 1] if i + 1 < len(names) else "anim_%d" % (i + 2))
+    for o in [o for o in bpy.data.objects if o not in objs]:
+        bpy.data.objects.remove(o, do_unlink=True)
+for arm in [o for o in scene.objects if o.type == "ARMATURE"]:
+    arm.animation_data_create()
+    arm.animation_data.action = None
+    for a in bpy.data.actions:
+        track = arm.animation_data.nla_tracks.new()
+        track.name = a.name
+        track.strips.new(a.name, 0, a)
+# Les formes d'os que l'import range a part (glTF_not_exported) ne font pas partie du modele.
+meshes = [o for o in scene.objects if o.type == "MESH" and not any(c.name.startswith("glTF_not_exported") for c in o.users_collection)]
 if not meshes:
     raise SystemExit("aucun maillage dans le modele")
 
@@ -348,7 +432,7 @@ for img in bpy.data.images:
         k = limit / max(w, h)
         img.scale(max(1, int(w * k)), max(1, int(h * k)))
 
-bpy.ops.export_scene.gltf(filepath=cfg["output"], export_format="GLB", export_yup=True, export_animations=True, export_apply=False)
+bpy.ops.export_scene.gltf(filepath=cfg["output"], export_format="GLB", export_yup=True, export_animations=True, export_animation_mode="NLA_TRACKS" if names else "ACTIONS", export_apply=False)
 
 # Photos : fond gris neutre, soleil et lumiere d'ambiance, camera qui tourne autour.
 world = bpy.data.worlds.new("Fond")
@@ -361,7 +445,7 @@ sun.data.energy = 3.5
 sun.rotation_euler = (math.radians(50), 0, math.radians(35))
 scene.collection.objects.link(sun)
 center = (lo + hi) / 2
-radius = max(hi - lo) * 1.6
+radius = (hi - lo).length * 1.6  # la diagonale entiere tient dans le cadre
 target = bpy.data.objects.new("Cible", None)
 target.location = center
 scene.collection.objects.link(target)
