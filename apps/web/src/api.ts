@@ -269,16 +269,34 @@ export class ApiError extends Error {
 
 let csrf = "";
 
+/**
+ * Envoie une modification ; si le jeton CSRF est périmé (hub relancé puis reconnecté
+ * dans un autre onglet : le cookie est neuf, le jeton gardé par cette page ne l'est plus),
+ * redemande le jeton de la session courante et réessaie une fois.
+ */
+async function withCsrf(send: () => Promise<Response>): Promise<Response> {
+  const res = await send();
+  if (res.status !== 403 || !res.headers.get("content-type")?.includes("json")) return res;
+  const error = ((await res.clone().json()) as { error?: string } | null)?.error;
+  if (error !== "Jeton CSRF invalide") return res;
+  const fresh = await fetch("/api/human/session", { credentials: "same-origin" });
+  if (!fresh.ok) return res;
+  csrf = ((await fresh.json()) as SessionInfo).csrf;
+  return send();
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api/human${url}`, {
-    method,
-    credentials: "same-origin",
-    headers: {
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      ...(method !== "GET" ? { "x-csrf-token": csrf } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const send = () =>
+    fetch(`/api/human${url}`, {
+      method,
+      credentials: "same-origin",
+      headers: {
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(method !== "GET" ? { "x-csrf-token": csrf } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  const res = method === "GET" ? await send() : await withCsrf(send);
   const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
   if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `Erreur ${res.status}`);
   return data as T;
@@ -307,12 +325,14 @@ export const api = {
   artSend: (slug: string, text: string) => request<ArtMessage>("POST", `/projects/${slug}/art/messages`, { text }),
   /** Dépose une image (moodboard ou rendu d'un asset « A-0001 ») : corps binaire, pas de JSON. */
   async artUpload(slug: string, target: string, file: File): Promise<{ file: string }> {
-    const res = await fetch(`/api/human/projects/${slug}/art/images?for=${encodeURIComponent(target)}&name=${encodeURIComponent(file.name.slice(0, 200))}`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": file.type || "application/octet-stream", "x-csrf-token": csrf },
-      body: file,
-    });
+    const res = await withCsrf(() =>
+      fetch(`/api/human/projects/${slug}/art/images?for=${encodeURIComponent(target)}&name=${encodeURIComponent(file.name.slice(0, 200))}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": file.type || "application/octet-stream", "x-csrf-token": csrf },
+        body: file,
+      }),
+    );
     const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
     if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? (res.status === 413 ? "Image trop lourde (15 Mo au plus)" : `Erreur ${res.status}`));
     return data as { file: string };
