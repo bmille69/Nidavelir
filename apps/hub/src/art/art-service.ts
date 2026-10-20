@@ -112,6 +112,8 @@ export class ArtService {
   readonly #model3d: Model3DPort;
   readonly #screenshot: (project: string, task: string) => string | null;
   readonly #generating = new Map<string, Map<string, Generating>>();
+  /** Les modèles déjà branchés dans le jeu dont une version retouchée part en intégration (ADR-55) : « project/id ». */
+  readonly #replacing = new Set<string>();
   readonly #vitrine: (project: string, id: string, file: string) => Promise<string | null>;
 
   constructor(deps: {
@@ -227,6 +229,21 @@ export class ArtService {
     if (missing) throw new ArtError(missing);
     if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
     this.#startModel(project, id);
+    return asset;
+  }
+
+  /**
+   * Reprendre la finition d'un modèle déjà fabriqué dans sa scène d'atelier (ADR-55) : l'artisan corrige les remarques du
+   * validateur (teintes, lueurs, matière), sans repayer Tripo ; le modèle repart ensuite au jeu s'il est jugé bon.
+   */
+  retouchModel(session: HumanSession, project: string, id: string): Asset {
+    assertHumanSession(session);
+    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    if (!asset.model3d || !asset.model) throw new ArtError("Cet asset n'a pas encore de modèle 3D");
+    if (!this.#model3d.state().blender.installed) throw new ArtError("Installez d'abord Blender");
+    if (!existsSync(join(this.#model3d.atelier(`${project}-${id}`), "scene.blend"))) throw new ArtError("La scène de l'atelier n'existe plus : « Refaire la 3D »");
+    this.#startModel(project, id, true);
     return asset;
   }
 
@@ -359,6 +376,9 @@ export class ArtService {
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
+      this.#replacing.delete(`${project}/${id}`)
+        ? "- C'est une version retouchée d'un modèle déjà branché : remplace l'ancien fichier par celui-ci (mêmes mesures, même squelette, mêmes animations), sans rien changer d'autre au branchement."
+        : "",
       model
         ? `- Modèle 3D glTF binaire (.glb) : axe Y vers le haut, 1 unité = 1 mètre, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} m`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
         : "",
@@ -366,7 +386,7 @@ export class ArtService {
       asset.specs ? `- Spécifications : ${asset.specs}` : "",
       "- La bible visuelle (studio/art/bible.md) et le manifeste (studio/art/assets.json) disent le reste.",
       `Lance un chantier dont le titre commence par « ${id} » : le développeur copie le fichier depuis studio/art/ vers les ressources du jeu (sans rien télécharger), le branche à l'endroit prévu, et l'ajoute aux crédits.`,
-      `Scène vitrine : si le jeu ne l'a pas encore, le même chantier l'ajoute, une fois pour toutes. Quand l'adresse du jeu contient « ?vitrine=${id} » (n'importe quel identifiant d'asset intégré), le jeu affiche seulement cet asset, dans ses vraies conditions : caméra, lumière et sol du jeu, à sa taille réelle à côté du joueur pour l'échelle, son animation de marche ou d'attente en boucle. Le hub s'en sert pour photographier chaque visuel intégré.`,
+      `Scène vitrine : si le jeu ne l'a pas encore, le même chantier l'ajoute, une fois pour toutes (vérifie-la avant de finir). ${vitrineScene(id)}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -436,7 +456,9 @@ export class ArtService {
       const m = readManifest(gameRoot);
       const a = m.assets.find((x) => x.id === id);
       if (!a) return;
-      const retry = !!v.visible && !v.ok && !a.ingame?.retried;
+      // Invisible dans la vitrine : la scène manque ou ne montre pas l'asset ; une retouche la fait ajouter (une fois).
+      const missing = !v.visible && shotVitrine;
+      const retry = (missing || (!!v.visible && !v.ok)) && !a.ingame?.retried;
       a.ingame = { task, file, visible: !!v.visible, ok: !!v.visible && !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 6), retried: retry || !!a.ingame?.retried, at: this.#clock.now() };
       writeManifest(gameRoot, m);
       await this.#commit(gameRoot, `art: ${id} vérifié dans le jeu (${task})`);
@@ -451,7 +473,7 @@ export class ArtService {
               ? `**${id} dans le jeu : rend bien.** ${a.ingame.summary}`
               : `**${id} dans le jeu : à retoucher.** ${a.ingame.summary}`,
           ...a.ingame.points.map((p) => `- ${p}`),
-          retry ? "J'ai demandé une retouche au directeur du projet." : v.visible && !v.ok ? "La retouche automatique a déjà été tentée une fois : dites-moi comment vous voulez la reprendre." : "",
+          retry ? (missing ? "J'ai demandé au directeur du projet de faire marcher la scène vitrine." : "J'ai demandé une retouche au directeur du projet.") : (v.visible && !v.ok) || missing ? "La retouche automatique a déjà été tentée une fois : dites-moi comment vous voulez la reprendre." : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -460,10 +482,12 @@ export class ArtService {
       if (retry) {
         const thread = this.#conversations.createThread(project, `Retoucher ${id} dans le jeu`.slice(0, 80));
         const text = [
-          `Le validateur artistique a regardé ${id} « ${a.name} » dans le jeu (capture : studio/art/${file}) : à retoucher.`,
+          `Le validateur artistique a regardé ${id} « ${a.name} » dans le jeu (capture : studio/art/${file}) : ${missing ? "la scène vitrine ne le montre pas" : "à retoucher"}.`,
           a.ingame.summary,
           ...a.ingame.points.map((p) => `- ${p}`),
-          `Lance un chantier dont le titre commence par « ${id} » pour corriger l'intégration (taille, orientation, éclairage, fond…), sans changer le fichier validé.`,
+          missing
+            ? `Lance un chantier dont le titre commence par « ${id} » pour faire marcher la scène vitrine, sans changer le fichier validé. ${vitrineScene(id)} Vérifie-la (test de bout en bout qui ouvre « ?vitrine=${id} » et y trouve l'asset) avant de finir.`
+            : `Lance un chantier dont le titre commence par « ${id} » pour corriger l'intégration (taille, orientation, éclairage, fond…), sans changer le fichier validé.`,
         ].join("\n");
         void this.#conversations.send(project, thread.id, text).catch(() => {});
         // Le chantier de retouche porte l'identifiant : à sa fusion, l'asset doit repasser par « intégration ».
@@ -880,19 +904,19 @@ export class ArtService {
     return missing.length ? missing.join(" et ").replace(/^./, (c) => c.toUpperCase()) : null;
   }
 
-  #startModel(project: string, id: string): void {
+  #startModel(project: string, id: string, retouch = false): void {
     const simple = !!readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.model3d?.simple;
-    const missing = this.#missing3d(simple);
+    const missing = this.#missing3d(simple || retouch);
     if (missing) {
       this.#insert(project, "art", `La 3D de ${id} attend l'atelier 3D : ${missing.toLowerCase()} (onglet Visuels). Elle partira d'un clic sur « Fabriquer la 3D ».`, null);
       return;
     }
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
-    gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: "Préparation de la 3D" });
+    gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: retouch ? "Reprise de la scène de l'atelier" : "Préparation de la 3D" });
     this.#generating.set(project, gens);
     this.#track(
-      this.#produceModel(project, id)
+      this.#produceModel(project, id, retouch)
         .finally(() => gens.delete(id))
         .then((ok) => (ok ? this.#autoIntegrate(project, id, "system") : undefined)),
     );
@@ -901,9 +925,10 @@ export class ArtService {
   /**
    * Tripo fabrique le modèle une seule fois (rien pour un objet simple) ; Blender prépare la scène ; l'artisan 3D la
    * retouche pas à pas en regardant ses photos ; le hub exporte, le validateur juge. Si la forme est bonne mais pas la
-   * finition, l'artisan reprend la même scène avec les remarques du validateur, sans repayer Tripo.
+   * finition, l'artisan reprend la même scène avec les remarques du validateur, sans repayer Tripo. `retouch` (ADR-55) :
+   * un modèle déjà fabriqué reprend sa scène d'atelier telle qu'elle est, avec les dernières remarques du validateur.
    */
-  async #produceModel(project: string, id: string): Promise<boolean> {
+  async #produceModel(project: string, id: string, retouch = false): Promise<boolean> {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const progress = this.#generating.get(project)!.get(id)!;
@@ -920,7 +945,15 @@ export class ArtService {
       let rigType: string | null = null;
       // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
       const planche: string[] = [];
-      if (source) {
+      const previous = retouch ? asset.model : null;
+      if (previous) {
+        animations = previous.animations;
+        rigType = previous.rigType ?? null;
+        planche.push(...(previous.views ?? []).filter((f) => existsSync(join(root, f))));
+        // Le modèle déjà branché dans le jeu sera remplacé par la version retouchée.
+        if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
+      }
+      if (source && !previous) {
         const t = await this.#model3d.tripo({
           image: readFileSync(join(root, source)),
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
@@ -950,8 +983,10 @@ export class ArtService {
       const move = (a: string) => a.split(":").pop();
       const missingAnimations = spec.animations.filter((w) => !animations.some((a) => move(a) === move(w) || (move(w) === "walk" && move(a) === "march")));
       progress.stage = "atelier";
-      progress.step = "Blender prépare la scène de l'atelier";
-      await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+      if (!previous) {
+        progress.step = "Blender prépare la scène de l'atelier";
+        await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+      }
       // Ce que l'artisan lit : la fiche, la bible et l'image de référence, copiées dans son dossier.
       writeAtomic(join(dir, "fiche.json"), JSON.stringify({ id: asset.id, name: asset.name, type: asset.type, usage: asset.usage, specs: asset.specs, model3d: spec }, null, 2));
       if (existsSync(join(root, "bible.md"))) copyFileSync(join(root, "bible.md"), join(dir, "bible.md"));
@@ -963,7 +998,7 @@ export class ArtService {
         return name;
       });
 
-      let remarks: string[] = [];
+      let remarks: string[] = previous?.verdict ? (previous.verdict.points.length ? previous.verdict.points : [previous.verdict.summary]) : [];
       for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
         progress.round = pass;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
@@ -989,25 +1024,31 @@ export class ArtService {
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
-        a.model.verdict = { ok: v.ok, summary: v.summary, points: v.points, prompt: null, file, by: "validator", at: this.#clock.now() };
-        this.#setStatus(a, v.ok ? "valide" : "production");
+        // De petites retouches qui résistent à la dernière passe n'empêchent pas un modèle jouable d'entrer dans le jeu (ADR-55).
+        const ok = v.ok || (v.mineur && pass === MODEL_ROUNDS);
+        a.model.verdict = { ok, summary: v.summary, points: v.points, prompt: null, file, by: "validator", at: this.#clock.now() };
+        this.#setStatus(a, ok ? "valide" : "production");
         writeManifest(gameRoot, m);
-        await this.#commit(gameRoot, `art: modèle 3D de ${id} ${v.ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
-        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: v.ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits } });
-        const retry = !v.ok && v.forme_ok && pass < MODEL_ROUNDS;
+        await this.#commit(gameRoot, `art: modèle 3D de ${id} ${ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
+        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits } });
+        const retry = !ok && v.forme_ok && pass < MODEL_ROUNDS;
         this.#insert(
           project,
           "art",
           [
             ...renders.map((r) => `${IMAGE_MARK}${r}`),
-            v.ok ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}` : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${MODEL_ROUNDS}). ${v.summary}`,
+            v.ok
+              ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}`
+              : ok
+                ? `**${id} « ${a.name} » en 3D : jouable** (passe ${pass}), quelques retouches mineures restent. ${v.summary}`
+                : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${MODEL_ROUNDS}). ${v.summary}`,
             ...v.points.map((p) => `- ${p}`),
             workshop ? `Dans Blender : ${workshop}` : "",
             `${done.dims.map((d) => `${d} m`).join(" × ")}, ${done.tris} triangles${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}${credits && pass === 1 ? ` · ${credits} crédits Tripo` : ""}.`,
             pass === 1 && missingAnimations.length
               ? `Tripo a reconnu ce modèle comme « ${rigType ?? "inconnu"} » : ${missingAnimations.join(", ")} n'existe pas pour cette forme, donc absente du modèle.`
               : "",
-            v.ok
+            ok
               ? "Je le fais intégrer dans le jeu."
               : retry
                 ? "La forme est bonne : l'artisan reprend la finition avec ces remarques, sans repayer Tripo."
@@ -1019,7 +1060,7 @@ export class ArtService {
             .join("\n"),
           null,
         );
-        if (v.ok) return true;
+        if (ok) return true;
         if (!retry) return false;
         remarks = v.points.length ? v.points : [v.summary];
       }
@@ -1121,7 +1162,7 @@ export class ArtService {
             `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ", modèle de TRIPO : garde sa forme et sa texture, range-le seulement"}.`,
             reference ? `Image de référence : ${reference}` : "Pas d'image de référence : suis la fiche et la bible.",
             sheet.length ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}` : "",
-            remarks.length ? `Le validateur a refusé la passe précédente ; corrige ceci :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
+            remarks.length ? `Le validateur demande ces corrections :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
             journal.length ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}` : "",
             lost ? "Ton pas précédent n'a pas abouti (trop long) : fais un pas plus petit et ne relis que les photos utiles." : "",
             `Photos actuelles (à regarder avec Read) : ${shots.photos.map((p) => basename(p)).join(", ")}`,
@@ -1171,7 +1212,7 @@ export class ArtService {
     renders: string[],
     done: { dims: number[]; tris: number; animations: string[] },
     spec: Model3DSpec,
-  ): Promise<{ ok: boolean; forme_ok: boolean; summary: string; points: string[] }> {
+  ): Promise<{ ok: boolean; forme_ok: boolean; mineur: boolean; summary: string; points: string[] }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(a.id);
     this.#validating.set(project, busy);
@@ -1190,8 +1231,8 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const d = data as { ok: boolean; forme_ok?: boolean; summary: string; points: string[] };
-      return { ok: !!d.ok, forme_ok: d.forme_ok !== false, summary: String(d.summary ?? "").slice(0, 400), points: (d.points ?? []).slice(0, 8) };
+      const d = data as { ok: boolean; forme_ok?: boolean; mineur?: boolean; summary: string; points: string[] };
+      return { ok: !!d.ok, forme_ok: d.forme_ok !== false, mineur: !d.ok && d.forme_ok !== false && !!d.mineur, summary: String(d.summary ?? "").slice(0, 400), points: (d.points ?? []).slice(0, 8) };
     } finally {
       busy.delete(a.id);
     }
@@ -1394,6 +1435,11 @@ const VIEW_FR = ["face", "gauche", "dos", "droite"];
 /** L'extension d'une image d'après son contenu (les vues de Tripo arrivent sans nom de fichier). */
 function imageExt(b: Buffer): string {
   return Object.values(IMAGE_TYPES).find((t) => t.magic(b))?.ext ?? ".png";
+}
+
+/** La scène vitrine que le hub photographie (ADR-49), telle que le développeur doit la faire. */
+function vitrineScene(id: string): string {
+  return `Quand l'adresse du jeu contient « ?vitrine=${id} » (n'importe quel identifiant d'asset intégré), le jeu affiche seulement cet asset, dès le chargement, sans menu ni écran d'accueil : caméra, lumière et sol du jeu, à sa taille réelle à côté du joueur pour l'échelle, son animation de marche ou d'attente en boucle. Le hub s'en sert pour photographier chaque visuel intégré.`;
 }
 
 /** Les couleurs de la fiche (codes hexadécimaux), que l'artisan 3D utilise pour repeindre. */

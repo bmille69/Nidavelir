@@ -601,6 +601,23 @@ Mesures :
 - **Validateur** : la peinture de Tripo (nuances, détails peints) est voulue ; il juge sa fidélité à l'image. Une 3D déjà faite ne repart plus d'une directive : la DA renvoie vers « Refaire la 3D », qui repaie Tripo.
 - **Titan** : sa fiche est remise sur Tripo, à 20 000 triangles, sans consigne de figurine, et décrite d'après l'image validée. Le compte Tripo n'a plus que 45 crédits : il en faut environ 130 pour le refaire avec squelette et animations.
 
+### ADR-55 : teintes justes, photos debout, finition reprise sans Tripo, vitrine exigée
+**Statut** : **Validée** le 20/10/2026, dans la suite de la carte blanche. Le premier essai réel de l'ADR-54 coûte 145 crédits Tripo et seulement 2 appels Fable (0,38 $). Le Titan est une vraie armure, validé du premier coup et intégré. Je le note 7/10, pour quatre défauts constatés :
+- l'armure est gris craie et bleutée ;
+- la visière est ambre et ne brille pas ;
+- les photos le montrent voûté ;
+- la capture du jeu montre l'écran d'accueil.
+- **La teinte** : Tripo peint son armure en métal. `matiere()` retirait le métal sans rien changer à la couleur, et une couleur de métal devenue peinture mate paraît bien plus claire. `matiere()` assombrit désormais chaque pixel selon la carte de métal, avant de la retirer (`assombrir=0.35`).
+- **Deux outils pour l'artisan** :
+  - `couleurs(n)` donne les couleurs vraiment peintes, échantillonnées aux coordonnées UV des faces, donc sans les vides de l'atlas, avec leur part de la surface ;
+  - `teinter(de, vers, tolerance)` déplace la teinte moyenne d'une zone vers la fiche en gardant ses détails, avec un fondu sur les bords. C'est la seule retouche de peinture permise.
+
+  `lueur` s'applique sur la couleur réellement peinte, donc après `teinter` si besoin. Essai réel sur une copie de la scène du Titan : `couleurs` trouve l'armure #525657 et la visière #BCA97E ; après `teinter` et `lueur`, l'armure est gris-pierre chaud, la combinaison charbon, et la visière ivoire allumée (2050 pixels).
+- **Photos debout** : les quatre photos principales et la vue de jeu montrent le début de l'attente, ou à défaut la pose de repos. Toutes les pistes NLA jouées ensemble voûtaient le personnage. Les poses en mouvement restent à part.
+- **Validateur plus exigeant, sans bloquer** : `ok` veut dire qu'il n'y a plus rien à retoucher. Une teinte ou une lueur à reprendre donne `mineur`, et l'artisan fait la seconde passe. Si ces retouches mineures résistent à la dernière passe, le modèle, jouable, part quand même au jeu (« jouable, quelques retouches mineures restent »), sans « Valider quand même ».
+- **« Reprendre la finition »**, un bouton sur la fiche (`POST …/art/assets/:id/retouch`) : l'artisan reprend la scène d'atelier gardée, avec les dernières remarques du validateur, sans Tripo ni préparation. Le modèle est jugé puis repart au jeu. S'il y était déjà, la demande d'intégration dit de remplacer l'ancien fichier sans rien changer d'autre.
+- **Vitrine exigée** : le chantier T-0043 a branché le Titan sans faire la scène vitrine, et la capture a montré l'accueil. Une vitrine qui ne montre pas l'asset lance maintenant, une fois, un chantier dédié pour la faire marcher, vérifiée par un test de bout en bout. La consigne précise aussi « dès le chargement, sans menu ni écran d'accueil ».
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

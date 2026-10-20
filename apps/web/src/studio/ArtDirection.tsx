@@ -700,6 +700,11 @@ function AssetCard({
             <Icon name="cube" size={14} /> {a.model ? "Refaire la 3D" : "Fabriquer la 3D"}
           </button>
         )}
+        {a.model && a.model.verdict && ready3d && !generating && a.status !== "propose" && (
+          <button className="secondary small" disabled={validating} title="L'artisan reprend la scène Blender avec les remarques du validateur, sans repayer Tripo" onClick={() => void act(() => api.artRetouch(slug, a.id))}>
+            <Icon name="cube" size={14} /> Reprendre la finition
+          </button>
+        )}
         {a.status === "production" && a.model?.verdict && !a.model.verdict.ok && !generating && (
           <button className="secondary small" onClick={() => void act(() => api.artDecide(slug, a.id, "valider"))}>
             Valider la 3D quand même

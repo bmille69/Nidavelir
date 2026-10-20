@@ -227,6 +227,10 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.generateModel(req.human!, slug, id);
     });
+    api.post("/projects/:slug/art/assets/:id/retouch", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.retouchModel(req.human!, slug, id);
+    });
     api.post("/projects/:slug/art/assets/:id/integrate", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.integrate(req.human!, slug, id);

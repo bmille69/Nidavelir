@@ -518,7 +518,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(steps).toHaveLength(4);
     expect(steps[0]!.prompt).toMatch(/Palette de la fiche[^\n]*#1C1A1E, #9BE000[\s\S]*Image de référence : reference.png[\s\S]*photo-0-face.png/);
     expect(steps[1]!.prompt).toMatch(/Tes pas précédents :\nPas 1 :[\s\S]*→ réussi\nSortie :\nfait[\s\S]*photo-1-face.png/);
-    expect(steps[2]!.prompt).toMatch(/corrige ceci :\n- Joints éteints/);
+    expect(steps[2]!.prompt).toMatch(/demande ces corrections :\n- Joints éteints/);
     expect(existsSync(join(m3d.atelier("bordee-A-0001"), "fiche.json"))).toBe(true);
     // La planche : une retouche valable (la vue « top » n'existe pas), rejugée, montrée, et transmise à l'artisan et au validateur.
     expect(m3d.viewEdits).toEqual([{ view: "back", prompt: "Only four legs, like the front view." }]);
@@ -586,6 +586,44 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", model: { verdict: { ok: false } } });
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/La forme elle-même ne va pas[\s\S]*« Refaire la 3D »/);
   }, 30_000);
+
+  it("reprendre la finition : la scène gardée, sans Tripo, les remarques du validateur, et la version retouchée remplace celle du jeu (ADR-55)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    m3d.rigType = "biped";
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur", "specs": "Plaques #6E6A63, visière #F2EBDD"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: ["Armure un peu claire", "Visière ambre, sans lueur"] } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(() => art.retouchModel(sb.human(), "bordee", "A-0002")).toThrow(/introuvable/);
+
+    // Deux passes jugées « mineur » : le modèle, jouable, repart quand même au jeu, en remplacement.
+    const step = { note: "Je teinte l'armure et j'allume la visière.", code: 'teinter("#525657", "#6E6A63")\nlueur("#F2EBDD")', photos: true, fini: false, summary: "" };
+    const done = { note: "Propre.", code: null, photos: false, fini: true, summary: "Armure gris-pierre, visière allumée." };
+    const minor = { ok: false, forme_ok: true, mineur: true, summary: "Jouable ; la visière pourrait être plus large.", points: ["Visière un peu fine"] };
+    fake.extractions.push(...([step, done, minor, done, minor] as never[]));
+    art.retouchModel(sb.human(), "bordee", "A-0001");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(m3d.prepares).toHaveLength(1);
+    const steps = fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt));
+    expect(steps.at(-3)!.prompt).toMatch(/Le validateur demande ces corrections :\n- Armure un peu claire\n- Visière ambre, sans lueur/);
+    expect(steps.at(-1)!.prompt).toMatch(/- Visière un peu fine/);
+    expect(steps[0]!.systemPrompt).toMatch(/couleurs\(n\)[\s\S]*teinter\(de, vers/);
+    const a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "integration", model: { workshop: "Armure gris-pierre, visière allumée.", animations: ["idle", "run"], rigType: "biped", verdict: { ok: true } } });
+    expect(art.state("bordee").messages.some((m) => /en 3D : jouable\*\* \(passe 2\), quelques retouches mineures restent/.test(m.text))).toBe(true);
+    const threads = sb.hub.conversations.listThreads("bordee").filter((t) => t.title === "Intégrer A-0001 : Titan");
+    expect(threads).toHaveLength(2);
+    const texts = threads.map((t) => sb.hub.conversations.messages("bordee", t.id)[0]!.text);
+    expect(texts.filter((t) => /version retouchée d'un modèle déjà branché/.test(t))).toHaveLength(1);
+  }, 60_000);
 
   it("modèle de Tripo : l'artisan le range en quatre pas au plus, sans le repeindre, et un pas trop long est rattrapé (ADR-54)", async () => {
     const { sb, fake, gen, m3d, art } = await setupLocal();
@@ -663,6 +701,33 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(launches.at(-1)).toEqual({ cwd: repo, path: "?vitrine=A-0001" });
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integre", ingame: { file: "production/a-0001-vitrine-t-0003.png", ok: true } });
     expect(fake.calls.filter((c) => c.kind === "structured").at(-1)!.prompt).toMatch(/Capture de la scène vitrine du jeu \(\?vitrine=A-0001\)/);
+
+  }, 30_000);
+
+  it("dans le jeu : une vitrine qui montre l'accueil au lieu de l'asset fait demander la scène vitrine, une fois", async () => {
+    const launches: { cwd: string; path?: string }[] = [];
+    const checker: CheckerPort = {
+      tests: async () => ({ status: "none", detail: "" }),
+      launch: async (_key, cwd, screenshot, path) => {
+        launches.push({ cwd, path });
+        if (screenshot) writeFileSync(screenshot, PNG);
+        return { status: "pass", detail: "", screenshot: screenshot ?? null };
+      },
+    };
+    const { sb, fake, gen, repo, art } = await setupLocal(checker);
+    gen.installed = true;
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.replies.push('[[ASSET]] {"name": "Drapeau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A flag. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un drapeau");
+    await art.idle();
+    fake.extractions.push({ visible: false, ok: false, summary: "C'est l'écran d'accueil.", points: [] } as never);
+    art.onTaskStatus({ id: "T-0003", project: "bordee", title: "A-0001 : brancher le drapeau", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    expect(launches.at(-1)).toEqual({ cwd: repo, path: "?vitrine=A-0001" });
+    const fix = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Retoucher A-0001 dans le jeu")!;
+    expect(sb.hub.conversations.messages("bordee", fix.id)[0]!.text).toMatch(/faire marcher la scène vitrine[\s\S]*sans menu ni écran d'accueil[\s\S]*Vérifie-la/);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", ingame: { visible: false, retried: true } });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/faire marcher la scène vitrine/);
   }, 30_000);
 
   it("Flux Kontext : installé sur votre clic, il retouche le meilleur essai au lieu de tout redessiner (ADR-51)", async () => {

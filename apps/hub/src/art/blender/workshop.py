@@ -140,12 +140,42 @@ def tourner(degres):
     normalize(0)
 
 
-def matiere(rugosite=0.85, metal=0.0, materiaux=None):
-    """Matiere mate : rugosite fixe, pas de metal (les reflets de Tripo font « plastique »)."""
+def _metal(m):
+    """Le metal d'un materiau, pixel par pixel aux dimensions de sa texture de couleur (canal de la carte ORM de glTF), ou None."""
+    import numpy as np
+    p, img = principled(m), base_image(m)
+    if not p or not img or not p.inputs["Metallic"].is_linked:
+        return None
+    link = p.inputs["Metallic"].links[0]
+    node, ch = link.from_node, 0
+    if node.type in ("SEPARATE_COLOR", "SEPRGB"):
+        ch = {"Red": 0, "R": 0, "Green": 1, "G": 1, "Blue": 2, "B": 2}.get(link.from_socket.name, 2)
+        node = node.inputs[0].links[0].from_node if node.inputs[0].is_linked else None
+    if not node or node.type != "TEX_IMAGE" or not node.image:
+        return None
+    src = node.image
+    w, h = src.size
+    W, H = img.size
+    a = _pixels(src)[:, ch].reshape(h, w)
+    return a[(np.arange(H) * h) // H][:, (np.arange(W) * w) // W].reshape(-1)
+
+
+def matiere(rugosite=0.85, metal=0.0, materiaux=None, assombrir=0.35):
+    """
+    Matiere mate : rugosite fixe, pas de metal (les reflets de Tripo font « plastique »). Ce qui etait du metal prend sa
+    couleur de base comme une peinture mate, bien plus claire : on l'assombrit d'autant (assombrir=0 pour ne pas toucher).
+    """
     for m in materiaux or materials():
         p = principled(m)
         if not p:
             continue
+        if assombrir and metal < 0.5:
+            mm = _metal(m)
+            if mm is not None:
+                img = base_image(m)
+                px = _pixels(img)
+                px[:, :3] *= (1 - assombrir * mm)[:, None]
+                _store(img, px)
         for k, v in (("Roughness", rugosite), ("Metallic", metal)):
             for l in list(p.inputs[k].links):
                 m.node_tree.links.remove(l)
@@ -217,6 +247,70 @@ def quantifier(palette, materiaux=None, nettoyage=2):
         _store(img, px)
         out.append(img.name)
     return out
+
+
+def _visibles(m, img):
+    """Les pixels de la texture que le modele montre vraiment (aux coordonnees UV de ses faces), sans les vides de l'atlas."""
+    import numpy as np
+    w, h = img.size
+    idx = []
+    for o in all_meshes():
+        if m.name not in [s.material.name for s in o.material_slots if s.material] or not o.data.uv_layers.active:
+            continue
+        uv = np.empty(len(o.data.loops) * 2, dtype=np.float32)
+        o.data.uv_layers.active.data.foreach_get("uv", uv)
+        uv = uv.reshape(-1, 2) % 1.0
+        idx.append((uv[:, 1] * (h - 1)).astype(np.int64) * w + (uv[:, 0] * (w - 1)).astype(np.int64))
+    return np.concatenate(idx) if idx else None
+
+
+def couleurs(n=10, materiaux=None):
+    """
+    Les couleurs que le modele montre (code, part de la surface en %), les plus presentes d'abord : pour savoir de quelle
+    couleur est vraiment peinte une piece (une visiere ambre, une armure bleutee) avant de la teinter ou de la faire briller.
+    """
+    import numpy as np
+    out = []
+    for m in materiaux or materials():
+        img = base_image(m)
+        if not img:
+            continue
+        px = _pixels(img)[:, :3]
+        idx = _visibles(m, img)
+        if idx is not None:
+            px = px[idx]
+        q = np.clip(np.round(px * 15), 0, 15).astype(np.int64)
+        key = q[:, 0] * 256 + q[:, 1] * 16 + q[:, 2]
+        vals, counts = np.unique(key, return_counts=True)
+        for k in np.argsort(-counts)[:n]:
+            c = px[key == vals[k]].mean(axis=0)
+            out.append({"materiau": m.name, "couleur": "#%02X%02X%02X" % tuple(int(round(float(x) * 255)) for x in c), "part": round(100.0 * counts[k] / len(key), 2)})
+    return out
+
+
+def teinter(de, vers, tolerance=0.15, force=1.0, materiaux=None):
+    """
+    Decale les zones de la texture proches de la couleur « de » vers la couleur « vers », en gardant leurs details
+    (ombres, gravures, rivets) : on deplace leur teinte moyenne, on ne repeint pas. Rend le nombre de pixels touches.
+    """
+    import numpy as np
+    c, t = np.array(hex_rgb(de), dtype=np.float32), np.array(hex_rgb(vers), dtype=np.float32)
+    touched = 0
+    for m in materiaux or materials():
+        img = base_image(m)
+        if not img:
+            continue
+        px = _pixels(img)
+        d = np.sqrt(((px[:, :3] - c) ** 2).sum(axis=1))
+        mask = d < tolerance
+        if not mask.any():
+            continue
+        # Plein effet au coeur de la zone, fondu sur ses bords : pas de frontiere nette entre pixels touches ou non.
+        wgt = np.clip((1 - d / tolerance) * 2, 0, 1)[:, None] * force
+        px[:, :3] = np.clip(px[:, :3] + wgt * (t - px[mask, :3].mean(axis=0)), 0, 1)
+        _store(img, px)
+        touched += int(mask.sum())
+    return touched
 
 
 def lueur(couleur, tolerance=0.15, force=4.0, materiaux=None):
@@ -467,17 +561,35 @@ def photos(out_dir, prefix, size_hint=0):
         return path
 
     out = []
+    # Une seule animation, a une image donnee (ou la pose de repos) : les pistes NLA, jouees ensemble, tordraient le modele
+    # (voute, a demi en course) et l'emporteraient sur l'action meme muettes ; on les coupe le temps des photos (verifie en 4.5).
+    arm = armature()
+    animated = bool(arm and arm.animation_data and arm.animation_data.nla_tracks)
+    idle = next((a for a in bpy.data.actions if "idle" in a.name.lower()), None) if animated else None
+    was_nla = arm.animation_data.use_nla if animated else None
+
+    def play(act, frame):
+        arm.animation_data.use_nla = False
+        arm.animation_data.action = act
+        # Blender 4.4+ : une action ne joue que par son « slot » ; ceux de Tripo ne portent pas le nom de l'armature.
+        if act and getattr(act, "slots", None) and len(act.slots):
+            arm.animation_data.action_slot = act.slots[0]
+        scene.frame_set(frame)
+
+    def stand():
+        if animated:
+            play(idle, int(idle.frame_range[0]) if idle else 1)
+
+    # Les photos principales et la vue de jeu montrent le modele debout : le debut de l'attente, sinon la pose de repos.
+    stand()
     # Le devant regarde -Y : « face » est la camera placee en -Y.
     for name, deg in (("face", -90), ("trois-quarts", -45), ("profil", 0), ("dos", 90)):
         a = math.radians(deg)
         cam.location = center + Vector((math.cos(a) * radius, math.sin(a) * radius, radius * 0.45))
         out.append(shoot("%s/%s-%s.png" % (out_dir, prefix, name)))
     # Le modele en mouvement (ADR-53) : une image au milieu de quelques animations, vue de trois-quarts, pour juger la
-    # deformation (une piece de figurine doit suivre son os sans se detacher ni s'etirer).
-    arm = armature()
-    if arm and arm.animation_data and arm.animation_data.nla_tracks:
-        tracks = arm.animation_data.nla_tracks
-        mutes = [t.mute for t in tracks]
+    # deformation (rien ne doit s'etirer, se detacher ni traverser le corps).
+    if animated:
         seen, chosen = set(), []
         for pref in ("walk", "run", "hurt", "slash", "hit", "jump", "idle"):
             for a in bpy.data.actions:
@@ -485,29 +597,16 @@ def photos(out_dir, prefix, size_hint=0):
                     seen.add(a.name)
                     chosen.append(a)
         a45 = math.radians(-45)
-        cam.location = center + Vector((math.cos(a45) * radius, math.sin(a45) * radius, radius * 0.45))
-        # Les pistes NLA l'emporteraient sur l'action, meme muettes : on les coupe le temps des poses (verifie en 4.5).
-        use_nla = arm.animation_data.use_nla
-        arm.animation_data.use_nla = False
         for act in chosen:
-            for t in tracks:
-                t.mute = True
-            arm.animation_data.action = act
-            # Blender 4.4+ : une action ne joue que par son « slot » ; ceux de Tripo ne portent pas le nom de l'armature.
-            if getattr(act, "slots", None) and len(act.slots):
-                arm.animation_data.action_slot = act.slots[0]
-            scene.frame_set(int((act.frame_range[0] + act.frame_range[1]) / 2))
+            play(act, int((act.frame_range[0] + act.frame_range[1]) / 2))
             # La camera suit le modele dans sa pose (une course peut le deplacer).
             plo, phi = bounds()
             target.location = (plo + phi) / 2
             cam.location = target.location + Vector((math.cos(a45) * radius, math.sin(a45) * radius, radius * 0.45))
             safe = re.sub(r"[^a-z0-9_]+", "-", act.name.lower()).strip("-")[:30]
             out.append(shoot("%s/%s-pose-%s.png" % (out_dir, prefix, safe)))
-        arm.animation_data.action = None
-        arm.animation_data.use_nla = use_nla
-        for t, m in zip(tracks, mutes):
-            t.mute = m
-        scene.frame_set(1)
+        target.location = center
+        stand()
     # Vue de jeu : de haut et de loin, sur un sol sombre, comme la camera d'un jeu en 3/4 de dessus.
     bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, 0))
     ground = bpy.context.active_object
@@ -520,6 +619,10 @@ def photos(out_dir, prefix, size_hint=0):
     far = max(max(hi - lo), 0.5) * 3.2
     cam.location = center + Vector((far * 0.35, -far * 0.6, far * 0.75))
     out.append(shoot("%s/%s-vue-jeu.png" % (out_dir, prefix)))
+    if animated:
+        arm.animation_data.action = None
+        arm.animation_data.use_nla = was_nla
+        scene.frame_set(1)
     return out
 
 
@@ -543,7 +646,7 @@ def run_code(code):
     safe = {k: getattr(builtins, k) for k in dir(builtins) if k not in ("open", "eval", "exec", "compile", "__import__", "input", "breakpoint", "globals", "vars", "memoryview", "help", "exit", "quit")}
     safe["__import__"] = guarded_import
     env = {"__builtins__": safe, "bpy": bpy, "bmesh": bmesh, "Vector": Vector, "math": math}
-    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "lueur", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
+    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
         env[k] = globals()[k]
     env["mesures"] = summary
     env["palette"] = job.get("palette", [])
