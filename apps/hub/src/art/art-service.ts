@@ -12,7 +12,7 @@ import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
-import type { Model3DPort, Model3DSpec, Model3DState, ViewEdit, ViewImage } from "./model3d.ts";
+import { rigAnimations, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
   CHOICE_MARK,
@@ -20,6 +20,8 @@ import {
   IMAGE_MARK,
   INGAME_SCHEMA,
   INGAME_SYSTEM,
+  ANIM_SCHEMA,
+  ANIM_VALIDATOR_SYSTEM,
   MODEL_SCHEMA,
   MODEL_VALIDATOR_SYSTEM,
   parseArtDirectives,
@@ -550,6 +552,11 @@ export class ArtService {
       const assets = readManifest(p.root).assets;
       for (const t of directives.model3d) {
         const a = assets.find((x) => x.id === t.asset);
+        // Des animations changées sur un modèle déjà fait : Tripo les pose sur le squelette gardé, sans refaire le modèle (ADR-56).
+        if (a?.model3d && a.model?.rigTask && !sameAnimations(a.model.animations, a.model3d.animations) && a.status !== "propose") {
+          this.#startModel(project, a.id);
+          continue;
+        }
         if (!a?.model3d || a.model || a.status !== "production" && a.status !== "propose") continue;
         const pending = directives.generate.some((g) => g.asset === a.id) || directives.sketches.some((c) => c.asset === a.id);
         if (a.model3d.simple || (a.verdict?.ok && !pending)) this.#startModel(project, a.id);
@@ -943,17 +950,52 @@ export class ArtService {
       let credits = 0;
       let animations: string[] = [];
       let rigType: string | null = null;
+      let rigTask: string | null = null;
       // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
       const planche: string[] = [];
       const previous = retouch ? asset.model : null;
       if (previous) {
         animations = previous.animations;
         rigType = previous.rigType ?? null;
+        rigTask = previous.rigTask ?? null;
         planche.push(...(previous.views ?? []).filter((f) => existsSync(join(root, f))));
         // Le modèle déjà branché dans le jeu sera remplacé par la version retouchée.
         if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
       }
-      if (source && !previous) {
+      // Des animations changées (ADR-56) : Tripo pose les nouvelles sur le squelette gardé (10 crédits chacune), Blender les
+      // range dans la scène gardée. Si Tripo a oublié le squelette (ses tâches expirent), le modèle est refait en entier.
+      const kept = !retouch && source && asset.model?.rigTask && asset.model.source === source && existsSync(join(dir, "scene.blend")) ? asset.model : null;
+      let onlyAnimations = false;
+      if (kept) {
+        try {
+          const want = rigAnimations(kept.rigType ?? "biped", spec.animations);
+          const keep = want.map(shortName);
+          const add = want.filter((w) => !kept.animations.includes(shortName(w)));
+          progress.stage = "tripo";
+          const extra = add.length ? await this.#model3d.animate({ rigTask: kept.rigTask!, names: add, step: (s) => (progress.step = s) }) : { glbs: [], credits: 0 };
+          credits = extra.credits;
+          mkdirSync(join(dir, ".."), { recursive: true });
+          const files = extra.glbs.map((b, i) => {
+            const f = `${dir}-anim-${i + 1}.glb`;
+            writeAtomic(f, b);
+            raws.push(f);
+            return f;
+          });
+          progress.stage = "atelier";
+          progress.step = "Blender range les animations dans la scène gardée";
+          await this.#model3d.addAnimations({ dir, extras: files, animations: add.map(shortName), keep });
+          animations = keep;
+          rigType = kept.rigType ?? null;
+          rigTask = kept.rigTask ?? null;
+          planche.push(...(kept.views ?? []).filter((f) => existsSync(join(root, f))));
+          onlyAnimations = true;
+          if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
+        } catch (err) {
+          progress.step = `Le squelette Tripo n'est plus disponible (${(err as Error).message.slice(0, 120)}) : le modèle est refait`;
+          planche.length = 0;
+        }
+      }
+      if (source && !previous && !onlyAnimations) {
         const t = await this.#model3d.tripo({
           image: readFileSync(join(root, source)),
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
@@ -973,6 +1015,7 @@ export class ArtService {
         credits = t.credits;
         animations = t.animations ?? [];
         rigType = t.rigType ?? null;
+        rigTask = t.rigTask ?? null;
         mkdirSync(join(dir, ".."), { recursive: true });
         for (const [i, b] of [t.glb, ...(t.extras ?? [])].entries()) {
           const f = `${dir}-brut${i ? `-${i + 1}` : ""}.glb`;
@@ -983,7 +1026,7 @@ export class ArtService {
       const move = (a: string) => a.split(":").pop();
       const missingAnimations = spec.animations.filter((w) => !animations.some((a) => move(a) === move(w) || (move(w) === "walk" && move(a) === "march")));
       progress.stage = "atelier";
-      if (!previous) {
+      if (!previous && !onlyAnimations) {
         progress.step = "Blender prépare la scène de l'atelier";
         await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
       }
@@ -998,7 +1041,9 @@ export class ArtService {
         return name;
       });
 
-      let remarks: string[] = previous?.verdict ? (previous.verdict.points.length ? previous.verdict.points : [previous.verdict.summary]) : [];
+      // Les dernières remarques du validateur suivent la scène gardée (finition reprise, ou animations changées).
+      const base = previous ?? (onlyAnimations ? kept : null);
+      let remarks: string[] = base?.verdict ? (base.verdict.points.length ? base.verdict.points : [base.verdict.summary]) : [];
       for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
         progress.round = pass;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
@@ -1013,14 +1058,24 @@ export class ArtService {
         let m = readManifest(gameRoot);
         let a = m.assets.find((x) => x.id === id);
         if (!a) return false;
-        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, missingAnimations, verdict: null };
+        const bandes = done.bandes.map((r) => relative(root, r).replace(/\\/g, "/"));
+        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, bandes, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, rigTask, missingAnimations, verdict: null };
         this.#setStatus(a, "a_valider");
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`);
 
         progress.step = "Le validateur regarde le modèle sous tous les angles";
         progress.preview = { kind: "art", file: renders[1] ?? renders[0]! };
-        const v = await this.#judgeModel(project, a, source, planche, renders, done, spec);
+        const look = await this.#judgeModel(project, a, source, planche, renders, done, spec);
+        // Les mouvements, jugés à part sur leurs bandes (ADR-56) : sens, durée, allure.
+        const motion = bandes.length ? await this.#judgeAnimations(project, a, bandes, done) : null;
+        const v = {
+          ok: look.ok && (motion?.ok ?? true),
+          forme_ok: look.forme_ok,
+          mineur: !(look.ok && (motion?.ok ?? true)) && (look.ok || look.mineur) && (!motion || motion.ok || motion.mineur),
+          summary: motion && !motion.ok ? `${look.summary} ${motion.summary}`.slice(0, 600) : look.summary,
+          points: [...look.points, ...(motion?.points ?? [])],
+        };
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
@@ -1031,12 +1086,15 @@ export class ArtService {
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} ${ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
         this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits } });
-        const retry = !ok && v.forme_ok && pass < MODEL_ROUNDS;
+        // Une animation au sens faux ne se corrige pas dans Blender : on s'arrête et on dit laquelle remplacer.
+        const swap = !!motion?.remplacements.length;
+        const retry = !ok && v.forme_ok && !swap && pass < MODEL_ROUNDS;
         this.#insert(
           project,
           "art",
           [
             ...renders.map((r) => `${IMAGE_MARK}${r}`),
+            ...bandes.map((r) => `${IMAGE_MARK}${r}`),
             v.ok
               ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}`
               : ok
@@ -1048,12 +1106,17 @@ export class ArtService {
             pass === 1 && missingAnimations.length
               ? `Tripo a reconnu ce modèle comme « ${rigType ?? "inconnu"} » : ${missingAnimations.join(", ")} n'existe pas pour cette forme, donc absente du modèle.`
               : "",
+            ...(motion?.remplacements ?? []).map(
+              (r) => `Animation « ${r.animation} » : ${r.pourquoi} Pour la remplacer, dites au Directeur artistique « remplace ${r.animation} par ${r.par} » : 10 crédits Tripo, sans refaire le modèle.`,
+            ),
             ok
               ? "Je le fais intégrer dans le jeu."
               : retry
                 ? "La forme est bonne : l'artisan reprend la finition avec ces remarques, sans repayer Tripo."
-                : v.forme_ok
-                  ? "La finition résiste : « Valider quand même », ou dites-moi ce qui cloche."
+                : swap
+                  ? "Le reste attend la bonne animation : dites-le au Directeur artistique (ci-dessus), et le modèle sera refait pour 10 crédits Tripo par animation."
+                  : v.forme_ok
+                    ? "La finition résiste : « Valider quand même », ou dites-moi ce qui cloche."
                   : "La forme elle-même ne va pas (elle vient de l'image ou de Tripo) : « Refaire la 3D » relance Tripo, ou dites-moi ce qui cloche et je repars de nouveaux croquis.",
           ]
             .filter(Boolean)
@@ -1201,6 +1264,43 @@ export class ArtService {
       }
     }
     return `Arrêté au bout de ${steps} pas.`;
+  }
+
+  /** Le validateur devant les bandes d'animation (ADR-56) : le sens du mouvement, sa durée, son allure. */
+  async #judgeAnimations(
+    project: string,
+    a: Asset,
+    bandes: string[],
+    done: { animations: string[]; durees: { nom: string; duree_s: number }[] },
+  ): Promise<{ ok: boolean; mineur: boolean; summary: string; points: string[]; remplacements: { animation: string; par: string; pourquoi: string }[] }> {
+    const busy = this.#validating.get(project) ?? new Set<string>();
+    busy.add(a.id);
+    this.#validating.set(project, busy);
+    try {
+      const duration = (n: string) => done.durees.find((d) => d.nom === n)?.duree_s;
+      const { data } = await this.#orchestrator.structured({
+        systemPrompt: ANIM_VALIDATOR_SYSTEM,
+        prompt: [
+          `Animations du modèle 3D de l'asset ${a.id} « ${a.name} » (${a.type}). Usage : ${a.usage}. Spécifications : ${a.specs || "aucune"}.`,
+          ...done.animations.map((n) => `- « ${n} »${duration(n) !== undefined ? ` (${duration(n)} s)` : ""} : bande ${bandes.find((b) => new RegExp(`-anim-${n.toLowerCase().replace(/[^a-z0-9_]+/g, "-")}\\.png$`).test(b)) ?? "?"}`),
+          `Animations demandées par la fiche : ${a.model3d?.animations.join(", ") || "aucune"}.`,
+        ].join("\n"),
+        jsonSchema: ANIM_SCHEMA,
+        readDir: artRoot(this.#projects.get(project).root),
+        role: "art",
+        meta: { project, agent: "art_director" },
+      });
+      const d = data as { ok: boolean; mineur?: boolean; summary: string; points: string[]; remplacements?: { animation: string; par: string; pourquoi: string }[] };
+      return {
+        ok: !!d.ok,
+        mineur: !d.ok && !!d.mineur,
+        summary: String(d.summary ?? "").slice(0, 400),
+        points: (d.points ?? []).slice(0, 8).map((p) => `Animation : ${p}`),
+        remplacements: (d.remplacements ?? []).filter((r) => r.animation && r.par && done.animations.includes(r.animation)).slice(0, 4),
+      };
+    } finally {
+      busy.delete(a.id);
+    }
   }
 
   /** Le validateur devant les photos du modèle exporté. */
@@ -1435,6 +1535,18 @@ const VIEW_FR = ["face", "gauche", "dos", "droite"];
 /** L'extension d'une image d'après son contenu (les vues de Tripo arrivent sans nom de fichier). */
 function imageExt(b: Buffer): string {
   return Object.values(IMAGE_TYPES).find((t) => t.magic(b))?.ext ?? ".png";
+}
+
+/** « biped:walk » → « walk » : le nom que le modèle et le jeu connaissent. */
+function shortName(a: string): string {
+  return a.replace(/^biped:/, "");
+}
+
+/** Les animations du modèle sont-elles celles que la fiche demande (noms courts, sans préfixe de bibliothèque) ? */
+function sameAnimations(have: string[], want: string[]): boolean {
+  const h = new Set(have.map(shortName));
+  const w = new Set(want.map(shortName));
+  return h.size === w.size && [...w].every((a) => h.has(a));
 }
 
 /** La scène vitrine que le hub photographie (ADR-49), telle que le développeur doit la faire. */

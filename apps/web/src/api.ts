@@ -107,7 +107,7 @@ export type ArtAsset = { id: string; name: string; type: string; usage: string; 
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
 export type ArtModelSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
 export type ArtSketch = { file: string; label: string; prompt: string };
-export type ArtModel = { file: string; source: string | null; views?: string[]; renders: string[]; tris: number; dims: number[]; animations: string[]; workshop?: string | null; rigType?: string | null; missingAnimations?: string[]; verdict: ArtVerdict | null };
+export type ArtModel = { file: string; source: string | null; views?: string[]; renders: string[]; bandes?: string[]; tris: number; dims: number[]; animations: string[]; workshop?: string | null; rigType?: string | null; missingAnimations?: string[]; verdict: ArtVerdict | null };
 export type ArtInGame = { task: string; file: string; visible: boolean; ok: boolean; summary: string; points: string[]; retried: boolean; at: string };
 export type Art3D = {
   blender: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };

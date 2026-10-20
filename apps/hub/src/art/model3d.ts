@@ -26,7 +26,8 @@ export type Model3DSpec = { size: number; tris: number; rig: boolean; animations
 
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
-export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string; views?: ViewImage[] };
+/** `rigTask` : la tâche Tripo du squelette, pour lui poser d'autres animations plus tard sans refaire le modèle (ADR-56). */
+export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string; rigTask?: string; views?: ViewImage[] };
 /** Les quatre vues de la planche (ADR-50), dans l'ordre que Tripo attend. */
 export const VIEWS = ["front", "left", "back", "right"] as const;
 export type View = (typeof VIEWS)[number];
@@ -35,7 +36,8 @@ export type ViewImage = { view: View; image: Buffer };
 export type ViewEdit = { view: View; prompt: string };
 /** Le jugement de la planche : les retouches à faire (aucune si elle est cohérente). `round` 2 : après retouche, pour information. */
 export type ViewsReview = (views: ViewImage[], round: number) => Promise<ViewEdit[]>;
-export type FinishResult = { renders: string[]; tris: number; dims: number[]; animations: string[] };
+/** `bandes` : une bande d'images par animation (ADR-56), pour juger le mouvement ; `durees` en secondes. */
+export type FinishResult = { renders: string[]; bandes: string[]; tris: number; dims: number[]; animations: string[]; durees: { nom: string; duree_s: number }[] };
 /** Un pas de l'artisan dans Blender : ce que son code a affiché, ou son erreur. */
 export type CodeResult = { ok: boolean; sortie: string; erreur: string | null };
 /** Les photos de travail (chemins absolus, dans le dossier de l'atelier) et les mesures de la scène. */
@@ -63,8 +65,12 @@ export interface Model3DPort {
   runCode(req: { dir: string; code: string }): Promise<CodeResult>;
   /** Cinq photos de travail (face, trois-quarts, profil, dos, vue de jeu) et les mesures, sans rien changer. */
   photos(req: { dir: string; prefix: string }): Promise<Photos>;
-  /** Blender exporte la scène de l'atelier : mesures du jeu, budget, .glb (Y en haut, 1 u = 1 m) et cinq photos. */
+  /** Blender exporte la scène de l'atelier : mesures du jeu, budget, .glb (Y en haut, 1 u = 1 m), cinq photos et les bandes d'animation. */
   export(req: { dir: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }): Promise<FinishResult>;
+  /** D'autres animations sur un squelette déjà payé (ADR-56) : un fichier par animation, 10 crédits chacune. */
+  animate(req: { rigTask: string; names: string[]; step: (s: string) => void }): Promise<{ glbs: Buffer[]; credits: number }>;
+  /** Blender ajoute (ou remplace) ces animations dans la scène de l'atelier et retire celles hors de `keep`. */
+  addAnimations(req: { dir: string; extras: string[]; animations: string[]; keep: string[] }): Promise<unknown>;
 }
 
 /** Les animations toutes prêtes de Tripo (noms courts, sans « preset: »). */
@@ -199,8 +205,12 @@ export class RealModel3D implements Model3DPort {
       size: req.spec.size,
       max_tris: req.spec.tris,
       max_texture: maxTexture(req.spec),
-    })) as { renders: string[]; tris_after: number; dims: number[]; animations: string[] };
-    return { renders: s.renders, tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations };
+    })) as { renders: string[]; bandes?: string[]; tris_after: number; dims: number[]; animations: string[]; durees?: { nom: string; duree_s: number }[] };
+    return { renders: s.renders, bandes: s.bandes ?? [], tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations, durees: s.durees ?? [] };
+  }
+
+  async addAnimations(req: { dir: string; extras: string[]; animations: string[]; keep: string[] }): Promise<unknown> {
+    return this.#run(join(req.dir, "scene.blend"), req.dir, "animations", { mode: "animations", blend: join(req.dir, "scene.blend"), extras: req.extras, animations: req.animations, garder: req.keep });
   }
 
   /** Blender sans fenêtre sur le script de l'atelier ; son journal reste dans le dossier de l'atelier. */
@@ -352,6 +362,7 @@ export class RealModel3D implements Model3DPort {
       const extras: Buffer[] = [];
       let names: string[] = [];
       let rigType: string | undefined;
+      let rigTask: string | undefined;
       if (req.spec.rig) {
         const check = await run("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input: model.task_id });
         if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
@@ -360,6 +371,7 @@ export class RealModel3D implements Model3DPort {
         // L'ancien squelette (v1.0) ne connaît que les bipèdes : quatre pattes, ailes, serpents… passent par le v2.5.
         const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: type === "biped" ? "v1.0-20240301" : "v2.5-20260210", rig_type: type });
         last = rig;
+        rigTask = rig.task_id;
         names = rigAnimations(type, req.spec.animations);
         // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
         for (const [i, name] of names.entries()) {
@@ -377,11 +389,43 @@ export class RealModel3D implements Model3DPort {
       const glb = await this.#fetchModel(last, req.step);
       this.#setPending(null);
       // Les noms montrés au jeu, sans le préfixe de la bibliothèque : « walk », pas « biped:walk ».
-      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, views };
+      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, rigTask, views };
     } catch (err) {
       // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
       if (reused) this.#setPending(null);
       throw err;
+    } finally {
+      if (credits) this.#spend(credits);
+    }
+  }
+
+  /** D'autres animations sur le squelette déjà payé : si Tripo ne connaît plus la tâche (elle expire), l'appelant refait tout. */
+  async animate(req: { rigTask: string; names: string[]; step: (s: string) => void }): Promise<{ glbs: Buffer[]; credits: number }> {
+    const key = this.#key();
+    if (!key) throw new Error("Ajoutez d'abord votre clé Tripo");
+    const u = this.#usage();
+    if (u.credits >= this.#cap) throw new Error(`Plafond mensuel Tripo atteint (${u.credits} crédits sur ${this.#cap}) : il repart le mois prochain`);
+    let credits = 0;
+    const glbs: Buffer[] = [];
+    try {
+      for (const [i, name] of req.names.entries()) {
+        req.step(`Tripo applique l'animation « ${name} » (${i + 1}/${req.names.length})`);
+        const { task_id } = (await this.#api(key, "POST", "/v3/animations/retarget", { input: req.rigTask, animation: `preset:${name}`, out_format: "glb", export_with_geometry: true, animate_in_place: true })) as { task_id: string };
+        const deadline = Date.now() + 20 * 60_000;
+        for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
+          await new Promise((r) => setTimeout(r, wait));
+          const t = (await this.#api(key, "GET", `/v3/tasks/${task_id}`)) as TripoTask;
+          const status = String(t.status).toLowerCase();
+          if (status === "success") {
+            credits += Number(t.credits_consumed ?? 0);
+            glbs.push(await this.#fetchModel(t, req.step));
+            break;
+          }
+          if (["failed", "cancelled", "banned", "expired", "unknown"].includes(status)) throw new Error(`Tripo : l'animation « ${name} » a échoué (${t.error_msg ?? t.error_message ?? status})`);
+          if (Date.now() > deadline) throw new Error(`Tripo : l'animation « ${name} » a pris plus de 20 minutes`);
+        }
+      }
+      return { glbs, credits };
     } finally {
       if (credits) this.#spend(credits);
     }

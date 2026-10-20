@@ -74,6 +74,10 @@ export type ModelInfo = {
   /** La forme que Tripo a reconnue pour le squelette (biped, quadruped…), et les animations demandées qu'il n'a pas pu poser. */
   rigType?: string | null;
   missingAnimations?: string[];
+  /** La tâche Tripo du squelette : d'autres animations s'y posent pour 10 crédits chacune, sans refaire le modèle (ADR-56). */
+  rigTask?: string | null;
+  /** Une bande d'images par animation, pour juger le mouvement (ADR-56). */
+  bandes?: string[];
   /** Photos sous quatre angles, pour le validateur et pour vous. */
   renders: string[];
   tris: number;

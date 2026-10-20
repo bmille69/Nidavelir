@@ -99,7 +99,20 @@ class FakeModel3D implements Model3DPort {
       this.viewEdits.push(...edits);
       if (edits.length) await req.views(sheet, 2);
     }
-    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(req.views ? { views: sheet } : {}) };
+    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(this.rigType ? { rigTask: "rig-1" } : {}), ...(req.views ? { views: sheet } : {}) };
+  }
+  /** Les bandes d'animation ne sont rendues que si un test le demande (ADR-56). */
+  bandes = false;
+  animates: { rigTask: string; names: string[] }[] = [];
+  added: { extras: string[]; animations: string[]; keep: string[] }[] = [];
+  async animate(req: { rigTask: string; names: string[]; step: (s: string) => void }) {
+    req.step("Tripo applique l'animation");
+    this.animates.push({ rigTask: req.rigTask, names: req.names });
+    return { glbs: req.names.map(() => Buffer.from("glTF-anim")), credits: 10 * req.names.length };
+  }
+  async addAnimations(req: { dir: string; extras: string[]; animations: string[]; keep: string[] }) {
+    this.added.push({ extras: req.extras.map((f) => (existsSync(f) ? readFileSync(f, "utf8") : "?")), animations: req.animations, keep: req.keep });
+    return {};
   }
   async prepare(req: { dir: string; input: string | null; palette: string[] }) {
     mkdirSync(req.dir, { recursive: true });
@@ -124,7 +137,10 @@ class FakeModel3D implements Model3DPort {
     writeFileSync(req.output, "glTF");
     const renders = ["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((a) => join(req.rendersDir, `${req.prefix}-${a}.png`));
     for (const r of renders) writeFileSync(r, PNG);
-    return { renders, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations: req.spec.animations.filter((a) => a !== "slash") };
+    const animations = req.spec.animations.filter((a) => a !== "slash");
+    const bandes = this.bandes ? animations.map((a) => join(req.rendersDir, `${req.prefix}-anim-${a}.png`)) : [];
+    for (const b of bandes) writeFileSync(b, PNG);
+    return { renders, bandes, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations, durees: animations.map((nom) => ({ nom, duree_s: nom === "hurt" ? 13.8 : 1.2 })) };
   }
 }
 
@@ -623,6 +639,49 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(threads).toHaveLength(2);
     const texts = threads.map((t) => sb.hub.conversations.messages("bordee", t.id)[0]!.text);
     expect(texts.filter((t) => /version retouchée d'un modèle déjà branché/.test(t))).toHaveLength(1);
+  }, 60_000);
+
+  it("animations : jugées sur leurs bandes, coupées par l'artisan, et une animation remplacée sans refaire le modèle (ADR-56)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    m3d.rigType = "biped";
+    m3d.bandes = true;
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur", "specs": "Lourd, planté comme un roc"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run, hurt]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    // Passe 1 : le modèle est bon, mais « hurt » est une chute et la course sprinte.
+    fake.extractions.push({ ok: true, forme_ok: true, mineur: false, summary: "Fidèle.", points: [] } as never);
+    fake.extractions.push({ ok: false, mineur: false, summary: "hurt est une chute au sol ; la course sprinte.", points: ["run : ralentir à 0,8"], remplacements: [{ animation: "hurt", par: "hit_to_body_01", pourquoi: "C'est une chute qui reste au sol 14 s, pas un coup reçu." }] } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    const judge = fake.calls.filter((c) => /bandes/.test(c.systemPrompt)).at(-1)!;
+    expect(judge.systemPrompt).toMatch(/CATALOGUE DES ANIMATIONS[\s\S]*hurt est une CHUTE/);
+    expect(judge.prompt).toMatch(/« hurt » \(13\.8 s\) : bande production\/a-0001-3d(-\d+)?-anim-hurt\.png/);
+    let a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "production", model: { rigTask: "rig-1", bandes: [expect.stringMatching(/anim-idle\.png$/), expect.stringMatching(/anim-run\.png$/), expect.stringMatching(/anim-hurt\.png$/)], verdict: { ok: false, points: ["Animation : run : ralentir à 0,8"] } } });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/« remplace hurt par hit_to_body_01 » : 10 crédits Tripo, sans refaire le modèle/);
+    expect(fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt)).at(-1)!.systemPrompt).toMatch(/couper\(nom, debut_s, fin_s\)/);
+
+    // La DA remplace l'animation : Tripo ne pose que la nouvelle sur le squelette gardé, Blender la range, l'artisan coupe.
+    fake.replies.push("Je remplace la chute par un vrai coup reçu.\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run, hit_to_body_01]]");
+    fake.extractions.push(...(artisanSteps('vitesse("run", 0.8)', "Course ralentie à 0,8.") as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, mineur: false, summary: "Fidèle.", points: [] } as never);
+    fake.extractions.push({ ok: true, mineur: false, summary: "Le coup reçu est une réaction courte, la course est lourde.", points: [], remplacements: [] } as never);
+    art.send(sb.human(), "bordee", "Remplace hurt par hit_to_body_01");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(m3d.prepares).toHaveLength(1);
+    expect(m3d.animates).toEqual([{ rigTask: "rig-1", names: ["biped:hit_to_body_01"] }]);
+    expect(m3d.added).toEqual([{ extras: ["glTF-anim"], animations: ["hit_to_body_01"], keep: ["idle", "run", "hit_to_body_01"] }]);
+    const steps = fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt));
+    expect(steps.at(-2)!.prompt).toMatch(/Le validateur demande ces corrections :\n- Animation : run : ralentir à 0,8/);
+    expect(m3d.codes.at(-1)).toBe('vitesse("run", 0.8)');
+    a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "integration", model: { animations: ["idle", "run", "hit_to_body_01"], rigTask: "rig-1", verdict: { ok: true } } });
+    expect(art.state("bordee").messages.some((m) => /en 3D : conforme\*\* \(passe 1\)[\s\S]*10 crédits Tripo/.test(m.text))).toBe(true);
   }, 60_000);
 
   it("modèle de Tripo : l'artisan le range en quatre pas au plus, sans le repeindre, et un pas trop long est rattrapé (ADR-54)", async () => {

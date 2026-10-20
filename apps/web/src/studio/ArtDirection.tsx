@@ -605,6 +605,15 @@ function AssetCard({
               </a>
             ))}
           </div>
+          {!!a.model.bandes?.length && (
+            <div className="art-model-strips">
+              {a.model.bandes.map((r) => (
+                <a key={r} href={api.artFile(slug, r)} target="_blank" rel="noreferrer" title={r}>
+                  <img src={api.artFile(slug, r)} alt={r} loading="lazy" />
+                </a>
+              ))}
+            </div>
+          )}
           <p className="muted small">
             {a.model.dims.map((d) => `${d} m`).join(" × ")} · {a.model.tris} triangles{a.model.animations.length ? ` · ${a.model.animations.join(", ")}` : ""}
           </p>

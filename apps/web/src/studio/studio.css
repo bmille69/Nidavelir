@@ -1191,6 +1191,8 @@
 .art-sketches figure { margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .art-sketches img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
 .art-model-shots img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+.art-model-strips { display: flex; flex-direction: column; gap: 0.3rem; }
+.art-model-strips img { width: 100%; border-radius: 6px; border: 1px solid var(--border); }
 .art-asset { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.8rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
 .art-asset.st-a_valider, .art-asset.st-valide { border-color: color-mix(in srgb, var(--c-art) 55%, transparent); }
 .art-asset header { display: flex; align-items: baseline; gap: 0.5rem; }

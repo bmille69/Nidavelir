@@ -4,7 +4,7 @@
 # une liste blanche), photos (cinq vues, la scene n'est pas modifiee), export (mesures finales, .glb, photos, chiffres).
 # Le hub pilote l'artisan pas a pas : il execute son code, lui rend la sortie, les mesures et les photos a regarder.
 # Convention : le devant du modele regarde -Y dans Blender, soit +Z dans le .glb (Y en haut, 1 unite = 1 m).
-import bpy, bmesh, sys, json, math, io, re, traceback, contextlib
+import bpy, bmesh, sys, os, json, math, io, re, traceback, contextlib
 from mathutils import Vector
 
 job = json.load(open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8"))
@@ -92,6 +92,12 @@ def summary():
         "materiaux": mats,
         "animations": [{"nom": a.name, "images": [int(a.frame_range[0]), int(a.frame_range[1])]} for a in bpy.data.actions],
     }
+
+
+def animations():
+    """Les animations du modele : nom, debut et fin en secondes, duree (ADR-56)."""
+    fps = scene.render.fps
+    return [{"nom": a.name, "debut_s": round(a.frame_range[0] / fps, 2), "fin_s": round(a.frame_range[1] / fps, 2), "duree_s": round((a.frame_range[1] - a.frame_range[0]) / fps, 2)} for a in bpy.data.actions]
 
 
 def normalize(size):
@@ -619,6 +625,8 @@ def photos(out_dir, prefix, size_hint=0):
     far = max(max(hi - lo), 0.5) * 3.2
     cam.location = center + Vector((far * 0.35, -far * 0.6, far * 0.75))
     out.append(shoot("%s/%s-vue-jeu.png" % (out_dir, prefix)))
+    # Le sol ne doit pas rester dans la scene : il fausserait les mesures et les bandes d'animation.
+    bpy.data.objects.remove(ground, do_unlink=True)
     if animated:
         arm.animation_data.action = None
         arm.animation_data.use_nla = was_nla
@@ -626,9 +634,142 @@ def photos(out_dir, prefix, size_hint=0):
     return out
 
 
+# ---- Animations (ADR-56) : des ciseaux, pas de l'animation ----
+
+def _action(nom):
+    a = bpy.data.actions.get(nom) or next((a for a in bpy.data.actions if a.name.lower() == str(nom).lower()), None)
+    if not a:
+        raise ValueError("animation inconnue : %s (il y a %s)" % (nom, ", ".join(a.name for a in bpy.data.actions)))
+    return a
+
+
+def _restrip(act):
+    """Refait la piste NLA de cette action (sa bande suit la nouvelle longueur)."""
+    for arm in [o for o in scene.objects if o.type == "ARMATURE" and o.animation_data]:
+        tracks = arm.animation_data.nla_tracks
+        for t in [t for t in tracks if any(s.action == act for s in t.strips)]:
+            tracks.remove(t)
+        t = tracks.new()
+        t.name = act.name
+        t.strips.new(act.name, 0, act)
+
+
+def couper(nom, debut_s, fin_s):
+    """
+    Garde seulement le morceau entre debut_s et fin_s (secondes) de cette animation, qui recommence alors a 0 : un seul
+    coup d'epee au lieu d'un enchainement, le debut d'un coup recu sans la chute. Les poses aux bords sont conservees.
+    """
+    act = _action(nom)
+    fps = scene.render.fps
+    f0, f1 = debut_s * fps, fin_s * fps
+    if f1 <= f0:
+        raise ValueError("fin_s doit depasser debut_s")
+    act.use_frame_range = False
+    for fc in act.fcurves:
+        for f in (f0, f1):
+            fc.keyframe_points.insert(f, fc.evaluate(f), options={"FAST"})
+        for i in reversed(range(len(fc.keyframe_points))):
+            x = fc.keyframe_points[i].co.x
+            if x < f0 - 1e-3 or x > f1 + 1e-3:
+                fc.keyframe_points.remove(fc.keyframe_points[i], fast=True)
+        for kp in fc.keyframe_points:
+            kp.co.x -= f0
+            kp.handle_left.x -= f0
+            kp.handle_right.x -= f0
+        fc.update()
+    _restrip(act)
+    return animations()
+
+
+def vitesse(nom, facteur):
+    """Joue cette animation facteur fois plus vite (0.8 : plus lente et plus lourde, 1.5 : plus vive)."""
+    act = _action(nom)
+    if facteur <= 0:
+        raise ValueError("facteur > 0")
+    act.use_frame_range = False
+    for fc in act.fcurves:
+        for kp in fc.keyframe_points:
+            kp.co.x /= facteur
+            kp.handle_left.x /= facteur
+            kp.handle_right.x /= facteur
+        fc.update()
+    _restrip(act)
+    return animations()
+
+
+def bandes(out_dir, prefix, n=6):
+    """
+    Une bande de n images par animation (du debut a la fin, de trois-quarts), pour juger le mouvement : son sens, sa
+    duree, son allure. Fichiers <prefix>-anim-<nom>.png.
+    """
+    import numpy as np
+    arm = armature()
+    if not arm or not arm.animation_data or not bpy.data.actions:
+        return []
+    lo, hi = bounds()
+    R = max(max(hi - lo), 0.5) * 1.9
+    world = bpy.data.worlds.new("FondBande")
+    world.use_nodes = True
+    world.node_tree.nodes["Background"].inputs[0].default_value = (0.32, 0.33, 0.35, 1)
+    scene.world = world
+    sun = bpy.data.objects.new("SoleilBande", bpy.data.lights.new("SoleilBande", "SUN"))
+    sun.data.energy = 3.5
+    sun.rotation_euler = (math.radians(50), 0, math.radians(35))
+    scene.collection.objects.link(sun)
+    cam = bpy.data.objects.new("CameraBande", bpy.data.cameras.new("CameraBande"))
+    cam.data.lens = 40
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    w, h = 320, 400
+    scene.render.resolution_x, scene.render.resolution_y = w, h
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.color_type = "TEXTURE"
+    was_nla = arm.animation_data.use_nla
+    arm.animation_data.use_nla = False
+    a45 = math.radians(-45)
+    out = []
+    for act in bpy.data.actions:
+        arm.animation_data.action = act
+        if getattr(act, "slots", None) and len(act.slots):
+            arm.animation_data.action_slot = act.slots[0]
+        f0, f1 = act.frame_range
+        safe = re.sub(r"[^a-z0-9_]+", "-", act.name.lower()).strip("-")[:30]
+        frames = []
+        for k in range(n):
+            scene.frame_set(int(round(f0 + (f1 - f0) * k / max(n - 1, 1))))
+            # La camera suit le squelette dans sa pose (la boite du maillage, elle, ne suit pas la deformation).
+            pts = [arm.matrix_world @ pb.head for pb in arm.pose.bones]
+            c = (Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))) + Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))) / 2
+            cam.location = c + Vector((math.cos(a45) * R, math.sin(a45) * R, R * 0.35))
+            cam.rotation_euler = (c - cam.location).to_track_quat("-Z", "Y").to_euler()
+            path = "%s/%s-anim-%s-%d.png" % (out_dir, prefix, safe, k)
+            scene.render.filepath = path
+            bpy.ops.render.render(write_still=True)
+            frames.append(path)
+        sheet = np.zeros((h, w * n, 4), dtype=np.float32)
+        for k, path in enumerate(frames):
+            im = bpy.data.images.load(path)
+            a = np.empty(w * h * 4, dtype=np.float32)
+            im.pixels.foreach_get(a)
+            sheet[:, k * w:(k + 1) * w, :] = a.reshape(h, w, 4)
+            bpy.data.images.remove(im)
+            os.remove(path)
+        img = bpy.data.images.new("bande-" + safe, w * n, h)
+        img.pixels.foreach_set(sheet.reshape(-1))
+        img.filepath_raw = "%s/%s-anim-%s.png" % (out_dir, prefix, safe)
+        img.file_format = "PNG"
+        img.save()
+        out.append(img.filepath_raw)
+    arm.animation_data.action = None
+    arm.animation_data.use_nla = was_nla
+    scene.frame_set(1)
+    return out
+
+
 # ---- Modes ----
 
-SAFE_MODULES = {"bpy", "bmesh", "mathutils", "math", "random", "numpy", "colorsys", "itertools", "functools", "collections", "re", "json"}
+SAFE_MODULES ={"bpy", "bmesh", "mathutils", "math", "random", "numpy", "colorsys", "itertools", "functools", "collections", "re", "json"}
 FORBIDDEN = re.compile(r"__|\bos\b|\bsys\b|subprocess|socket|urllib|http|requests|ctypes|shutil|importlib|pathlib|\bopen\s*\(|\beval\s*\(|\bexec\s*\(|\bcompile\s*\(|\bglobals\s*\(|\bvars\s*\(|bpy\.ops\.wm\b|bpy\.ops\.preferences|bpy\.ops\.script|bpy\.ops\.import_|bpy\.ops\.export_|bpy\.ops\.image\.(save|open|reload)|bpy\.utils|bpy\.app|\.filepath|libraries|addon|url_open|text_editor|bpy\.data\.texts")
 
 
@@ -646,7 +787,7 @@ def run_code(code):
     safe = {k: getattr(builtins, k) for k in dir(builtins) if k not in ("open", "eval", "exec", "compile", "__import__", "input", "breakpoint", "globals", "vars", "memoryview", "help", "exit", "quit")}
     safe["__import__"] = guarded_import
     env = {"__builtins__": safe, "bpy": bpy, "bmesh": bmesh, "Vector": Vector, "math": math}
-    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
+    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "animations", "couper", "vitesse", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
         env[k] = globals()[k]
     env["mesures"] = summary
     env["palette"] = job.get("palette", [])
@@ -667,24 +808,29 @@ def run_code(code):
     return {"ok": True, "sortie": buf.getvalue()[-6000:], "erreur": None}
 
 
+def name_new(actions, name):
+    for a in actions:
+        a.name = name if len(actions) == 1 else "%s_%s" % (name, a.name)
+        a.use_fake_user = True
+
+
+def import_extra(path, name):
+    """Importe un fichier d'animation de Tripo (meme squelette) : on garde l'action sous ce nom, on jette le reste."""
+    objs, acts = set(bpy.data.objects), set(bpy.data.actions)
+    bpy.ops.import_scene.gltf(filepath=path)
+    name_new([a for a in bpy.data.actions if a not in acts], name)
+    for o in [o for o in bpy.data.objects if o not in objs]:
+        bpy.data.objects.remove(o, do_unlink=True)
+
+
 def import_raw():
     bpy.ops.import_scene.gltf(filepath=job["input"])
     names = job.get("animations") or []
-
-    def name_new(actions, name):
-        for a in actions:
-            a.name = name if len(actions) == 1 else "%s_%s" % (name, a.name)
-            a.use_fake_user = True
-
     if names:
         name_new(list(bpy.data.actions), names[0])
     # Animations suivantes (meme squelette) : on garde l'action, on jette le reste du fichier.
     for i, extra in enumerate(job.get("extras") or []):
-        objs, acts = set(bpy.data.objects), set(bpy.data.actions)
-        bpy.ops.import_scene.gltf(filepath=extra)
-        name_new([a for a in bpy.data.actions if a not in acts], names[i + 1] if i + 1 < len(names) else "anim_%d" % (i + 2))
-        for o in [o for o in bpy.data.objects if o not in objs]:
-            bpy.data.objects.remove(o, do_unlink=True)
+        import_extra(extra, names[i + 1] if i + 1 < len(names) else "anim_%d" % (i + 2))
     for arm in [o for o in scene.objects if o.type == "ARMATURE"]:
         arm.animation_data_create()
         arm.animation_data.action = None
@@ -724,6 +870,33 @@ elif mode == "python":
     done(r)
 elif mode == "photos":
     done({"photos": photos(job["out_dir"], job["prefix"]), "mesures": summary()})
+elif mode == "animations":
+    # Des animations ajoutees ou remplacees sur le squelette deja paye (ADR-56) ; celles hors de « garder » s'en vont.
+    arm = armature()
+    if not arm:
+        raise SystemExit("aucun squelette dans la scene")
+    for path, name in zip(job["extras"], job["animations"]):
+        old = bpy.data.actions.get(name)
+        if old:
+            for t in [t for t in arm.animation_data.nla_tracks if any(s.action == old for s in t.strips)]:
+                arm.animation_data.nla_tracks.remove(t)
+            bpy.data.actions.remove(old)
+        import_extra(path, name)
+    keep = set(job.get("garder") or [])
+    for a in list(bpy.data.actions):
+        if keep and a.name not in keep:
+            for t in [t for t in arm.animation_data.nla_tracks if any(s.action == a for s in t.strips)]:
+                arm.animation_data.nla_tracks.remove(t)
+            bpy.data.actions.remove(a)
+    arm.animation_data_create()
+    arm.animation_data.action = None
+    for a in bpy.data.actions:
+        if not any(s.action == a for t in arm.animation_data.nla_tracks for s in t.strips):
+            track = arm.animation_data.nla_tracks.new()
+            track.name = a.name
+            track.strips.new(a.name, 0, a)
+    bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
+    done(summary())
 elif mode == "export":
     # Figurine : le calque ne part pas dans le jeu, seules les pieces y vont (avec le squelette et les animations).
     if any(not o.get("calque") for o in all_meshes()):
@@ -737,4 +910,5 @@ elif mode == "export":
     s = summary()
     lo, hi = bounds()
     renders = photos(job["out_dir"], job["prefix"])
-    done({"renders": renders, "tris_before": before, "tris_after": s["triangles"], "dims": list(hi - lo), "animations": [a.name for a in bpy.data.actions], "materiaux": s["materiaux"]})
+    strips = bandes(job["out_dir"], job["prefix"])
+    done({"renders": renders, "bandes": strips, "tris_before": before, "tris_after": s["triangles"], "dims": list(hi - lo), "animations": [a.name for a in bpy.data.actions], "durees": animations(), "materiaux": s["materiaux"]})

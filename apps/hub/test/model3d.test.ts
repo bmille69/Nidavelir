@@ -162,3 +162,31 @@ describe("Tripo (atelier 3D)", () => {
     expect(rigAnimations("avian", ["walk"])).toEqual([]);
   });
 });
+
+describe("Tripo : d'autres animations sur un squelette gardé (ADR-56)", () => {
+  it("pose chaque animation sur la tâche du squelette, sans refaire le modèle, et compte les crédits", async () => {
+    const t = fakeTripo({ rigType: "biped" });
+    vi.stubGlobal("fetch", t.fetch);
+    const m = new RealModel3D(dir);
+    const first = await run(m, ["walk"]);
+    expect(first.r!.rigTask).toMatch(/^t\d+$/);
+    const before = t.calls.length;
+    const p = m.animate({ rigTask: first.r!.rigTask!, names: ["biped:hit_to_body_01", "biped:slash"], step: () => {} });
+    const done = p.then(
+      (r) => ({ r, e: null }),
+      (e: Error) => ({ r: null, e }),
+    );
+    for (let i = 0; i < 50; i++) await vi.advanceTimersByTimeAsync(15_000);
+    const { r, e } = await done;
+    expect(e).toBeNull();
+    expect(r!.glbs).toHaveLength(2);
+    expect(r!.credits).toBe(20);
+    const retargets = t.calls.slice(before).filter((c) => c.path === "/v3/animations/retarget");
+    expect(retargets.map((c) => c.body)).toEqual([
+      { input: first.r!.rigTask, animation: "preset:biped:hit_to_body_01", out_format: "glb", export_with_geometry: true, animate_in_place: true },
+      { input: first.r!.rigTask, animation: "preset:biped:slash", out_format: "glb", export_with_geometry: true, animate_in_place: true },
+    ]);
+    expect(t.calls.slice(before).some((c) => c.path === "/v3/generation/image-to-model")).toBe(false);
+    expect(m.state().tripo.credits).toBe(first.r!.credits + 20);
+  });
+});
