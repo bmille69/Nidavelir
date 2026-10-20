@@ -26,8 +26,8 @@ export type CheckReport = {
 /** Ce qui sait lancer les tests et le jeu (remplacé par un faux dans les tests du hub). */
 export interface CheckerPort {
   tests(cwd: string): Promise<CheckOutcome>;
-  /** `screenshot` : où enregistrer la capture de l'écran (aucune si absent). */
-  launch(key: string, cwd: string, screenshot?: string): Promise<CheckOutcome>;
+  /** `screenshot` : où enregistrer la capture de l'écran (aucune si absent) ; `path` : ajouté à l'adresse du jeu (« ?vitrine=A-0001 »). */
+  launch(key: string, cwd: string, screenshot?: string, path?: string): Promise<CheckOutcome>;
 }
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -165,7 +165,7 @@ export class RealChecker implements CheckerPort {
     });
   }
 
-  async launch(key: string, cwd: string, screenshot?: string): Promise<CheckOutcome> {
+  async launch(key: string, cwd: string, screenshot?: string, path = ""): Promise<CheckOutcome> {
     const scripts = readScripts(cwd);
     if (!scripts?.dev) return { status: "none", detail: "pas de script « dev » (jeux web uniquement)" };
     let chromium: typeof import("playwright-core").chromium;
@@ -191,7 +191,7 @@ export class RealChecker implements CheckerPort {
         // Une icône d'onglet absente n'est pas un problème du jeu.
         if (m.type() === "error" && !/favicon/i.test(m.text() + (m.location().url ?? ""))) errors.push(m.text());
       });
-      await page.goto(preview.url, { waitUntil: "load", timeout: 60_000 });
+      await page.goto(path ? `${preview.url.replace(/\/$/, "")}/${path.replace(/^\//, "")}` : preview.url, { waitUntil: "load", timeout: 60_000 });
       await page.waitForTimeout(this.#watchMs);
       const empty = (await page.evaluate("!document.body || document.body.children.length === 0")) as boolean;
       // La capture est prise même en cas d'erreur : elle montre ce qui ne va pas (ADR-33).

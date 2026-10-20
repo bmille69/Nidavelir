@@ -226,7 +226,7 @@ export function ArtDirection({ slug }: { slug: string }) {
                 validating={state.busy.validating.includes(a.id)}
                 generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
                 local={state.generator.installed}
-                ready3d={state.workshop3d.blender.installed && state.workshop3d.tripo.configured}
+                ready3d={state.workshop3d.blender.installed && (state.workshop3d.tripo.configured || !!a.model3d?.simple)}
                 onUpload={(f) => void upload(f, a.id)}
                 act={act}
               />
@@ -423,6 +423,9 @@ function AssetCard({
   const input = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState<number | null>(null);
   const last = a.renders.at(-1);
+  // Croquis du cadrage à choisir (ADR-49) : la réponse reprend la question posée dans la discussion.
+  const sketches = !a.direction && a.sketches?.every((s) => s.file) ? a.sketches : null;
+  const choose = (k: number) => api.artSend(slug, `Quel croquis pour ${a.id} « ${a.name} » ? → Croquis ${k + 1} : ${a.sketches![k]!.label}`);
   const copy = (p: string, k: number) =>
     navigator.clipboard?.writeText(p).then(
       () => {
@@ -437,7 +440,7 @@ function AssetCard({
         <span className="muted small">{a.id}</span>
         <strong className="grow">{a.name}</strong>
         <span className={`pill art-status st-${a.status}`}>
-          {generating ? `Fabrication, tour ${generating.round}/${generating.rounds}` : validating && a.status === "a_valider" ? "Le validateur regarde…" : STATUS[a.status]}
+          {generating ? `Fabrication, tour ${generating.round}/${generating.rounds}` : validating && a.status === "a_valider" ? "Le validateur regarde…" : sketches ? "Croquis à choisir" : STATUS[a.status]}
         </span>
       </header>
       <p className="small">
@@ -447,7 +450,7 @@ function AssetCard({
       {a.specs && <p className="muted small">{a.specs}</p>}
       {a.model3d && (
         <p className="muted small">
-          <Icon name="cube" size={12} /> Modèle 3D : {a.model3d.size} m, {a.model3d.tris} triangles
+          <Icon name="cube" size={12} /> Modèle 3D{a.model3d.simple ? " (objet simple, fait dans Blender)" : ""} : {a.model3d.size} m, {a.model3d.tris} triangles
           {a.model3d.animations.length ? `, animations ${a.model3d.animations.join(", ")}` : a.model3d.rig ? ", avec squelette" : ""}
         </p>
       )}
@@ -457,6 +460,23 @@ function AssetCard({
         </p>
       )}
 
+      {sketches && (
+        <div className="art-sketches">
+          {sketches.map((sk, k) => (
+            <figure key={sk.file}>
+              <a href={api.artFile(slug, sk.file)} target="_blank" rel="noreferrer">
+                <img src={api.artFile(slug, sk.file)} alt={sk.label} loading="lazy" />
+              </a>
+              <figcaption className="small">
+                {k + 1}. {sk.label}
+              </figcaption>
+              <button className="small" disabled={!!generating} onClick={() => void act(() => choose(k))}>
+                Choisir
+              </button>
+            </figure>
+          ))}
+        </div>
+      )}
       {last && (
         <a className="art-render" href={api.artFile(slug, last)} target="_blank" rel="noreferrer">
           <img src={api.artFile(slug, last)} alt={`Rendu de ${a.name}`} loading="lazy" />
@@ -474,6 +494,12 @@ function AssetCard({
           <p className="muted small">
             {a.model.dims.map((d) => `${d} m`).join(" × ")} · {a.model.tris} triangles{a.model.animations.length ? ` · ${a.model.animations.join(", ")}` : ""}
           </p>
+          {a.model.workshop && <p className="small">Dans Blender : {a.model.workshop}</p>}
+          {!!a.model.missingAnimations?.length && (
+            <p className="muted small">
+              Absentes : {a.model.missingAnimations.join(", ")} (Tripo a reconnu la forme « {a.model.rigType ?? "?"} »).
+            </p>
+          )}
           {a.model.verdict && (
             <div className={`art-verdict ${a.model.verdict.ok ? "ok" : "ko"}`}>
               <p className="small">
@@ -555,7 +581,7 @@ function AssetCard({
             <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => e.target.files?.length && onUpload(e.target.files)} />
           </>
         )}
-        {a.model3d && a.verdict?.ok && ready3d && !generating && ["production", "a_valider", "valide"].includes(a.status) && (
+        {a.model3d && (a.verdict?.ok || a.model3d.simple) && ready3d && !generating && ["propose", "production", "a_valider", "valide"].includes(a.status) && (
           <button className="small" disabled={validating} onClick={() => void act(() => api.artModel(slug, a.id))}>
             <Icon name="cube" size={14} /> {a.model ? "Refaire la 3D" : "Fabriquer la 3D"}
           </button>

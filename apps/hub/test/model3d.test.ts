@@ -90,5 +90,9 @@ describe("Tripo (atelier 3D)", () => {
     expect(rigAnimations("quadruped", ["walk", "quadruped:walk", "slash"])).toEqual(["quadruped:walk"]);
     expect(rigAnimations("biped", ["walk", "quadruped:walk", "slash"])).toEqual(["walk", "slash"]);
     expect(rigAnimations("serpentine", ["march"])).toEqual(["serpentine:march"]);
+    // Le Grouillot (18/10/2026) : une marche à quatre pattes demandée, un modèle que Tripo voit à huit pattes.
+    expect(rigAnimations("octopod", ["quadruped:walk"])).toEqual(["octopod:walk"]);
+    expect(rigAnimations("serpentine", ["walk", "run"])).toEqual(["serpentine:march"]);
+    expect(rigAnimations("avian", ["walk"])).toEqual([]);
   });
 });

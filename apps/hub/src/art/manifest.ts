@@ -47,6 +47,10 @@ export type Asset = {
   model?: ModelInfo | null;
   /** Vérification dans le jeu, après la fusion du chantier d'intégration (capture du hub). */
   ingame?: InGame | null;
+  /** Croquis du cadrage (ADR-49) : plusieurs directions, dont le directeur créatif choisit une. */
+  sketches?: Sketch[] | null;
+  /** Le croquis choisi : la fabrication en tire des variantes. */
+  direction?: Sketch | null;
   /** Rendus déposés, du plus ancien au plus récent (chemins relatifs à studio/art). */
   renders: string[];
   verdict: Verdict | null;
@@ -54,11 +58,18 @@ export type Asset = {
   updated_at: string;
 };
 
+export type Sketch = { file: string; label: string; prompt: string };
+
 export type ModelInfo = {
   /** Fichier .glb fini (chemin relatif à studio/art). */
   file: string;
-  /** Image validée qui a servi de modèle. */
-  source: string;
+  /** Image validée qui a servi de modèle (null pour un objet simple, modélisé sans image). */
+  source: string | null;
+  /** Ce que l'artisan 3D a fait dans Blender, en clair (ADR-49). */
+  workshop?: string | null;
+  /** La forme que Tripo a reconnue pour le squelette (biped, quadruped…), et les animations demandées qu'il n'a pas pu poser. */
+  rigType?: string | null;
+  missingAnimations?: string[];
   /** Photos sous quatre angles, pour le validateur et pour vous. */
   renders: string[];
   tris: number;

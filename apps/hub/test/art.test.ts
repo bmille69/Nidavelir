@@ -58,17 +58,27 @@ class FakeImageGen implements ImageGenPort {
   close(): void {}
 }
 
-/** L'atelier 3D factice : Tripo rend un faux .glb, Blender écrit quatre photos. */
+/** L'atelier 3D factice : Tripo rend un faux .glb ; Blender prépare, exécute le code de l'artisan, photographie, exporte. */
 class FakeModel3D implements Model3DPort {
   blender = false;
   key = false;
+  rigType: string | undefined = undefined;
   tripoCalls: { spec: Model3DSpec; bytes: number }[] = [];
-  finishes: { input: string; output: string; prefix: string }[] = [];
+  prepares: { dir: string; input: string | null; palette: string[] }[] = [];
+  codes: string[] = [];
+  exports: { output: string; prefix: string }[] = [];
+  readonly root: string;
+  constructor(root: string) {
+    this.root = root;
+  }
   state(): Model3DState {
     return { blender: { installed: this.blender, installing: null, error: null, size: "≈ 400 Mo" }, tripo: { configured: this.key, month: "2026-10", credits: 0, cap: 2000 } };
   }
   installBlender(): void {
     this.blender = true;
+  }
+  atelier(key: string): string {
+    return join(this.root, key);
   }
   async setTripoKey(key: string): Promise<void> {
     if (!key.startsWith("tsk_")) throw new Error("Une clé Tripo commence par « tsk_ »");
@@ -77,26 +87,46 @@ class FakeModel3D implements Model3DPort {
   async tripo(req: { image: Buffer; spec: Model3DSpec; step: (s: string) => void }) {
     req.step("Tripo fabrique le modèle");
     this.tripoCalls.push({ spec: req.spec, bytes: req.image.length });
-    return { glb: Buffer.from("glTF"), credits: 30 };
+    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType };
   }
-  async finish(req: { input: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }) {
-    this.finishes.push({ input: req.input, output: req.output, prefix: req.prefix });
-    writeFileSync(req.output, readFileSync(req.input));
-    const renders = ["face", "trois-quarts", "profil", "dos"].map((a) => join(req.rendersDir, `${req.prefix}-${a}.png`));
+  async prepare(req: { dir: string; input: string | null; palette: string[] }) {
+    mkdirSync(req.dir, { recursive: true });
+    this.prepares.push({ dir: req.dir, input: req.input && existsSync(req.input) ? readFileSync(req.input, "utf8") : null, palette: req.palette });
+    return {};
+  }
+  async runCode(req: { dir: string; code: string }) {
+    this.codes.push(req.code);
+    return { ok: true, sortie: "fait", erreur: null };
+  }
+  async photos(req: { dir: string; prefix: string }) {
+    const photos = ["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((a) => join(req.dir, `${req.prefix}-${a}.png`));
+    for (const p of photos) writeFileSync(p, PNG);
+    return { photos, mesures: { triangles: 1200 } };
+  }
+  async export(req: { dir: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }) {
+    this.exports.push({ output: req.output, prefix: req.prefix });
+    writeFileSync(req.output, "glTF");
+    const renders = ["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((a) => join(req.rendersDir, `${req.prefix}-${a}.png`));
     for (const r of renders) writeFileSync(r, PNG);
-    return { renders, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations: req.spec.animations };
+    return { renders, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations: req.spec.animations.filter((a) => a !== "slash") };
   }
 }
+
+/** Les pas de l'artisan 3D : un pas qui travaille, puis « fini ». */
+const artisanSteps = (code = "tourner(-90)\nmatiere()\nprint(quantifier(palette))", summary = "Tourné face à -Y, rendu mat, repeint en aplats.") => [
+  { note: "Le modèle regarde de côté et brille : je le tourne et le repeins.", code, photos: true, fini: false, summary: "" },
+  { note: "Propre sous tous les angles.", code: null, photos: false, fini: true, summary },
+];
 
 const quietChecker: CheckerPort = { tests: async () => ({ status: "none", detail: "" }), launch: async () => ({ status: "none", detail: "" }) };
 
 /** Le même projet, avec un générateur local et un atelier 3D branchés, et les vérifications du hub (captures). */
-async function setupLocal() {
+async function setupLocal(checker: CheckerPort = quietChecker) {
   const fake = new Artist();
   const sb = sandbox(fake);
   sb.hub.close();
   const gen = new FakeImageGen();
-  const m3d = new FakeModel3D();
+  const m3d = new FakeModel3D(join(sb.dir, "hub/.data/tools/blender/atelier"));
   sb.hub = createHub({
     databasePath: join(sb.dir, "hub/.data/art.db"),
     registry: { forbiddenTrees: [join(sb.dir, "hub")], forbiddenExact: [sb.dir] },
@@ -105,7 +135,7 @@ async function setupLocal() {
     dataDir: join(sb.dir, "hub/.data"),
     imagegen: gen,
     model3d: m3d,
-    checker: quietChecker,
+    checker,
   });
   const repo = sb.makeGameRepo("games/bordee", { "CLAUDE.md": "# Bordée\nBataille navale 1900-1945 stylisée.\n" });
   await sb.hub.projects.register(sb.human(), { path: repo, slug: "bordee", name: "Bordée" });
@@ -238,7 +268,7 @@ describe("Directeur artistique (ADR-43)", () => {
   });
 });
 
-describe("générateur d'images local (ADR-46)", () => {
+describe("générateur d'images local (ADR-46, ADR-49)", () => {
   it("s'installe sur votre clic ; la DA fait fabriquer, le validateur choisit, le hub réessaie seul jusqu'à un essai conforme", async () => {
     const { sb, fake, gen, repo, art } = await setupLocal();
     // Pas encore installé : la DA donne des prompts Midjourney, et rien ne se fabrique.
@@ -253,8 +283,8 @@ describe("générateur d'images local (ADR-46)", () => {
     expect(art.state("bordee").generator.installed).toBe(true);
 
     // Tour 1 refusé (le validateur corrige le prompt), tour 2 conforme avec le 2e essai.
-    fake.extractions.push({ best: 3, ok: false, summary: "Trop chargé.", points: ["Silhouette confuse"], prompt: "A gunpowder keg icon, bold flat shapes, plain background." } as never);
-    fake.extractions.push({ best: 2, ok: true, summary: "Lisible et dans la palette.", points: [], prompt: null } as never);
+    fake.extractions.push({ best: 3, ok: false, usable: false, summary: "Trop chargé.", points: ["Silhouette confuse"], prompt: "A gunpowder keg icon, bold flat shapes, plain background." } as never);
+    fake.extractions.push({ best: 2, ok: true, usable: true, summary: "Lisible et dans la palette.", points: [], prompt: null } as never);
     fake.replies.push("Je la fais fabriquer.\n[[GENERER: A-0001 | 1000x1000]] A gunpowder keg icon, plain background. [[/GENERER]]");
     art.send(sb.human(), "bordee", "Vas-y");
     await art.idle();
@@ -262,6 +292,7 @@ describe("générateur d'images local (ADR-46)", () => {
 
     expect(gen.requests).toHaveLength(6);
     expect(gen.requests[0]).toMatchObject({ prompt: "A gunpowder keg icon, plain background.", width: 1024, height: 1024 });
+    expect(gen.requests[0]!.init).toBeUndefined();
     expect(gen.requests[3]!.prompt).toBe("A gunpowder keg icon, bold flat shapes, plain background.");
     const a = art.state("bordee").assets[0]!;
     // Validé : il part tout seul dans le jeu.
@@ -269,28 +300,42 @@ describe("générateur d'images local (ADR-46)", () => {
     expect(a.renders).toHaveLength(6);
     expect(a.renders.at(-1)).toBe("production/a-0001-t2-e2.png");
     expect(existsSync(join(repo, "studio", "art", "production", "a-0001-t1-e1.png"))).toBe(true);
-    // Le validateur a vu les trois essais de chaque tour.
+    // Le validateur a vu les trois essais de chaque tour, avec la grille d'une image finale (pas de 3D ici).
     const picks = fake.calls.filter((c) => c.kind === "structured");
     expect(picks).toHaveLength(2);
+    expect(picks[0]!.systemPrompt).toMatch(/Tu juges un rendu[\s\S]*code hexadécimal exact/);
     expect(picks[0]!.prompt).toMatch(/1\. production\/a-0001-t1-e1.png\n2\. production\/a-0001-t1-e2.png\n3\. production\/a-0001-t1-e3.png/);
     const messages = art.state("bordee").messages.map((m) => m.text);
-    expect(messages.some((t) => /pas encore\*\* \(tour 1 sur 3\)[\s\S]*Je relance un tour/.test(t))).toBe(true);
+    expect(messages.some((t) => /pas encore\*\* \(tour 1 sur 2\)[\s\S]*Je relance un tour/.test(t))).toBe(true);
     expect(messages.at(-2)).toMatch(/^§IMAGE§ production\/a-0001-t2-e1.png\n§IMAGE§ production\/a-0001-t2-e2.png[\s\S]*conforme\*\* \(essai 2, tour 2\)[\s\S]*Je le fais intégrer/);
     expect(messages.at(-1)).toMatch(/part dans le jeu/);
     expect(log(repo)).toMatch(/art: A-0001 validé \(validateur, tour 2\)/);
     expect(art.state("bordee").busy.generating).toEqual([]);
 
-    // « Refaire » relance la fabrication ; trois tours refusés : le meilleur reste, vous tranchez.
-    for (let i = 0; i < 3; i++) fake.extractions.push({ best: 1, ok: false, summary: "Non.", points: [], prompt: null } as never);
+    // « Refaire » relance la fabrication ; deux tours sans essai utilisable : le meilleur reste, vous tranchez.
+    for (let i = 0; i < 2; i++) fake.extractions.push({ best: 1, ok: false, usable: false, summary: "Non.", points: [], prompt: null } as never);
     await art.decide(sb.human(), "bordee", "A-0001", "refaire");
     await art.idle();
-    expect(gen.requests).toHaveLength(15);
-    expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", verdict: { ok: false, file: "production/a-0001-t3-e1.png" } });
-    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Trois tours sans essai conforme/);
-    expect((await art.decide(sb.human(), "bordee", "A-0001", "valider")).verdict).toMatchObject({ by: "human", file: "production/a-0001-t3-e1.png" });
+    expect(gen.requests).toHaveLength(12);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", verdict: { ok: false, file: "production/a-0001-t2-e1-2.png" } });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Aucun essai utilisable/);
+    expect((await art.decide(sb.human(), "bordee", "A-0001", "valider")).verdict).toMatchObject({ by: "human", file: "production/a-0001-t2-e1-2.png" });
     await art.idle();
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
   }, 60_000);
+
+  it("au dernier tour, un essai utilisable est gardé au lieu de vous faire trancher sur des détails", async () => {
+    const { sb, fake, gen, art } = await setupLocal();
+    gen.installed = true;
+    fake.extractions.push({ best: 1, ok: false, usable: true, summary: "Rivets en trop.", points: ["Rivets"], prompt: "A keg, smooth." } as never);
+    fake.extractions.push({ best: 2, ok: false, usable: true, summary: "Un rivet résiste.", points: ["Un rivet"], prompt: null } as never);
+    fake.replies.push('[[ASSET]] {"name": "Tonneau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A keg. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un tonneau");
+    await art.idle();
+    expect(gen.requests).toHaveLength(6);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", verdict: { ok: true, file: "production/a-0001-t2-e2.png" } });
+    expect(art.state("bordee").messages.map((m) => m.text).find((t) => t.includes("tour 2 sur 2"))).toMatch(/essai 2 retenu\*\* \(tour 2 sur 2\), avec des défauts mineurs/);
+  }, 30_000);
 
   it("une panne du générateur s'affiche et la fiche peut relancer", async () => {
     const { sb, fake, gen, art } = await setupLocal();
@@ -305,41 +350,109 @@ describe("générateur d'images local (ADR-46)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", prompts: ["A flag."] });
   }, 30_000);
 
+  it("le cadrage d'abord : une question bloque la fabrication ; puis croquis, votre clic, variantes du croquis, 3D, jeu", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    const croquis = [
+      "[[CROQUIS: A-0001 | 832x1216]] # Chevalier massif",
+      "A massive armored knight, front view.",
+      "---",
+      "# Colosse de pierre",
+      "A stone-like colossus, front view.",
+      "---",
+      "# Templier élancé",
+      "A slender templar, front view.",
+      "[[/CROQUIS]]",
+    ].join("\n");
+    // Une question et des croquis dans la même réponse : rien ne part.
+    fake.replies.push(
+      `Deux questions avant de dessiner.\n[[CHOIX: Quelle allure ?]] Lourd | Agile [[/CHOIX]]\n[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur", "specs": "Plaques #6E6A63, combinaison #2A2B2E, visière #F2EBDD"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, walk]]\n${croquis}`,
+    );
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(gen.requests).toHaveLength(0);
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/§FAIT§[\s\S]*fabrication en attente de vos réponses/);
+
+    // Les réponses arrivent : les trois croquis se font, sans validateur, et vous choisissez d'un clic.
+    fake.replies.push(`Va pour le lourd. Voici trois directions.\n${croquis}`);
+    art.send(sb.human(), "bordee", "Quelle allure ? → Lourd");
+    await art.idle();
+    expect(gen.requests.map((r) => r.prompt)).toEqual(["A massive armored knight, front view.", "A stone-like colossus, front view.", "A slender templar, front view."]);
+    expect(gen.requests[0]).toMatchObject({ width: 832, height: 1216 });
+    let a = art.state("bordee").assets[0]!;
+    expect(a.sketches!.map((s) => [s.file, s.label])).toEqual([
+      ["production/a-0001-croquis-1.png", "Chevalier massif"],
+      ["production/a-0001-croquis-2.png", "Colosse de pierre"],
+      ["production/a-0001-croquis-3.png", "Templier élancé"],
+    ]);
+    const question = art.state("bordee").messages.at(-1)!.text;
+    expect(question).toMatch(/\*\*Croquis 1 : Chevalier massif\*\*\n§IMAGE§ production\/a-0001-croquis-1.png/);
+    expect(question).toMatch(/§CHOIX§ Quel croquis pour A-0001 « Titan » \? \|\| Croquis 1 : Chevalier massif \|\| Croquis 2 : Colosse de pierre \|\| Croquis 3 : Templier élancé \|\| Aucun, on en reparle/);
+    expect(fake.calls.filter((c) => c.kind === "structured")).toHaveLength(0);
+
+    // Votre clic : pas de tour du Directeur artistique, la fabrication part du croquis 2.
+    const replies = fake.calls.filter((c) => c.kind === "reply").length;
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Silhouette nette, de face, fond uni.", points: [], prompt: null } as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Propre et lisible de loin.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Quel croquis pour A-0001 « Titan » ? → Croquis 2 : Colosse de pierre");
+    await art.idle();
+    expect(fake.calls.filter((c) => c.kind === "reply")).toHaveLength(replies);
+    // Le croquis lui-même est le premier candidat ; les deux autres sont ses variantes.
+    expect(gen.requests.slice(3).map((r) => [r.prompt, r.init?.denoise])).toEqual([
+      ["A stone-like colossus, front view.", 0.5],
+      ["A stone-like colossus, front view.", 0.5],
+    ]);
+    const pick = fake.calls.filter((c) => c.kind === "structured")[0]!;
+    expect(pick.systemPrompt).toMatch(/serviront de MODÈLE à une 3D[\s\S]*Ce qui ne bloque PAS/);
+    expect(pick.prompt).toMatch(/1\. production\/a-0001-croquis-2.png\n2\. production\/a-0001-t1-e2.png\n3\. production\/a-0001-t1-e3.png[\s\S]*Croquis choisi par le directeur créatif[^\n]*production\/a-0001-croquis-2.png/);
+    // L'image retenue part chez Tripo puis à l'atelier Blender, avec la palette de la fiche.
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(m3d.prepares[0]).toMatchObject({ input: "glTF", palette: ["#6E6A63", "#2A2B2E", "#F2EBDD"] });
+    a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "integration", direction: { file: "production/a-0001-croquis-2.png" }, verdict: { ok: true, file: "production/a-0001-croquis-2.png" }, model: { file: "models/a-0001-3d.glb", source: "production/a-0001-croquis-2.png" } });
+    expect(art.state("bordee").messages.some((m) => /Croquis 2 « Colosse de pierre » retenu pour A-0001/.test(m.text))).toBe(true);
+  }, 60_000);
+
   it("3D demandée après coup sur une image déjà validée : l'atelier 3D part tout de suite", async () => {
     const { sb, fake, gen, m3d, art } = await setupLocal();
     gen.installed = true;
     art.installBlender(sb.human());
     await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
     fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
-    fake.extractions.push({ best: 1, ok: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
     art.send(sb.human(), "bordee", "Le Titan");
     await art.idle();
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
     // Comme pour le Titan : le DA repasse la fiche en production et ajoute la 3D.
     fake.replies.push('[[ASSET]] {"id": "A-0001", "type": "personnage 3D", "status": "production"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, walk]]');
-    fake.extractions.push({ ok: true, summary: "Fidèle.", points: [], prompt: null } as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
     art.send(sb.human(), "bordee", "Fais-le en 3D");
     await art.idle();
     expect(m3d.tripoCalls).toHaveLength(1);
-    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model: { file: "models/a-0001-t1.glb" } });
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model: { file: "models/a-0001-3d.glb" } });
   }, 30_000);
 
-  it("3D : l'image validée part chez Tripo puis Blender, le validateur juge les photos, l'asset part au jeu et y est vérifié", async () => {
+  it("3D : Tripo une seule fois, l'artisan retouche dans Blender pas à pas, une seconde passe sans repayer Tripo, puis le jeu", async () => {
     const { sb, fake, gen, m3d, repo, art } = await setupLocal();
     gen.installed = true;
+    m3d.rigType = "octopod";
     fake.replies.push(
       [
-        '[[ASSET]] {"name": "Cuirassé", "type": "modèle 3D", "usage": "navire du joueur sur la mer 3D"} [[/ASSET]]',
-        "[[MODELE3D: A-0001 | taille 12 | triangles 6000]]",
-        "[[GENERER: A-0001 | 1024x1024]] A 1910s dreadnought, three-quarter view, whole ship, plain grey background. [[/GENERER]]",
+        '[[ASSET]] {"name": "Grouillot", "type": "ennemi", "usage": "ennemi de base", "specs": "Carapace #1C1A1E, joints #9BE000"} [[/ASSET]]',
+        "[[MODELE3D: A-0001 | taille 0,8 | triangles 3000 | animations quadruped:walk, slash]]",
+        "[[GENERER: A-0001 | 1024x1024]] A small chitin insect, front view, plain grey background. [[/GENERER]]",
       ].join("\n"),
     );
     // L'atelier 3D n'est pas prêt : l'image se fait, la 3D attend (et on le dit).
-    fake.extractions.push({ best: 1, ok: true, summary: "Belle silhouette.", points: [], prompt: null } as never);
-    art.send(sb.human(), "bordee", "Fais-moi le cuirassé en 3D");
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Belle silhouette.", points: [], prompt: null } as never);
+    art.send(sb.human(), "bordee", "Fais-moi le grouillot en 3D");
     await art.idle();
     let a = art.state("bordee").assets[0]!;
-    expect(a).toMatchObject({ status: "production", model3d: { size: 12, tris: 6000, rig: false, animations: [] }, verdict: { ok: true } });
+    expect(a).toMatchObject({ status: "production", model3d: { size: 0.8, tris: 3000, rig: true, animations: ["quadruped:walk", "slash"] }, verdict: { ok: true } });
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/La 3D de A-0001 attend l'atelier 3D : installez blender et ajoutez votre clé tripo/);
     expect(() => art.generateModel(sb.human(), "bordee", "A-0001")).toThrow(/Installez Blender/);
 
@@ -348,37 +461,55 @@ describe("générateur d'images local (ADR-46)", () => {
     await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
     expect(art.state("bordee").workshop3d).toMatchObject({ blender: { installed: true }, tripo: { configured: true } });
 
-    // Premier tour refusé, deuxième conforme : il part au jeu tout seul.
-    fake.extractions.push({ ok: false, summary: "La poupe est fondue.", points: ["Arrière déformé"], prompt: null } as never);
-    fake.extractions.push({ ok: true, summary: "Fidèle à l'image, lisible.", points: [], prompt: null } as never);
+    // Passe 1 : l'artisan tourne et repeint ; le validateur refuse la finition (forme bonne).
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: false, forme_ok: true, summary: "Les joints ne brillent pas.", points: ["Joints éteints"] } as never);
+    // Passe 2 : l'artisan reprend avec la remarque ; conforme.
+    fake.extractions.push(...(artisanSteps('lueur("#9BE000")', "Joints allumés en vert acide.") as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle, lisible de loin.", points: [] } as never);
     art.generateModel(sb.human(), "bordee", "A-0001");
     await art.idle();
-    expect(m3d.tripoCalls).toHaveLength(2);
+    expect(m3d.tripoCalls).toHaveLength(1);
     expect(m3d.tripoCalls[0]!.bytes).toBe(PNG.length);
-    expect(m3d.finishes[1]!.output).toBe(join(repo, "studio", "art", "models", "a-0001-t2.glb"));
-    expect(existsSync(m3d.finishes[0]!.input)).toBe(false); // le modèle brut ne reste pas dans le dépôt
+    expect(m3d.prepares).toHaveLength(1);
+    expect(m3d.codes).toEqual(["tourner(-90)\nmatiere()\nprint(quantifier(palette))", 'lueur("#9BE000")']);
+    expect(m3d.exports.map((e) => e.output)).toEqual([join(repo, "studio", "art", "models", "a-0001-3d.glb"), join(repo, "studio", "art", "models", "a-0001-3d-2.glb")]);
+    // Le modèle brut de Tripo reste hors du dépôt, et disparaît.
+    expect(existsSync(`${m3d.atelier("bordee-A-0001")}-brut.glb`)).toBe(false);
+    // L'artisan voit la référence, la palette, ses pas précédents et ses photos ; à la seconde passe, la remarque.
+    const steps = fake.calls.filter((c) => c.kind === "structured" && /ARTISAN 3D/.test(c.systemPrompt));
+    expect(steps).toHaveLength(4);
+    expect(steps[0]!.prompt).toMatch(/Palette de la fiche[^\n]*#1C1A1E, #9BE000[\s\S]*Image de référence : reference.png[\s\S]*photo-0-face.png/);
+    expect(steps[1]!.prompt).toMatch(/Tes pas précédents :\nPas 1 :[\s\S]*→ réussi\nSortie :\nfait[\s\S]*photo-1-face.png/);
+    expect(steps[2]!.prompt).toMatch(/corrige ceci :\n- Joints éteints/);
+    expect(existsSync(join(m3d.atelier("bordee-A-0001"), "fiche.json"))).toBe(true);
     a = art.state("bordee").assets[0]!;
     expect(a).toMatchObject({
       status: "integration",
-      model: { file: "models/a-0001-t2.glb", source: "production/a-0001-t1-e1.png", tris: 6000, dims: [2.1, 12, 3.4], verdict: { ok: true, by: "validator" } },
+      model: { file: "models/a-0001-3d-2.glb", source: "production/a-0001-t1-e1.png", tris: 3000, workshop: "Joints allumés en vert acide.", rigType: "octopod", missingAnimations: ["slash"], verdict: { ok: true, by: "validator" } },
     });
-    expect(a.model!.renders).toEqual(["face", "trois-quarts", "profil", "dos"].map((x) => `production/a-0001-3d-t2-${x}.png`));
+    expect(a.model!.renders).toEqual(["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((x) => `production/a-0001-3d-2-${x}.png`));
     const judge = fake.calls.filter((c) => c.kind === "structured").at(-1)!;
-    expect(judge.systemPrompt).toMatch(/MODÈLE 3D/);
-    expect(judge.prompt).toMatch(/production\/a-0001-t1-e1.png[\s\S]*production\/a-0001-3d-t2-face.png[\s\S]*demandé : 12 m/);
-    const integration = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Cuirassé")!;
-    expect(sb.hub.conversations.messages("bordee", integration.id)[0]!.text).toMatch(/studio\/art\/models\/a-0001-t2.glb[\s\S]*axe Y vers le haut, 1 unité = 1 mètre[\s\S]*2.1 m × 12 m × 3.4 m/);
-    expect(log(repo)).toMatch(/art: modèle 3D de A-0001 validé \(validateur, tour 2\)/);
+    expect(judge.systemPrompt).toMatch(/MODÈLE 3D[\s\S]*forme_ok/);
+    expect(judge.prompt).toMatch(/production\/a-0001-t1-e1.png[\s\S]*production\/a-0001-3d-2-face.png[\s\S]*demandé : 0.8 m/);
+    const texts = art.state("bordee").messages.map((m) => m.text);
+    expect(texts.find((t) => t.includes("passe 1 sur 2"))).toMatch(/Dans Blender : Tourné face à -Y[\s\S]*Tripo a reconnu ce modèle comme « octopod » : slash[\s\S]*l'artisan reprend la finition/);
+    const integration = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Grouillot")!;
+    expect(sb.hub.conversations.messages("bordee", integration.id)[0]!.text).toMatch(
+      /studio\/art\/models\/a-0001-3d-2.glb[\s\S]*1 unité = 1 mètre[\s\S]*devant tourné vers \+Z[\s\S]*garde ses matériaux[\s\S]*\?vitrine=A-0001/,
+    );
+    expect(log(repo)).toMatch(/art: modèle 3D de A-0001 validé \(validateur, passe 2\)/);
 
-    // Le chantier est fusionné : le validateur regarde la capture du jeu ; à retoucher → une retouche part au directeur, une seule fois.
+    // Le chantier est fusionné : sans scène vitrine, la capture de lancement ; à retoucher → une retouche part au directeur, une seule fois.
     const shot = sb.hub.checks!.screenshotPath("bordee", "T-0007");
     mkdirSync(join(shot, ".."), { recursive: true });
     writeFileSync(shot, PNG);
-    fake.extractions.push({ visible: true, ok: false, summary: "Le navire est minuscule à l'écran.", points: ["Échelle trop petite"] } as never);
-    art.onTaskStatus({ id: "T-0007", project: "bordee", title: "A-0001 : brancher le cuirassé", goal: "…", status: "merged" } as Task);
+    fake.extractions.push({ visible: true, ok: false, summary: "L'insecte est minuscule à l'écran.", points: ["Échelle trop petite"] } as never);
+    art.onTaskStatus({ id: "T-0007", project: "bordee", title: "A-0001 : brancher le grouillot", goal: "…", status: "merged" } as Task);
     await art.idle();
     a = art.state("bordee").assets[0]!;
     expect(a.ingame).toMatchObject({ task: "T-0007", file: "production/a-0001-en-jeu-t-0007.png", visible: true, ok: false, retried: true });
+    expect(existsSync(join(repo, "studio", "art", "production", "a-0001-vitrine-t-0007.png"))).toBe(false);
     expect(a.status).toBe("integration");
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/^§IMAGE§ production\/a-0001-en-jeu-t-0007.png\n\*\*A-0001 dans le jeu : à retoucher\.\*\*[\s\S]*J'ai demandé une retouche/);
     const fix = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Retoucher A-0001 dans le jeu")!;
@@ -387,23 +518,97 @@ describe("générateur d'images local (ADR-46)", () => {
     // La retouche est fusionnée et rend bien : plus de nouvelle retouche.
     writeFileSync(sb.hub.checks!.screenshotPath("bordee", "T-0008"), PNG);
     fake.extractions.push({ visible: true, ok: true, summary: "Bonne taille, bien éclairé.", points: [] } as never);
-    art.onTaskStatus({ id: "T-0008", project: "bordee", title: "A-0001 : agrandir le cuirassé", goal: "…", status: "merged" } as Task);
+    art.onTaskStatus({ id: "T-0008", project: "bordee", title: "A-0001 : agrandir le grouillot", goal: "…", status: "merged" } as Task);
     await art.idle();
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integre", ingame: { task: "T-0008", ok: true } });
     expect(sb.hub.conversations.listThreads("bordee").filter((t) => t.title.startsWith("Retoucher"))).toHaveLength(1);
   }, 60_000);
 
-  it("formats, mesures 3D et graphe Flux", () => {
+  it("forme ratée : l'atelier s'arrête sans seconde passe, et vous dit quoi faire", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: false, forme_ok: false, summary: "Les jambes sont fondues ensemble.", points: ["Jambes fondues"] } as never);
+    art.send(sb.human(), "bordee", "Le Titan en 3D");
+    await art.idle();
+    expect(m3d.exports).toHaveLength(1);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", model: { verdict: { ok: false } } });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/La forme elle-même ne va pas[\s\S]*« Refaire la 3D »/);
+  }, 30_000);
+
+  it("objet simple : ni image ni Tripo, l'artisan le modélise directement dans Blender", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    expect(art.state("bordee").workshop3d.tripo.configured).toBe(false);
+    fake.extractions.push(...(artisanSteps('boite("Caisse", (1, 1, 1), materiau=nouveau_materiau("Bois", "#6B4F3A"))', "Caisse en bois biseautée.") as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Lisible.", points: [] } as never);
+    fake.replies.push('[[ASSET]] {"name": "Caisse de munitions", "type": "décor", "usage": "sur le pont", "specs": "Bois #6B4F3A"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1 | triangles 500 | simple]]');
+    art.send(sb.human(), "bordee", "Une caisse de munitions");
+    await art.idle();
+    expect(gen.requests).toHaveLength(0);
+    expect(m3d.tripoCalls).toHaveLength(0);
+    expect(m3d.prepares[0]).toMatchObject({ input: null, palette: ["#6B4F3A"] });
+    const step = fake.calls.find((c) => /ARTISAN 3D/.test(c.systemPrompt))!;
+    expect(step.prompt).toMatch(/objet SIMPLE : la scène est vide[\s\S]*Pas d'image de référence/);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model3d: { simple: true }, model: { source: null, workshop: "Caisse en bois biseautée." } });
+  }, 30_000);
+
+  it("dans le jeu : le hub photographie la scène vitrine de l'asset", async () => {
+    const launches: { cwd: string; path?: string }[] = [];
+    const checker: CheckerPort = {
+      tests: async () => ({ status: "none", detail: "" }),
+      launch: async (_key, cwd, screenshot, path) => {
+        launches.push({ cwd, path });
+        if (screenshot) writeFileSync(screenshot, PNG);
+        return { status: "pass", detail: "", screenshot: screenshot ?? null };
+      },
+    };
+    const { sb, fake, gen, repo, art } = await setupLocal(checker);
+    gen.installed = true;
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.replies.push('[[ASSET]] {"name": "Drapeau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A flag. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un drapeau");
+    await art.idle();
+    fake.extractions.push({ visible: true, ok: true, summary: "Net et lisible.", points: [] } as never);
+    art.onTaskStatus({ id: "T-0003", project: "bordee", title: "A-0001 : brancher le drapeau", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    expect(launches.at(-1)).toEqual({ cwd: repo, path: "?vitrine=A-0001" });
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integre", ingame: { file: "production/a-0001-vitrine-t-0003.png", ok: true } });
+    expect(fake.calls.filter((c) => c.kind === "structured").at(-1)!.prompt).toMatch(/Capture de la scène vitrine du jeu \(\?vitrine=A-0001\)/);
+  }, 30_000);
+
+  it("formats, mesures 3D, croquis et graphe Flux (avec ou sans image de départ)", () => {
     expect(parseModel3D("taille 1,8 | triangles 9000 | animations walk, slash, preset:run, danse")).toEqual({ size: 1.8, tris: 9000, rig: true, animations: ["walk", "slash", "run"] });
     expect(parseModel3D("taille 40 | triangles 50")).toEqual({ size: 40, tris: 500, rig: false, animations: [] });
     expect(parseModel3D("squelette")).toMatchObject({ rig: true, animations: [] });
+    expect(parseModel3D("taille 1 | triangles 800 | simple")).toEqual({ size: 1, tris: 800, rig: false, animations: [], simple: true });
     expect(parseFormat("1024x1536")).toBe("1024x1536");
     expect(parseFormat(" 300 × 4000 ")).toBe("512x1536");
     expect(parseFormat("carré")).toBeNull();
+    const { directives } = parseArtDirectives("[[CROQUIS: A-0002]] # Lourd\nA heavy knight.\n---\nA nimble scout.\n---\n# Seul titre\n[[/CROQUIS]] [[CROQUIS: A-0003]] Un seul. [[/CROQUIS]]");
+    expect(directives.sketches).toEqual([
+      {
+        asset: "A-0002",
+        format: null,
+        options: [
+          { label: "Lourd", prompt: "A heavy knight." },
+          { label: "Direction 2", prompt: "A nimble scout." },
+        ],
+      },
+    ]);
     const g = fluxWorkflow({ prompt: "a ship", width: 768, height: 1024, seed: 7 }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
     expect(g["2"]!.inputs.text).toBe("a ship");
     expect(g["5"]!.inputs).toMatchObject({ width: 768, height: 1024 });
-    expect(g["6"]!.inputs).toMatchObject({ seed: 7, cfg: 1 });
+    expect(g["6"]!.inputs).toMatchObject({ seed: 7, cfg: 1, denoise: 1, latent_image: ["5", 0] });
+    const v = fluxWorkflow({ prompt: "a ship", width: 768, height: 1024, seed: 7, init: { image: PNG, denoise: 0.5 } }, "nidavellir-x.png") as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(v["9"]).toEqual({ class_type: "LoadImage", inputs: { image: "nidavellir-x.png" } });
+    expect(v["6"]!.inputs).toMatchObject({ denoise: 0.5, latent_image: ["10", 0] });
+    expect(v["5"]).toBeUndefined();
   });
 });
 

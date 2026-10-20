@@ -3,6 +3,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, re
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -20,7 +21,11 @@ export type GenState = {
   size: string;
 };
 
-export type GenRequest = { prompt: string; width: number; height: number; seed: number };
+/**
+ * `init` : une variation d'une image existante (le croquis choisi, ADR-49) au lieu d'une image partie de zéro.
+ * `denoise` va de 0 (l'image telle quelle) à 1 (rien n'en reste).
+ */
+export type GenRequest = { prompt: string; width: number; height: number; seed: number; init?: { image: Buffer; denoise: number } };
 
 export interface ImageGenPort {
   state(): GenState;
@@ -131,7 +136,15 @@ export class ComfyImageGen implements ImageGenPort {
     if (this.#idle) clearTimeout(this.#idle);
     try {
       const base = await this.#ensureServer();
-      const sent = JSON.parse(await http(`${base}/prompt`, "POST", JSON.stringify({ prompt: fluxWorkflow(req), client_id: "nidavellir" }))) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
+      // L'image de départ d'une variation va dans le dossier d'entrée de ComfyUI, sous un nom tiré de son contenu.
+      let init: string | undefined;
+      if (req.init) {
+        init = `nidavellir-${createHash("sha256").update(req.init.image).digest("hex").slice(0, 16)}.png`;
+        const input = join(this.#meta()!.main, "..", "input");
+        mkdirSync(input, { recursive: true });
+        if (!existsSync(join(input, init))) writeFileSync(join(input, init), req.init.image);
+      }
+      const sent = JSON.parse(await http(`${base}/prompt`, "POST", JSON.stringify({ prompt: fluxWorkflow(req, init), client_id: "nidavellir" }))) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
       if (!sent.prompt_id) throw new Error(`ComfyUI refuse la demande : ${sent.error?.message ?? JSON.stringify(sent.node_errors ?? sent).slice(0, 300)}`);
       const deadline = Date.now() + 15 * 60_000;
       for (;;) {
@@ -215,9 +228,12 @@ function errorOf(entry: HistoryEntry): string {
   return (m?.[1].exception_message ?? "erreur inconnue").slice(0, 300);
 }
 
-/** Le graphe ComfyUI de Flux dev (checkpoint fp8 tout-en-un), au format de son API. */
-export function fluxWorkflow(req: GenRequest): Record<string, unknown> {
-  return {
+/**
+ * Le graphe ComfyUI de Flux dev (checkpoint fp8 tout-en-un), au format de son API. Avec `init` (nom d'un fichier du
+ * dossier d'entrée de ComfyUI), l'image de départ remplace la toile vide et `denoise` dit combien on s'en écarte.
+ */
+export function fluxWorkflow(req: GenRequest, init?: string): Record<string, unknown> {
+  const graph: Record<string, unknown> = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: MODEL.name } },
     "2": { class_type: "CLIPTextEncode", inputs: { text: req.prompt, clip: ["1", 1] } },
     "3": { class_type: "FluxGuidance", inputs: { guidance: 3.5, conditioning: ["2", 0] } },
@@ -230,6 +246,15 @@ export function fluxWorkflow(req: GenRequest): Record<string, unknown> {
     "7": { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["1", 2] } },
     "8": { class_type: "SaveImage", inputs: { filename_prefix: "nidavellir", images: ["7", 0] } },
   };
+  if (init && req.init) {
+    graph["9"] = { class_type: "LoadImage", inputs: { image: init } };
+    graph["10"] = { class_type: "VAEEncode", inputs: { pixels: ["9", 0], vae: ["1", 2] } };
+    const sampler = graph["6"] as { inputs: Record<string, unknown> };
+    sampler.inputs.latent_image = ["10", 0];
+    sampler.inputs.denoise = Math.min(1, Math.max(0.1, req.init.denoise));
+    delete graph["5"];
+  }
+  return graph;
 }
 
 /** Le Python embarqué et ComfyUI/main.py dans la version autonome décompressée. */

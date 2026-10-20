@@ -258,6 +258,12 @@ export function createHub(options: HubOptions): Hub {
     model3d: options.model3d ?? new RealModel3D(dataDir),
     // La capture prise par les vérifications avant la fusion sert à juger le visuel dans le jeu (ADR-48).
     screenshot: (project, task) => checks?.screenshotPath(project, task) ?? null,
+    // La scène vitrine du jeu, photographiée sur le jeu lui-même après la fusion (ADR-49).
+    vitrine: async (project, id, file) => {
+      if (!options.checker) return null;
+      const r = await options.checker.launch(`${project}/vitrine-${id}`, projects.get(project).root, file, `?vitrine=${id}`);
+      return r.screenshot ?? null;
+    },
   });
   const artHook = tasks.onStatus;
   tasks.onStatus = (task) => {
