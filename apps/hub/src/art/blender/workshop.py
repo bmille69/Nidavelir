@@ -17,8 +17,18 @@ def done(result):
 
 # ---- Mesures ----
 
-def meshes():
+def all_meshes():
     return [o for o in scene.objects if o.type == "MESH" and not any(c.name.startswith("glTF_not_exported") for c in o.users_collection)]
+
+
+def meshes():
+    """Le modele. En mode figurine (ADR-53), le corps de Tripo n'est qu'un calque : on compte les pieces, s'il y en a."""
+    pieces = [o for o in all_meshes() if not o.get("calque")]
+    return pieces or all_meshes()
+
+
+def armature():
+    return next((o for o in scene.objects if o.type == "ARMATURE"), None)
 
 
 def roots():
@@ -258,6 +268,160 @@ def cylindre(nom, rayon, hauteur, position=(0, 0, 0), materiau=None, cotes=16):
     return o
 
 
+# ---- Figurine (ADR-53) : des pieces nettes accrochees aux os du squelette de Tripo ----
+
+def marquer_calque():
+    """Le corps de Tripo devient un calque : cache aux photos et a l'export, il sert seulement de guide de taille."""
+    n = 0
+    for o in all_meshes():
+        if any(m.type == "ARMATURE" for m in o.modifiers) or o.vertex_groups:
+            o["calque"] = True
+            o.hide_render = True
+            o.display_type = "WIRE"
+            n += 1
+    return n
+
+
+def calque(visible=True):
+    """Montre (ou cache) le calque sur les photos, pour comparer les pieces au corps de Tripo."""
+    for o in all_meshes():
+        if o.get("calque"):
+            o.hide_render = not visible
+
+
+def squelette():
+    """Les os : nom, tete et queue (metres, monde, pose de repos), longueur. Les pieces s'accrochent a ces os."""
+    arm = armature()
+    if not arm:
+        return []
+    r = lambda v: [round(x, 3) for x in v]
+    return [{"nom": b.name, "tete": r(arm.matrix_world @ b.head_local), "queue": r(arm.matrix_world @ b.tail_local), "longueur": round(b.length * arm.matrix_world.to_scale()[0], 3)} for b in arm.data.bones]
+
+
+def zones():
+    """
+    Pour chaque os, la boite du calque qu'il porte (centre et dimensions en metres) : ou poser et quelle taille donner a
+    la piece. Chaque point du calque va a l'os qui le tient le plus ; les os de torsion (« L_UpperarmTwist01 ») comptent
+    pour leur os principal (« L_Upperarm »).
+    """
+    arm = armature()
+    bones = set(arm.data.bones.keys()) if arm else set()
+
+    def main(name):
+        base = re.sub(r"Twist\d+$", "", name)
+        return base if base in bones else name
+
+    out = {}
+    for o in all_meshes():
+        if not o.get("calque"):
+            continue
+        names = {g.index: g.name for g in o.vertex_groups}
+        pts = {}
+        for v in o.data.vertices:
+            best = max((g for g in v.groups if g.group in names), key=lambda g: g.weight, default=None)
+            if best and best.weight > 0:
+                pts.setdefault(main(names[best.group]), []).append(o.matrix_world @ v.co)
+        for name, ps in pts.items():
+            lo = Vector((min(p.x for p in ps), min(p.y for p in ps), min(p.z for p in ps)))
+            hi = Vector((max(p.x for p in ps), max(p.y for p in ps), max(p.z for p in ps)))
+            out[name] = {"centre": [round(x, 3) for x in (lo + hi) / 2], "dimensions": [round(x, 3) for x in hi - lo], "points": len(ps)}
+    return out
+
+
+def fixer(objet, sur):
+    """Accroche une piece a un os, sans la deplacer : elle suivra l'os pendant les animations, sans se deformer."""
+    arm = armature()
+    if not arm or sur not in arm.data.bones:
+        raise ValueError("os inconnu : %s" % sur)
+    o = bpy.data.objects[objet] if isinstance(objet, str) else objet
+    bpy.context.view_layer.update()
+    mw = o.matrix_world.copy()
+    o.parent = arm
+    o.parent_type = "BONE"
+    o.parent_bone = sur
+    bpy.context.view_layer.update()
+    o.matrix_world = mw
+    return o
+
+
+def _aplat(couleur, lueur=0.0, rugosite=0.85):
+    nom = "Aplat %s%s" % (couleur.upper(), " lueur" if lueur else "")
+    m = bpy.data.materials.get(nom)
+    if not m:
+        m = nouveau_materiau(nom, couleur, rugosite, 0.0, couleur if lueur else None, lueur)
+    return m
+
+
+def piece(nom, forme="boite", dims=(0.1, 0.1, 0.1), position=(0, 0, 0), rotation=(0, 0, 0), couleur="#808080", sur=None, biseau=0.012, lueur=0.0, cotes=16):
+    """
+    Une piece de figurine : forme simple (boite, cylindre, sphere, cone), dimensions en metres, CENTREE sur position,
+    rotation en degres, une seule couleur (aplat mat, ou lumineuse avec lueur > 0), aretes adoucies par un biseau, et
+    accrochee a l'os `sur` si on le donne. Pas de texture : la limite entre deux couleurs est le bord des pieces.
+    """
+    if forme == "boite":
+        bpy.ops.mesh.primitive_cube_add(size=1)
+    elif forme == "cylindre":
+        bpy.ops.mesh.primitive_cylinder_add(vertices=cotes, radius=0.5, depth=1)
+    elif forme == "sphere":
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=cotes, ring_count=max(6, cotes // 2), radius=0.5)
+    elif forme == "cone":
+        bpy.ops.mesh.primitive_cone_add(vertices=cotes, radius1=0.5, radius2=0, depth=1)
+    else:
+        raise ValueError("forme inconnue : %s (boite, cylindre, sphere, cone)" % forme)
+    o = bpy.context.active_object
+    o.name = nom
+    o.scale = dims
+    o.rotation_euler = [math.radians(a) for a in rotation]
+    o.location = position
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    if biseau and forme != "sphere":
+        mod = o.modifiers.new("Biseau", "BEVEL")
+        mod.width = biseau
+        mod.segments = 2
+        mod.limit_method = "ANGLE"
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    try:
+        bpy.ops.object.shade_smooth_by_angle(angle=math.radians(35))
+    except Exception:
+        bpy.ops.object.shade_flat()
+    o.data.materials.append(_aplat(couleur, lueur))
+    if sur:
+        fixer(o, sur)
+    return o
+
+
+def membre(nom, sur, epaisseur=0.1, forme="cylindre", couleur="#808080", largeur=None, debut=0.0, fin=1.0, biseau=0.012, lueur=0.0):
+    """
+    Une piece couchee le long d'un os, de son articulation de depart a celle d'arrivee : bras, avant-bras, cuisse,
+    tibia. « debut » et « fin » (0 a 1) raccourcissent la piece aux deux bouts ; « largeur » (sinon = epaisseur) donne
+    une section aplatie ; la piece est accrochee a l'os.
+    """
+    arm = armature()
+    if not arm or sur not in arm.data.bones:
+        raise ValueError("os inconnu : %s" % sur)
+    b = arm.data.bones[sur]
+    h, t = arm.matrix_world @ b.head_local, arm.matrix_world @ b.tail_local
+    a, z = h.lerp(t, debut), h.lerp(t, fin)
+    d = z - a
+    o = piece(nom, forme, (largeur or epaisseur, epaisseur, max(d.length, 0.01)), (0, 0, 0), couleur=couleur, biseau=biseau, lueur=lueur)
+    o.rotation_mode = "QUATERNION"
+    o.rotation_quaternion = d.to_track_quat("Z", "Y")
+    o.location = (a + z) / 2
+    fixer(o, sur)
+    return o
+
+
+def pieces():
+    """Les pieces deja posees : nom, os, couleur, dimensions."""
+    out = []
+    for o in all_meshes():
+        if o.get("calque"):
+            continue
+        mat = o.material_slots[0].material.name if o.material_slots and o.material_slots[0].material else None
+        out.append({"piece": o.name, "sur": o.parent_bone if o.parent_type == "BONE" else None, "materiau": mat, "dimensions": [round(x, 3) for x in o.dimensions]})
+    return out
+
+
 # ---- Photos ----
 
 def photos(out_dir, prefix, size_hint=0):
@@ -308,6 +472,42 @@ def photos(out_dir, prefix, size_hint=0):
         a = math.radians(deg)
         cam.location = center + Vector((math.cos(a) * radius, math.sin(a) * radius, radius * 0.45))
         out.append(shoot("%s/%s-%s.png" % (out_dir, prefix, name)))
+    # Le modele en mouvement (ADR-53) : une image au milieu de quelques animations, vue de trois-quarts, pour juger la
+    # deformation (une piece de figurine doit suivre son os sans se detacher ni s'etirer).
+    arm = armature()
+    if arm and arm.animation_data and arm.animation_data.nla_tracks:
+        tracks = arm.animation_data.nla_tracks
+        mutes = [t.mute for t in tracks]
+        seen, chosen = set(), []
+        for pref in ("walk", "run", "hurt", "slash", "hit", "jump", "idle"):
+            for a in bpy.data.actions:
+                if a.name not in seen and pref in a.name.lower() and len(chosen) < 3:
+                    seen.add(a.name)
+                    chosen.append(a)
+        a45 = math.radians(-45)
+        cam.location = center + Vector((math.cos(a45) * radius, math.sin(a45) * radius, radius * 0.45))
+        # Les pistes NLA l'emporteraient sur l'action, meme muettes : on les coupe le temps des poses (verifie en 4.5).
+        use_nla = arm.animation_data.use_nla
+        arm.animation_data.use_nla = False
+        for act in chosen:
+            for t in tracks:
+                t.mute = True
+            arm.animation_data.action = act
+            # Blender 4.4+ : une action ne joue que par son « slot » ; ceux de Tripo ne portent pas le nom de l'armature.
+            if getattr(act, "slots", None) and len(act.slots):
+                arm.animation_data.action_slot = act.slots[0]
+            scene.frame_set(int((act.frame_range[0] + act.frame_range[1]) / 2))
+            # La camera suit le modele dans sa pose (une course peut le deplacer).
+            plo, phi = bounds()
+            target.location = (plo + phi) / 2
+            cam.location = target.location + Vector((math.cos(a45) * radius, math.sin(a45) * radius, radius * 0.45))
+            safe = re.sub(r"[^a-z0-9_]+", "-", act.name.lower()).strip("-")[:30]
+            out.append(shoot("%s/%s-pose-%s.png" % (out_dir, prefix, safe)))
+        arm.animation_data.action = None
+        arm.animation_data.use_nla = use_nla
+        for t, m in zip(tracks, mutes):
+            t.mute = m
+        scene.frame_set(1)
     # Vue de jeu : de haut et de loin, sur un sol sombre, comme la camera d'un jeu en 3/4 de dessus.
     bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, 0))
     ground = bpy.context.active_object
@@ -343,16 +543,24 @@ def run_code(code):
     safe = {k: getattr(builtins, k) for k in dir(builtins) if k not in ("open", "eval", "exec", "compile", "__import__", "input", "breakpoint", "globals", "vars", "memoryview", "help", "exit", "quit")}
     safe["__import__"] = guarded_import
     env = {"__builtins__": safe, "bpy": bpy, "bmesh": bmesh, "Vector": Vector, "math": math}
-    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "lueur", "boite", "cylindre", "base_image"):
+    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "lueur", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
         env[k] = globals()[k]
     env["mesures"] = summary
     env["palette"] = job.get("palette", [])
+    # Les pieces se posent et s'accrochent en pose de repos : c'est elle que les animations deforment ensuite.
+    arm = armature()
+    if arm:
+        arm.data.pose_position = "REST"
+        bpy.context.view_layer.update()
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
             exec(compile(code, "atelier", "exec"), env)
     except Exception:
         return {"ok": False, "sortie": buf.getvalue()[-4000:], "erreur": traceback.format_exc(limit=4)[-3000:]}
+    finally:
+        if arm and arm.name in bpy.data.objects:
+            arm.data.pose_position = "POSE"
     return {"ok": True, "sortie": buf.getvalue()[-6000:], "erreur": None}
 
 
@@ -404,8 +612,15 @@ if mode == "prepare":
         budget(int(job.get("max_tris") or 0))
         normalize(float(job.get("size") or 0))
         shrink_textures(int(job.get("max_texture") or 0))
+        if job.get("calque"):
+            marquer_calque()
     bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
     done(summary())
+elif mode == "calque":
+    # Une scene deja faite (et payee) passe en mode figurine : son corps devient un calque.
+    n = marquer_calque()
+    bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
+    done({"calques": n, "mesures": summary()})
 elif mode == "python":
     r = run_code(job["code"])
     if r["ok"]:
@@ -414,6 +629,10 @@ elif mode == "python":
 elif mode == "photos":
     done({"photos": photos(job["out_dir"], job["prefix"]), "mesures": summary()})
 elif mode == "export":
+    # Figurine : le calque ne part pas dans le jeu, seules les pieces y vont (avec le squelette et les animations).
+    if any(not o.get("calque") for o in all_meshes()):
+        for o in [o for o in all_meshes() if o.get("calque")]:
+            bpy.data.objects.remove(o, do_unlink=True)
     before = budget(int(job.get("max_tris") or 0))
     normalize(float(job.get("size") or 0))
     shrink_textures(int(job.get("max_texture") or 0))

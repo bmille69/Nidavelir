@@ -70,7 +70,11 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   (fabriquée et validée d'abord, de face, objet entier, fond uni) sert de modèle : Tripo en fait la 3D, l'artisan 3D la
   nettoie et la repeint dans Blender, le validateur juge les photos. Ajoute « simple » pour un objet fait de formes
   simples (mur, caisse, étagère, borne, coffre, rocher stylisé) : pas d'image ni de Tripo, l'artisan le modélise
-  directement dans Blender d'après la fiche ; la 3D part tout de suite. « taille » : plus grande dimension en mètres dans le jeu ;
+  directement dans Blender d'après la fiche ; la 3D part tout de suite. Ajoute « figurine » pour un personnage ou une
+  créature aux formes dures (armure, robot, carapace, insecte) : de Tripo on ne garde que le squelette et les animations,
+  et l'artisan construit le corps en pièces nettes d'une seule couleur, chacune accrochée à un os, comme une figurine
+  articulée. Rien ne bave (pas de texture) et rien ne se déforme en bougeant. C'est le bon choix dès qu'un rendu net
+  compte ; un personnage déjà passé par Tripo est repris sans rien repayer. « taille » : plus grande dimension en mètres dans le jeu ;
   « triangles » : budget (quelques milliers pour un jeu web) ; « squelette » s'il doit être animé ; « animations » parmi :
   idle, walk, run, jump, slash, shoot, hurt, fall, turn, dive, climb ; pour un personnage humanoïde, toute la bibliothèque
   des bipèdes, mieux ajustée à son squelette (hit_to_body_01, hit_to_head, cast_a_spell, chop, front_kick_01,
@@ -197,6 +201,8 @@ export function parseModel3D(raw: string): Model3DSpec {
     rig: animations.length > 0 || /squelette/i.test(raw),
     animations,
     ...(/\bsimple\b/i.test(raw) ? { simple: true } : {}),
+    // Une figurine est toujours animée : elle prend le squelette de Tripo.
+    ...(/\bfigurine\b/i.test(raw) ? { figurine: true, rig: true } : {}),
   };
 }
 
@@ -352,7 +358,10 @@ export const MODEL_SCHEMA = {
 } as const;
 
 export const MODEL_VALIDATOR_SYSTEM = `Tu es le VALIDATEUR ARTISTIQUE de Nidavellir. Tu juges un MODÈLE 3D de jeu, fini par l'artisan 3D dans Blender, à travers
-cinq photos : face, trois-quarts, profil, dos, et une vue de jeu (de haut et de loin, sur sol sombre, comme la caméra du jeu).
+ses photos : face, trois-quarts, profil, dos, une vue de jeu (de haut et de loin, sur sol sombre, comme la caméra du jeu) et,
+s'il est animé, quelques POSES prises au milieu de ses animations (pose-…) : juge aussi la déformation (rien ne s'étire, ne
+se détache ni ne traverse le corps de façon visible). Une figurine faite de pièces accrochées aux os est voulue : des
+pièces séparées et des joints visibles ne sont pas des défauts, des pièces qui flottent ou se décrochent en pose, si.
 Ton dossier de travail est studio/art/ : lis bible.md, la fiche de l'asset dans assets.json, regarde l'image qui a servi de
 modèle (s'il y en a une : un objet simple est modélisé sans image), puis REGARDE les cinq photos (outil Read).
 Grille : fidélité à la forme de l'image de départ, palette de la fiche (aplats propres, sans bavure ni tache), matière (mate sauf
@@ -399,6 +408,23 @@ Autres outils : mesures() (triangles, dimensions, matériaux, animations), meshe
 numpy. Le code ne peut ni lire ni écrire de fichiers, ni importer d'autres modules, ni toucher au système : il est refusé sinon.
 N'enregistre rien et n'exporte rien toi-même : la scène est enregistrée après chaque code réussi, et le hub exporte le .glb
 à la fin (taille, budget de triangles et pose au sol sont réappliqués à l'export). Ne touche pas aux animations ni au squelette.
+
+MODE FIGURINE (quand on te le dit) : le corps de Tripo est un CALQUE, caché sur les photos et retiré à l'export ; il ne
+sert qu'à donner les tailles. Garde le squelette et ses animations intacts. Construis le personnage en PIÈCES nettes, d'une
+seule couleur chacune (aplats de la palette, une seule couleur lumineuse pour la visière ou les joints) :
+- squelette() donne les os (nom, tête, queue, longueur) ; zones() donne, pour chaque os, la boîte du calque qu'il porte
+  (centre et dimensions) : c'est là que vont les pièces, à cette taille ;
+- membre(nom, sur=os, epaisseur, forme="cylindre"|"boite", couleur, largeur, debut, fin) couche une pièce le long d'un os
+  (bras, avant-bras, cuisse, tibia, main, pied) et l'y accroche ;
+- piece(nom, forme="boite"|"cylindre"|"sphere"|"cone", dims, position (centre), rotation (degrés), couleur, sur=os,
+  biseau, lueur) pose une pièce libre (casque, plastron, épaulière, genouillère, tabard) et l'accroche à l'os « sur » ;
+  fixer(objet, sur=os) accroche une pièce déjà faite ; pieces() liste ce qui est posé ; calque(True) montre le calque sur
+  les photos pour comparer, calque(False) le recache ;
+- les photos comptent aussi des POSES (pose-run, pose-slash…) : vérifie qu'aucune pièce ne se détache, ne flotte, ne
+  traverse le corps de façon visible et que les articulations restent couvertes ;
+- vise la silhouette de la planche et de la référence : peu de pièces, grandes et lisibles (une vingtaine), biseaux
+  doux, proportions fortes ; superposer deux pièces de couleurs différentes donne un liseré net.
+Le paramètre s'appelle « sur » : le mot « os » seul est refusé par l'atelier (c'est aussi un module système).
 
 Méthode : regarde d'abord les photos et la référence ; corrige l'orientation ; puis la matière et la peinture ; puis les lueurs ;
 redemande des photos après chaque changement visible et VÉRIFIE-les. Juge la vue de jeu : la silhouette doit se lire de loin.

@@ -101,8 +101,14 @@ class FakeModel3D implements Model3DPort {
     }
     return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(req.views ? { views: sheet } : {}) };
   }
+  calques: string[] = [];
+  async calque(dir: string) {
+    this.calques.push(dir);
+    return {};
+  }
   async prepare(req: { dir: string; input: string | null; palette: string[] }) {
     mkdirSync(req.dir, { recursive: true });
+    writeFileSync(join(req.dir, "scene.blend"), "blend");
     this.prepares.push({ dir: req.dir, input: req.input && existsSync(req.input) ? readFileSync(req.input, "utf8") : null, palette: req.palette });
     return {};
   }
@@ -585,6 +591,47 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "production", model: { verdict: { ok: false } } });
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/La forme elle-même ne va pas[\s\S]*« Refaire la 3D »/);
   }, 30_000);
+
+  it("figurine : un personnage déjà passé par Tripo est reconstruit en pièces sur son squelette, sans rien repayer (ADR-53)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    m3d.rigType = "biped";
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur", "specs": "Plaques #6E6A63, visière #F2EBDD"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, run]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: false, forme_ok: false, summary: "Pâte à modeler : bosselé, bavures.", points: ["Bavures"] } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(art.state("bordee").assets[0]!.model).toMatchObject({ rigType: "biped", animations: ["idle", "run"] });
+
+    // La DA passe le Titan en figurine : l'atelier repart seul, sur la scène payée, sans Tripo ni nouvelle préparation.
+    fake.replies.push("On le reconstruit en pièces.\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, run | figurine]]");
+    fake.extractions.push(
+      ...([
+        { note: "Je pose le casque et le plastron sur leurs os.", code: 'piece("Casque", "sphere", (0.24, 0.26, 0.28), (0, 0, 1.75), couleur="#6E6A63", sur="Head")', photos: true, fini: false, summary: "" },
+        { note: "Les poses tiennent.", code: null, photos: false, fini: true, summary: "Figurine de 18 pièces sur le squelette." },
+      ] as never[]),
+    );
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Net, lisible, rien ne se détache en pose.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Fais-en une figurine");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(m3d.prepares).toHaveLength(1);
+    expect(m3d.calques).toEqual([m3d.atelier("bordee-A-0001")]);
+    const step = fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt)).at(-2)!;
+    expect(step.systemPrompt).toMatch(/MODE FIGURINE[\s\S]*membre\(nom, sur=os/);
+    expect(step.prompt).toMatch(/MODE FIGURINE : construis-le en pièces/);
+    expect(fake.calls.filter((c) => /MODÈLE 3D/.test(c.systemPrompt)).at(-1)!.prompt).toMatch(/poses d'animation[\s\S]*Figurine : des pièces nettes/);
+    const a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "integration", model3d: { figurine: true, rig: true }, model: { workshop: "Figurine de 18 pièces sur le squelette.", animations: ["idle", "run"], rigType: "biped" } });
+    const integration = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Titan")!;
+    expect(sb.hub.conversations.messages("bordee", integration.id)[0]!.text).toMatch(/pièces rigides accrochées aux os/);
+    expect(parseModel3D("taille 1,8 | figurine")).toMatchObject({ figurine: true, rig: true });
+  }, 60_000);
 
   it("objet simple : ni image ni Tripo, l'artisan le modélise directement dans Blender", async () => {
     const { sb, fake, gen, m3d, art } = await setupLocal();

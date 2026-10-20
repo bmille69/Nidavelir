@@ -75,8 +75,9 @@ const VARIANTS = 3;
 const ROUNDS = 2;
 /** Passes de l'artisan 3D au plus : Tripo ne travaille qu'une fois, la seconde passe reprend la même scène dans Blender. */
 const MODEL_ROUNDS = 2;
-/** Pas de l'artisan 3D dans Blender, par passe. */
+/** Pas de l'artisan 3D dans Blender, par passe ; une figurine se construit pièce par pièce, il lui en faut plus (ADR-53). */
 const WORKSHOP_STEPS = 12;
+const FIGURINE_STEPS = 30;
 
 const MAX_IMAGE = 15 * 1024 * 1024;
 const HISTORY = 30;
@@ -109,6 +110,8 @@ export class ArtService {
   readonly #screenshot: (project: string, task: string) => string | null;
   readonly #generating = new Map<string, Map<string, Generating>>();
   readonly #vitrine: (project: string, id: string, file: string) => Promise<string | null>;
+  /** Les assets que la DA vient de passer en figurine (ADR-53) : leur atelier repart tout seul après le tour. */
+  readonly #toFigurine = new Set<string>();
 
   constructor(deps: {
     db: Db;
@@ -356,7 +359,7 @@ export class ArtService {
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
       model
-        ? `- Modèle 3D glTF binaire (.glb) : axe Y vers le haut, 1 unité = 1 mètre, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} m`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
+        ? `- Modèle 3D glTF binaire (.glb)${asset.model3d?.figurine ? " fait de pièces rigides accrochées aux os de son squelette (pas de peau déformée : chaque pièce suit son os)" : ""} : axe Y vers le haut, 1 unité = 1 mètre, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} m`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
         : "",
       `- Usage : ${asset.usage}`,
       asset.specs ? `- Spécifications : ${asset.specs}` : "",
@@ -522,6 +525,10 @@ export class ArtService {
       const assets = readManifest(p.root).assets;
       for (const t of directives.model3d) {
         const a = assets.find((x) => x.id === t.asset);
+        if (a?.model3d && this.#toFigurine.delete(`${project}/${a.id}`) && a.status !== "integration" && a.status !== "integre") {
+          this.#startModel(project, a.id);
+          continue;
+        }
         if (!a?.model3d || a.model || a.status !== "production" && a.status !== "propose") continue;
         const pending = directives.generate.some((g) => g.asset === a.id) || directives.sketches.some((c) => c.asset === a.id);
         if (a.model3d.simple || (a.verdict?.ok && !pending)) this.#startModel(project, a.id);
@@ -640,10 +647,11 @@ export class ArtService {
     for (const t of d.model3d) {
       const a = m.assets.find((x) => x.id === t.asset);
       if (!a || a.status === "integration" || a.status === "integre") continue;
+      if (t.spec.figurine && !a.model3d?.figurine) this.#toFigurine.add(`${project}/${a.id}`);
       a.model3d = t.spec;
       if (t.spec.simple && a.status === "propose") this.#setStatus(a, "production");
       a.updated_at = now;
-      done.push(`3D prévue pour ${a.id} (${t.spec.simple ? "objet simple, " : ""}${t.spec.size} m, ${t.spec.tris} triangles${t.spec.animations.length ? `, ${t.spec.animations.join(", ")}` : ""})`);
+      done.push(`3D prévue pour ${a.id} (${t.spec.simple ? "objet simple, " : t.spec.figurine ? "figurine, " : ""}${t.spec.size} m, ${t.spec.tris} triangles${t.spec.animations.length ? `, ${t.spec.animations.join(", ")}` : ""})`);
     }
     if (sketched.length) done.push(this.#imagegen.state().installed ? `croquis demandés pour ${sketched.join(", ")}` : `croquis prêts pour ${sketched.join(", ")} (générateur pas encore installé)`);
     if (produce.length) done.push(this.#imagegen.state().installed ? `génération lancée pour ${produce.join(", ")}` : `prompts prêts pour ${produce.join(", ")} (générateur pas encore installé)`);
@@ -916,7 +924,14 @@ export class ArtService {
       let rigType: string | null = null;
       // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
       const planche: string[] = [];
-      if (source) {
+      // Figurine sur une scène déjà faite et payée (squelette et animations de Tripo) : on la reprend, sans Tripo (ADR-53).
+      const reuse = !!spec.figurine && !!asset.model?.rigType && existsSync(join(dir, "scene.blend"));
+      if (reuse) {
+        animations = asset.model!.animations;
+        rigType = asset.model!.rigType ?? null;
+        planche.push(...(asset.model!.views ?? []).filter((f) => existsSync(join(root, f))));
+      }
+      if (source && !reuse) {
         const t = await this.#model3d.tripo({
           image: readFileSync(join(root, source)),
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
@@ -946,8 +961,13 @@ export class ArtService {
       const move = (a: string) => a.split(":").pop();
       const missingAnimations = spec.animations.filter((w) => !animations.some((a) => move(a) === move(w) || (move(w) === "walk" && move(a) === "march")));
       progress.stage = "atelier";
-      progress.step = "Blender prépare la scène de l'atelier";
-      await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+      if (reuse) {
+        progress.step = "L'atelier reprend la scène déjà payée : le corps de Tripo devient un calque";
+        await this.#model3d.calque(dir);
+      } else {
+        progress.step = "Blender prépare la scène de l'atelier";
+        await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+      }
       // Ce que l'artisan lit : la fiche, la bible et l'image de référence, copiées dans son dossier.
       writeAtomic(join(dir, "fiche.json"), JSON.stringify({ id: asset.id, name: asset.name, type: asset.type, usage: asset.usage, specs: asset.specs, model3d: spec }, null, 2));
       if (existsSync(join(root, "bible.md"))) copyFileSync(join(root, "bible.md"), join(dir, "bible.md"));
@@ -1093,6 +1113,7 @@ export class ArtService {
   async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating): Promise<string> {
     const journal: string[] = [];
     const spec = asset.model3d!;
+    const steps = spec.figurine ? FIGURINE_STEPS : WORKSHOP_STEPS;
     progress.stage = "atelier";
     progress.step = "L'artisan 3D regarde le modèle";
     let shots = await this.#model3d.photos({ dir, prefix: "photo-0" });
@@ -1102,22 +1123,22 @@ export class ArtService {
       if (p) progress.preview = { kind: "atelier", file: basename(p) };
     };
     show();
-    for (let step = 1; step <= WORKSHOP_STEPS; step++) {
-      progress.step = `L'artisan 3D retouche dans Blender (pas ${step} sur ${WORKSHOP_STEPS})`;
+    for (let step = 1; step <= steps; step++) {
+      progress.step = `L'artisan 3D ${spec.figurine ? "construit la figurine" : "retouche"} dans Blender (pas ${step} sur ${steps})`;
       const { data } = await this.#orchestrator.structured({
         systemPrompt: WORKSHOP_SYSTEM,
         prompt: [
           `Asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}`,
           `Spécifications : ${asset.specs || "aucune"}`,
           `Palette de la fiche (variable palette) : ${paletteOf(asset).join(", ") || "aucune : lis la bible"}`,
-          `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ""}.`,
+          `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ""}${spec.figurine ? ", MODE FIGURINE : construis-le en pièces accrochées aux os, le corps de Tripo n'est qu'un calque" : ""}.`,
           reference ? `Image de référence : ${reference}` : "Pas d'image de référence : suis la fiche et la bible.",
           sheet.length ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}` : "",
           remarks.length ? `Le validateur a refusé la passe précédente ; corrige ceci :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
           journal.length ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}` : "",
           `Photos actuelles (à regarder avec Read) : ${shots.photos.map((p) => basename(p)).join(", ")}`,
           `Mesures actuelles : ${JSON.stringify(shots.mesures).slice(0, 3000)}`,
-          `Pas ${step} sur ${WORKSHOP_STEPS}.`,
+          `Pas ${step} sur ${steps}.`,
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -1141,7 +1162,7 @@ export class ArtService {
         show();
       }
     }
-    return `Arrêté au bout de ${WORKSHOP_STEPS} pas.`;
+    return `Arrêté au bout de ${steps} pas.`;
   }
 
   /** Le validateur devant les photos du modèle exporté. */
@@ -1164,7 +1185,8 @@ export class ArtService {
           `Modèle 3D de l'asset ${a.id} « ${a.name} » (${a.type}). Usage : ${a.usage}. Spécifications : ${a.specs || "aucune"}.`,
           source ? `Image validée qui a servi de modèle : ${source}` : "Objet simple, modélisé directement dans Blender d'après la fiche (pas d'image de départ).",
           planche.length ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}` : "",
-          `Photos (face, trois-quarts, profil, dos, vue de jeu) : ${renders.join(", ")}`,
+          `Photos (face, trois-quarts, profil, dos, poses d'animation, vue de jeu) : ${renders.join(", ")}`,
+          a.model3d?.figurine ? "Figurine : des pièces nettes accrochées aux os, voulues ainsi (pas de texture)." : "",
           `Mesures : ${done.dims.map((d) => `${d} m`).join(" × ")} (demandé : ${spec.size} m pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
         ].join("\n"),
         jsonSchema: MODEL_SCHEMA,
@@ -1325,7 +1347,7 @@ export class ArtService {
   /** Une photo de travail de l'atelier Blender (hors du dépôt), pour suivre l'artisan depuis l'onglet Visuels. */
   atelierFile(project: string, id: string, name: string): { path: string; mime: string } {
     this.#projects.get(project);
-    if (!/^A-\d{4,}$/.test(id) || !/^photo-\d+-(face|trois-quarts|profil|dos|vue-jeu)\.png$/.test(name)) throw new ArtError("Photo refusée");
+    if (!/^A-\d{4,}$/.test(id) || !/^photo-\d+-(face|trois-quarts|profil|dos|vue-jeu|pose-[a-z0-9_-]{1,30})\.png$/.test(name)) throw new ArtError("Photo refusée");
     const path = join(this.#model3d.atelier(`${project}-${id}`), name);
     if (!existsSync(path)) throw new ArtError("Photo introuvable");
     return { path, mime: "image/png" };

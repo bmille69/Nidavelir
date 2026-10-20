@@ -18,8 +18,12 @@ export type Model3DState = {
   tripo: { configured: boolean; month: string; credits: number; cap: number };
 };
 
-/** Ce que la fiche demande pour la 3D. `simple` : formes simples, modélisées directement dans Blender, sans image ni Tripo. */
-export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
+/**
+ * Ce que la fiche demande pour la 3D. `simple` : formes simples, modélisées directement dans Blender, sans image ni
+ * Tripo. `figurine` (ADR-53) : un personnage fait de pièces nettes accrochées aux os ; de Tripo, on ne garde que le
+ * squelette et les animations, son corps sert seulement de calque.
+ */
+export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean; figurine?: boolean };
 
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
@@ -56,6 +60,8 @@ export interface Model3DPort {
    * ou une scène vide pour un objet simple que l'artisan modélise lui-même. `palette` : les couleurs de la fiche.
    */
   prepare(req: { dir: string; input: string | null; extras?: string[]; animations?: string[]; spec: Model3DSpec; palette: string[] }): Promise<unknown>;
+  /** Une scène d'atelier déjà faite (et payée) passe en figurine : son corps devient un calque (ADR-53). */
+  calque(dir: string): Promise<unknown>;
   /** Le code Python de l'artisan, dans la scène (gardé par une liste blanche) ; la scène est enregistrée s'il réussit. */
   runCode(req: { dir: string; code: string }): Promise<CodeResult>;
   /** Cinq photos de travail (face, trois-quarts, profil, dos, vue de jeu) et les mesures, sans rien changer. */
@@ -164,7 +170,21 @@ export class RealModel3D implements Model3DPort {
     rmSync(req.dir, { recursive: true, force: true });
     mkdirSync(req.dir, { recursive: true });
     writeFileSync(join(req.dir, "atelier.json"), JSON.stringify({ palette: req.palette }), "utf8");
-    return this.#run(null, req.dir, "preparation", { mode: "prepare", blend: join(req.dir, "scene.blend"), input: req.input, extras: req.extras ?? [], animations: req.animations ?? [], size: req.spec.size, max_tris: req.spec.tris, max_texture: 1024 });
+    return this.#run(null, req.dir, "preparation", {
+      mode: "prepare",
+      blend: join(req.dir, "scene.blend"),
+      input: req.input,
+      extras: req.extras ?? [],
+      animations: req.animations ?? [],
+      size: req.spec.size,
+      max_tris: req.spec.tris,
+      max_texture: 1024,
+      calque: !!req.spec.figurine,
+    });
+  }
+
+  async calque(dir: string): Promise<unknown> {
+    return this.#run(join(dir, "scene.blend"), dir, "calque", { mode: "calque", blend: join(dir, "scene.blend") });
   }
 
   async runCode(req: { dir: string; code: string }): Promise<CodeResult> {
@@ -303,7 +323,8 @@ export class RealModel3D implements Model3DPort {
           face_limit: Math.max(1000, req.spec.tris),
           model_seed: req.seed,
           texture_seed: req.seed,
-          ...(req.spec.rig ? { geometry_quality: "detailed", texture_quality: "detailed" } : {}),
+          // Une figurine ne garde pas le corps de Tripo (seulement son squelette) : inutile de le payer en détaillé.
+          ...(req.spec.rig && !req.spec.figurine ? { geometry_quality: "detailed", texture_quality: "detailed" } : {}),
         };
         // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
         let made: TripoTask | null = null;
