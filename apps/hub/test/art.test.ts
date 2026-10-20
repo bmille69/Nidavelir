@@ -6,7 +6,7 @@ import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
 import { fluxWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
-import type { Model3DPort, Model3DSpec, Model3DState } from "../src/art/model3d.ts";
+import { VIEWS, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
 import { parseArtDirectives, parseFormat, parseModel3D } from "../src/art/prompts.ts";
 import type { CheckerPort } from "../src/quality/checks.ts";
 import { createHub } from "../src/hub.ts";
@@ -84,10 +84,18 @@ class FakeModel3D implements Model3DPort {
     if (!key.startsWith("tsk_")) throw new Error("Une clé Tripo commence par « tsk_ »");
     this.key = true;
   }
-  async tripo(req: { image: Buffer; spec: Model3DSpec; step: (s: string) => void }) {
+  viewEdits: ViewEdit[] = [];
+  async tripo(req: { image: Buffer; spec: Model3DSpec; step: (s: string) => void; views?: ViewsReview }) {
     req.step("Tripo fabrique le modèle");
     this.tripoCalls.push({ spec: req.spec, bytes: req.image.length });
-    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType };
+    // La planche : jugée, retouchée une fois si le validateur le demande, puis rejugée.
+    const sheet = VIEWS.map((view) => ({ view, image: PNG }));
+    if (req.views) {
+      const edits = await req.views(sheet, 1);
+      this.viewEdits.push(...edits);
+      if (edits.length) await req.views(sheet, 2);
+    }
+    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(req.views ? { views: sheet } : {}) };
   }
   async prepare(req: { dir: string; input: string | null; palette: string[] }) {
     mkdirSync(req.dir, { recursive: true });
@@ -111,6 +119,9 @@ class FakeModel3D implements Model3DPort {
     return { renders, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations: req.spec.animations.filter((a) => a !== "slash") };
   }
 }
+
+/** Le validateur trouve la planche cohérente. */
+const sheetOk = { ok: true, summary: "Planche cohérente.", points: [], edits: [] };
 
 /** Les pas de l'artisan 3D : un pas qui travaille, puis « fini ». */
 const artisanSteps = (code = "tourner(-90)\nmatiere()\nprint(quantifier(palette))", summary = "Tourné face à -Y, rendu mat, repeint en aplats.") => [
@@ -395,6 +406,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     // Votre clic : pas de tour du Directeur artistique, la fabrication part du croquis 2.
     const replies = fake.calls.filter((c) => c.kind === "reply").length;
     fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Silhouette nette, de face, fond uni.", points: [], prompt: null } as never);
+    fake.extractions.push(sheetOk as never);
     fake.extractions.push(...(artisanSteps() as never[]));
     fake.extractions.push({ ok: true, forme_ok: true, summary: "Propre et lisible de loin.", points: [] } as never);
     art.send(sb.human(), "bordee", "Quel croquis pour A-0001 « Titan » ? → Croquis 2 : Colosse de pierre");
@@ -428,6 +440,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
     // Comme pour le Titan : le DA repasse la fiche en production et ajoute la 3D.
     fake.replies.push('[[ASSET]] {"id": "A-0001", "type": "personnage 3D", "status": "production"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, walk]]');
+    fake.extractions.push(sheetOk as never);
     fake.extractions.push(...(artisanSteps() as never[]));
     fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
     art.send(sb.human(), "bordee", "Fais-le en 3D");
@@ -461,6 +474,9 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
     expect(art.state("bordee").workshop3d).toMatchObject({ blender: { installed: true }, tripo: { configured: true } });
 
+    // La planche : le dos montre trop de pattes, Tripo la retouche ; la planche retouchée est cohérente.
+    fake.extractions.push({ ok: false, summary: "Le dos montre six pattes.", points: ["Six pattes de dos"], edits: [{ view: "back", prompt: "Only four legs, like the front view." }, { view: "top", prompt: "?" }] } as never);
+    fake.extractions.push(sheetOk as never);
     // Passe 1 : l'artisan tourne et repeint ; le validateur refuse la finition (forme bonne).
     fake.extractions.push(...(artisanSteps() as never[]));
     fake.extractions.push({ ok: false, forme_ok: true, summary: "Les joints ne brillent pas.", points: ["Joints éteints"] } as never);
@@ -483,15 +499,24 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(steps[1]!.prompt).toMatch(/Tes pas précédents :\nPas 1 :[\s\S]*→ réussi\nSortie :\nfait[\s\S]*photo-1-face.png/);
     expect(steps[2]!.prompt).toMatch(/corrige ceci :\n- Joints éteints/);
     expect(existsSync(join(m3d.atelier("bordee-A-0001"), "fiche.json"))).toBe(true);
+    // La planche : une retouche valable (la vue « top » n'existe pas), rejugée, montrée, et transmise à l'artisan et au validateur.
+    expect(m3d.viewEdits).toEqual([{ view: "back", prompt: "Only four legs, like the front view." }]);
+    const reviews = fake.calls.filter((c) => /PLANCHE/.test(c.systemPrompt));
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]!.prompt).toMatch(/Image de référence : production\/a-0001-t1-e1.png\nVue face \(front\) : production\/a-0001-planche-face.png[\s\S]*Vue dos \(back\) : production\/a-0001-planche-dos.png/);
+    expect(reviews[1]!.prompt).toMatch(/déjà retouchée/);
+    expect(art.state("bordee").messages.map((m) => m.text).find((t) => t.includes("à retoucher.** Le dos"))).toMatch(/Je fais retoucher par Tripo : vue dos\./);
+    expect(steps[0]!.prompt).toMatch(/Planche \(ce que le modèle doit montrer sous chaque angle\) : vue-face.png, vue-gauche.png, vue-dos.png, vue-droite.png/);
+    expect(existsSync(join(m3d.atelier("bordee-A-0001"), "vue-dos.png"))).toBe(true);
     a = art.state("bordee").assets[0]!;
     expect(a).toMatchObject({
       status: "integration",
-      model: { file: "models/a-0001-3d-2.glb", source: "production/a-0001-t1-e1.png", tris: 3000, workshop: "Joints allumés en vert acide.", rigType: "octopod", missingAnimations: ["slash"], verdict: { ok: true, by: "validator" } },
+      model: { file: "models/a-0001-3d-2.glb", source: "production/a-0001-t1-e1.png", views: ["face", "gauche", "dos", "droite"].map((v) => `production/a-0001-planche-${v}-2.png`), tris: 3000, workshop: "Joints allumés en vert acide.", rigType: "octopod", missingAnimations: ["slash"], verdict: { ok: true, by: "validator" } },
     });
     expect(a.model!.renders).toEqual(["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((x) => `production/a-0001-3d-2-${x}.png`));
     const judge = fake.calls.filter((c) => c.kind === "structured").at(-1)!;
     expect(judge.systemPrompt).toMatch(/MODÈLE 3D[\s\S]*forme_ok/);
-    expect(judge.prompt).toMatch(/production\/a-0001-t1-e1.png[\s\S]*production\/a-0001-3d-2-face.png[\s\S]*demandé : 0.8 m/);
+    expect(judge.prompt).toMatch(/production\/a-0001-t1-e1.png[\s\S]*Planche dont la 3D est tirée[^\n]*a-0001-planche-face-2.png[\s\S]*production\/a-0001-3d-2-face.png[\s\S]*demandé : 0.8 m/);
     const texts = art.state("bordee").messages.map((m) => m.text);
     expect(texts.find((t) => t.includes("passe 1 sur 2"))).toMatch(/Dans Blender : Tourné face à -Y[\s\S]*Tripo a reconnu ce modèle comme « octopod » : slash[\s\S]*l'artisan reprend la finition/);
     const integration = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Grouillot")!;
@@ -531,6 +556,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
     fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
     fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push(sheetOk as never);
     fake.extractions.push(...(artisanSteps() as never[]));
     fake.extractions.push({ ok: false, forme_ok: false, summary: "Les jambes sont fondues ensemble.", points: ["Jambes fondues"] } as never);
     art.send(sb.human(), "bordee", "Le Titan en 3D");

@@ -23,7 +23,15 @@ export type Model3DSpec = { size: number; tris: number; rig: boolean; animations
 
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
-export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string };
+export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string; views?: ViewImage[] };
+/** Les quatre vues de la planche (ADR-50), dans l'ordre que Tripo attend. */
+export const VIEWS = ["front", "left", "back", "right"] as const;
+export type View = (typeof VIEWS)[number];
+export type ViewImage = { view: View; image: Buffer };
+/** Une retouche d'une vue de la planche, en anglais (« move the big pauldron to the left shoulder »). */
+export type ViewEdit = { view: View; prompt: string };
+/** Le jugement de la planche : les retouches à faire (aucune si elle est cohérente). `round` 2 : après retouche, pour information. */
+export type ViewsReview = (views: ViewImage[], round: number) => Promise<ViewEdit[]>;
 export type FinishResult = { renders: string[]; tris: number; dims: number[]; animations: string[] };
 /** Un pas de l'artisan dans Blender : ce que son code a affiché, ou son erreur. */
 export type CodeResult = { ok: boolean; sortie: string; erreur: string | null };
@@ -37,8 +45,12 @@ export interface Model3DPort {
   atelier(key: string): string;
   /** Vérifie la clé auprès de Tripo, puis la garde dans les données du hub (jamais dans un dépôt). */
   setTripoKey(key: string): Promise<void>;
-  /** Image → modèle .glb, avec squelette et animations si demandé. `step` raconte où on en est. */
-  tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void }): Promise<TripoResult>;
+  /**
+   * Image → modèle .glb, avec squelette et animations si demandé. `step` raconte où on en est. Avec `views` (ADR-50),
+   * Tripo dessine d'abord la planche (face, gauche, dos, droite), `views` la juge et peut la faire retoucher une fois,
+   * puis le modèle est construit à partir des quatre vues ; si la planche échoue, le modèle vient de l'image seule.
+   */
+  tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview }): Promise<TripoResult>;
   /**
    * Blender prépare la scène de l'atelier dans `dir` : le modèle brut de Tripo (avec ses animations) mis aux mesures,
    * ou une scène vide pour un objet simple que l'artisan modélise lui-même. `palette` : les couleurs de la fiche.
@@ -57,6 +69,8 @@ export const TRIPO_ANIMATIONS = ["idle", "walk", "run", "dive", "climb", "jump",
 
 const TRIPO = "https://openapi.tripo3d.ai";
 const TRIPO_MODEL = process.env.STUDIO_TRIPO_MODEL ?? "v2.5-20250123";
+/** Le modèle à partir de plusieurs vues : la version que le nœud ComfyUI de Tripo utilise par défaut. */
+const TRIPO_MULTIVIEW_MODEL = process.env.STUDIO_TRIPO_MULTIVIEW_MODEL ?? "v3.1-20260211";
 const BLENDER_SERIES = "https://download.blender.org/release/Blender4.5/";
 const UA = { "user-agent": "nidavellir-hub" };
 
@@ -228,7 +242,7 @@ export class RealModel3D implements Model3DPort {
     writeFileSync(join(this.#dir, "tripo", "key.json"), JSON.stringify({ key: k }), "utf8");
   }
 
-  async tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void }): Promise<TripoResult> {
+  async tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview }): Promise<TripoResult> {
     const key = this.#key();
     if (!key) throw new Error("Ajoutez d'abord votre clé Tripo");
     const u = this.#usage();
@@ -257,19 +271,30 @@ export class RealModel3D implements Model3DPort {
     const pending = this.#pending();
     try {
       let model: TripoTask;
+      let views: ViewImage[] | undefined;
       if (pending && pending.image === reuse.image && pending.tris === reuse.tris) {
         req.step("Tripo reprend le modèle déjà fabriqué");
         model = { task_id: pending.task, status: "success" };
         reused = true;
       } else {
         const token = await this.#upload(key, req.image, req.ext);
-        model = await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", {
-          input: token,
-          model: TRIPO_MODEL,
-          face_limit: Math.max(1000, req.spec.tris),
-          model_seed: req.seed,
-          texture_seed: req.seed,
-        });
+        const shape = { face_limit: Math.max(1000, req.spec.tris), model_seed: req.seed, texture_seed: req.seed };
+        // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
+        let made: TripoTask | null = null;
+        if (req.views) {
+          try {
+            const planche = await this.#planche(key, run, token, req.views, req.step);
+            made = await run("Tripo fabrique le modèle à partir des quatre vues", "/v3/generation/multiview-to-model", {
+              inputs: VIEWS.map((v) => ({ [v]: planche.urls[v] })),
+              model: TRIPO_MULTIVIEW_MODEL,
+              ...shape,
+            });
+            views = planche.images;
+          } catch (err) {
+            req.step(`Planche impossible (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
+          }
+        }
+        model = made ?? (await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", { input: token, model: TRIPO_MODEL, ...shape }));
         if (req.spec.rig) this.#setPending({ ...reuse, task: model.task_id });
       }
       let last = model;
@@ -300,7 +325,7 @@ export class RealModel3D implements Model3DPort {
       }
       const glb = await this.#fetchModel(last, req.step);
       this.#setPending(null);
-      return { glb, credits, extras, animations: names, rigType };
+      return { glb, credits, extras, animations: names, rigType, views };
     } catch (err) {
       // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
       if (reused) this.#setPending(null);
@@ -308,6 +333,42 @@ export class RealModel3D implements Model3DPort {
     } finally {
       if (credits) this.#spend(credits);
     }
+  }
+
+  /** La planche : Tripo dessine les quatre vues ; elles sont jugées, retouchées une fois si besoin, puis rejugées. */
+  async #planche(
+    key: string,
+    run: (label: string, path: string, body: Record<string, unknown>) => Promise<TripoTask>,
+    token: string,
+    review: ViewsReview,
+    step: (s: string) => void,
+  ): Promise<{ urls: Record<View, string>; images: ViewImage[] }> {
+    const task = await run("Tripo dessine la planche (face, gauche, dos, droite)", "/v3/generation/image-to-multiview", { input: token });
+    let urls = viewUrls(task, null);
+    let images = await this.#viewImages(urls, step);
+    const edits = await review(images, 1);
+    if (edits.length) {
+      const edited = await run(`Tripo retouche la planche (${edits.map((e) => e.view).join(", ")})`, "/v3/generation/edit-multiview", {
+        input: task.task_id,
+        prompts: edits.map((e) => ({ view: e.view, prompt: e.prompt.slice(0, 1024) })),
+      });
+      // Les vues non retouchées peuvent manquer dans la réponse : on garde alors celles d'avant.
+      urls = viewUrls(edited, urls);
+      images = await this.#viewImages(urls, step);
+      await review(images, 2);
+    }
+    return { urls, images };
+  }
+
+  async #viewImages(urls: Record<View, string>, step: (s: string) => void): Promise<ViewImage[]> {
+    step("Téléchargement de la planche");
+    return Promise.all(
+      VIEWS.map(async (view) => {
+        const res = await fetch(urls[view], { headers: UA });
+        if (!res.ok) throw new Error(`vue « ${view} » introuvable (${res.status})`);
+        return { view, image: Buffer.from(await res.arrayBuffer()) };
+      }),
+    );
   }
 
   async #fetchModel(task: TripoTask, step: (s: string) => void): Promise<Buffer> {
@@ -382,6 +443,19 @@ export function rigAnimations(type: string, wanted: string[]): string[] {
     if (name && TRIPO_ANIMATIONS.includes(name)) out.add(name);
   }
   return [...out].slice(0, 5);
+}
+
+/** Les adresses des quatre vues d'une tâche de planche (`front_view_url`…), complétées par `before` s'il en manque. */
+function viewUrls(task: TripoTask, before: Record<View, string> | null): Record<View, string> {
+  const out = (task.output?.generate_multiview_image ?? {}) as Record<string, unknown>;
+  const urls = {} as Record<View, string>;
+  for (const v of VIEWS) {
+    const u = out[`${v}_view_url`] ?? out[v];
+    if (typeof u === "string" && u.startsWith("http")) urls[v] = u;
+    else if (before) urls[v] = before[v];
+    else throw new Error("Tripo n'a pas rendu les quatre vues");
+  }
+  return urls;
 }
 
 function findExe(dir: string, name: string): string | null {

@@ -12,7 +12,7 @@ import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
-import type { Model3DPort, Model3DSpec, Model3DState } from "./model3d.ts";
+import type { Model3DPort, Model3DSpec, Model3DState, ViewEdit, ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
   CHOICE_MARK,
@@ -27,6 +27,8 @@ import {
   REFERENCE_VALIDATOR_SYSTEM,
   VALIDATOR_SYSTEM,
   VERDICT_SCHEMA,
+  VIEWS_SCHEMA,
+  VIEWS_SYSTEM,
   WORKSHOP_STEP_SCHEMA,
   WORKSHOP_SYSTEM,
   type ArtDirectives,
@@ -852,6 +854,8 @@ export class ArtService {
       let credits = 0;
       let animations: string[] = [];
       let rigType: string | null = null;
+      // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
+      const planche: string[] = [];
       if (source) {
         const t = await this.#model3d.tripo({
           image: readFileSync(join(root, source)),
@@ -859,7 +863,12 @@ export class ArtService {
           spec,
           seed: randomInt(2 ** 31),
           step: (s) => (progress.step = s),
+          views: (views, round) => {
+            progress.step = round === 1 ? "Le validateur regarde la planche" : "Le validateur regarde la planche retouchée";
+            return this.#reviewViews(project, asset, source, views, round, planche);
+          },
         });
+        if (!t.views) planche.length = 0;
         credits = t.credits;
         animations = t.animations ?? [];
         rigType = t.rigType ?? null;
@@ -879,11 +888,16 @@ export class ArtService {
       if (existsSync(join(root, "bible.md"))) copyFileSync(join(root, "bible.md"), join(dir, "bible.md"));
       const reference = source ? `reference${extname(source).toLowerCase()}` : null;
       if (source && reference) copyFileSync(join(root, source), join(dir, reference));
+      const sheet = planche.map((f, k) => {
+        const name = `vue-${VIEW_FR[k]}${extname(f)}`;
+        copyFileSync(join(root, f), join(dir, name));
+        return name;
+      });
 
       let remarks: string[] = [];
       for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
         progress.round = pass;
-        const workshop = await this.#artisan(project, asset, dir, reference, remarks, progress);
+        const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
         progress.step = "Blender exporte le modèle aux mesures du jeu";
         const file = this.#free(root, "models", `${id.toLowerCase()}-3d`, ".glb");
         const prefix = file.slice("models/".length, -".glb".length);
@@ -893,13 +907,13 @@ export class ArtService {
         let m = readManifest(gameRoot);
         let a = m.assets.find((x) => x.id === id);
         if (!a) return false;
-        a.model = { file, source, renders, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, missingAnimations, verdict: null };
+        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, missingAnimations, verdict: null };
         this.#setStatus(a, "a_valider");
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`);
 
         progress.step = "Le validateur regarde le modèle sous tous les angles";
-        const v = await this.#judgeModel(project, a, source, renders, done, spec);
+        const v = await this.#judgeModel(project, a, source, planche, renders, done, spec);
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
@@ -951,8 +965,62 @@ export class ArtService {
     return false;
   }
 
+  /**
+   * La planche de Tripo (ADR-50) : rangée dans production/, jugée par le validateur, montrée dans la discussion. Au premier
+   * passage, les retouches demandées repartent chez Tripo ; au second (planche retouchée), le jugement est seulement dit.
+   */
+  async #reviewViews(project: string, asset: Asset, source: string, views: ViewImage[], round: number, saved: string[]): Promise<ViewEdit[]> {
+    const gameRoot = this.#projects.get(project).root;
+    const root = artRoot(gameRoot);
+    const files = views.map((v, k) => {
+      const file = this.#free(root, "production", `${asset.id.toLowerCase()}-planche-${VIEW_FR[k]}`, imageExt(v.image));
+      writeAtomic(join(root, file), v.image);
+      return file;
+    });
+    saved.splice(0, saved.length, ...files);
+    await this.#commit(gameRoot, `art: planche de ${asset.id}${round > 1 ? " retouchée" : ""}`);
+    const busy = this.#validating.get(project) ?? new Set<string>();
+    busy.add(asset.id);
+    this.#validating.set(project, busy);
+    try {
+      const { data } = await this.#orchestrator.structured({
+        systemPrompt: VIEWS_SYSTEM,
+        prompt: [
+          `Planche de l'asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}. Spécifications : ${asset.specs || "aucune"}.`,
+          `Image de référence : ${source}`,
+          ...views.map((v, k) => `Vue ${VIEW_FR[k]} (${v.view}) : ${files[k]}`),
+          round > 1 ? "C'est la planche déjà retouchée : juge-la, sans nouvelle retouche." : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        jsonSchema: VIEWS_SCHEMA,
+        readDir: root,
+        role: "art",
+        meta: { project, agent: "art_director" },
+      });
+      const v = data as { ok: boolean; summary: string; points: string[]; edits: ViewEdit[] };
+      const edits = round === 1 && !v.ok ? (v.edits ?? []).filter((e) => VIEW_EN.includes(e.view) && e.prompt?.trim()).slice(0, 4) : [];
+      this.#insert(
+        project,
+        "art",
+        [
+          ...files.map((f) => `${IMAGE_MARK}${f}`),
+          `**Planche de ${asset.id} « ${asset.name} »${round > 1 ? " retouchée" : ""} : ${v.ok ? "cohérente" : edits.length ? "à retoucher" : "imparfaite"}.** ${String(v.summary ?? "").slice(0, 400)}`,
+          ...(v.points ?? []).slice(0, 6).map((p) => `- ${p}`),
+          edits.length
+            ? `Je fais retoucher par Tripo : ${edits.map((e) => `vue ${VIEW_FR[VIEW_EN.indexOf(e.view)]}`).join(", ")}.`
+            : "La 3D est construite à partir de ces quatre vues ; l'atelier Blender corrigera le reste.",
+        ].join("\n"),
+        null,
+      );
+      return edits;
+    } finally {
+      busy.delete(asset.id);
+    }
+  }
+
   /** L'artisan 3D, pas à pas : il regarde, écrit un peu de Python, le hub l'exécute et lui rend sortie, mesures et photos. */
-  async #artisan(project: string, asset: Asset, dir: string, reference: string | null, remarks: string[], progress: Generating): Promise<string> {
+  async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating): Promise<string> {
     const journal: string[] = [];
     const spec = asset.model3d!;
     progress.step = "L'artisan 3D regarde le modèle";
@@ -967,6 +1035,7 @@ export class ArtService {
           `Palette de la fiche (variable palette) : ${paletteOf(asset).join(", ") || "aucune : lis la bible"}`,
           `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ""}.`,
           reference ? `Image de référence : ${reference}` : "Pas d'image de référence : suis la fiche et la bible.",
+          sheet.length ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}` : "",
           remarks.length ? `Le validateur a refusé la passe précédente ; corrige ceci :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
           journal.length ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}` : "",
           `Photos actuelles (à regarder avec Read) : ${shots.photos.map((p) => basename(p)).join(", ")}`,
@@ -998,6 +1067,7 @@ export class ArtService {
     project: string,
     a: Asset,
     source: string | null,
+    planche: string[],
     renders: string[],
     done: { dims: number[]; tris: number; animations: string[] },
     spec: Model3DSpec,
@@ -1011,6 +1081,7 @@ export class ArtService {
         prompt: [
           `Modèle 3D de l'asset ${a.id} « ${a.name} » (${a.type}). Usage : ${a.usage}. Spécifications : ${a.specs || "aucune"}.`,
           source ? `Image validée qui a servi de modèle : ${source}` : "Objet simple, modélisé directement dans Blender d'après la fiche (pas d'image de départ).",
+          planche.length ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}` : "",
           `Photos (face, trois-quarts, profil, dos, vue de jeu) : ${renders.join(", ")}`,
           `Mesures : ${done.dims.map((d) => `${d} m`).join(" × ")} (demandé : ${spec.size} m pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
         ].join("\n"),
@@ -1174,6 +1245,15 @@ export function safeRel(rel: string): boolean {
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
 export const sketchQuestion = (id: string, name: string) => `Quel croquis pour ${id} « ${name} » ?`;
 const SKETCH_ANSWER = /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
+
+/** Les vues de la planche, dans l'ordre de Tripo, et leur nom en clair. */
+const VIEW_EN: string[] = ["front", "left", "back", "right"];
+const VIEW_FR = ["face", "gauche", "dos", "droite"];
+
+/** L'extension d'une image d'après son contenu (les vues de Tripo arrivent sans nom de fichier). */
+function imageExt(b: Buffer): string {
+  return Object.values(IMAGE_TYPES).find((t) => t.magic(b))?.ext ?? ".png";
+}
 
 /** Les couleurs de la fiche (codes hexadécimaux), que l'artisan 3D utilise pour repeindre. */
 export function paletteOf(asset: Pick<Asset, "specs" | "usage">): string[] {

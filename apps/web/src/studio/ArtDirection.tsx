@@ -484,6 +484,18 @@ function AssetCard({
       )}
       {a.model && (
         <div className="art-model">
+          {!!a.model.views?.length && (
+            <>
+              <span className="muted small">Planche (face, gauche, dos, droite) :</span>
+              <div className="art-model-shots art-sheet">
+                {a.model.views.map((v) => (
+                  <a key={v} href={api.artFile(slug, v)} target="_blank" rel="noreferrer">
+                    <img src={api.artFile(slug, v)} alt={v} loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
           <div className="art-model-shots">
             {a.model.renders.map((r) => (
               <a key={r} href={api.artFile(slug, r)} target="_blank" rel="noreferrer">

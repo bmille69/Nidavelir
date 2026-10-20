@@ -550,6 +550,15 @@ Mesures :
 - **5. Dans le jeu** : la consigne d'intégration demande au chantier d'ajouter une fois pour toutes une **scène vitrine**. L'adresse `?vitrine=A-xxxx` montre l'asset seul, dans les conditions du jeu, à côté du joueur, animé. Après la fusion, le hub photographie cette vitrine sur le jeu lui-même (`production/<id>-vitrine-<chantier>.png`). À défaut, il reprend la capture de lancement.
 - **Écarté** : un serveur MCP « blender » donné à l'agent, comme sur Twitter. `--safe-mode` coupe les serveurs MCP (vérifié), et le retirer affaiblirait les appels. La boucle pilotée par le hub fait la même chose sans outil d'exécution pour l'agent.
 
+### ADR-50 : la planche avant la 3D (quatre vues)
+**Statut** : **Validée** le 20/10/2026, à la demande du directeur créatif (« on met ça en place »). Avec une seule image de face, Tripo invente le dos et les côtés : c'était le défaut du Titan (« dos incohérent », profil voûté).
+- **Quand** : tout modèle 3D qui passe par Tripo (pas les objets simples). Il n'y a aucune étape de plus pour vous : la planche s'affiche dans la discussion et sur la fiche.
+- **Comment** : Tripo dessine les quatre vues (face, gauche, dos, droite) à partir de l'image retenue (`/v3/generation/image-to-multiview`). Le validateur juge la cohérence et la forme, pas la couleur : même sujet sous les quatre angles, pièce asymétrique toujours du même côté du corps, dos plausible. Il peut demander **une** retouche par vue fautive, en anglais (`/v3/generation/edit-multiview`), puis la planche retouchée est rejugée pour information. La 3D est ensuite construite à partir des quatre vues (`/v3/generation/multiview-to-model`, modèle `v3.1-20260211`, réglable par `STUDIO_TRIPO_MULTIVIEW_MODEL`).
+- **Ensuite** : la planche est rangée dans `production/<id>-planche-<vue>`, copiée dans l'atelier Blender (`vue-face`…, l'artisan compare son modèle à chaque angle) et citée au validateur 3D.
+- **Repli** : si la planche échoue (Tripo refuse, vue manquante, validateur en panne), le modèle est tiré de l'image seule, comme avant, et l'étape le dit.
+- **Coût** : quelques crédits Tripo de plus par modèle (planche et retouche éventuelle), à mesurer au premier essai réel, et un appel du validateur de plus. Flux n'est pas concerné.
+- **Non vérifié en vrai** : les formes des requêtes suivent le nœud ComfyUI officiel de Tripo (`comfy_api_nodes/nodes_tripo.py`, v0.41.0), mais aucune planche n'a encore été demandée à Tripo depuis le hub.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

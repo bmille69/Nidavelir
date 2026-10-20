@@ -1186,6 +1186,7 @@
 .art-key-row input { flex: 1; min-width: 0; }
 .art-model { display: flex; flex-direction: column; gap: 0.4rem; }
 .art-model-shots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.3rem; }
+.art-sheet { grid-template-columns: repeat(4, 1fr); }
 .art-sketches { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.5rem; }
 .art-sketches figure { margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .art-sketches img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }

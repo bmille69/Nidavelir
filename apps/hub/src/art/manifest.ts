@@ -65,6 +65,8 @@ export type ModelInfo = {
   file: string;
   /** Image validée qui a servi de modèle (null pour un objet simple, modélisé sans image). */
   source: string | null;
+  /** La planche dessinée par Tripo avant la 3D : face, gauche, dos, droite (ADR-50). */
+  views?: string[];
   /** Ce que l'artisan 3D a fait dans Blender, en clair (ADR-49). */
   workshop?: string | null;
   /** La forme que Tripo a reconnue pour le squelette (biped, quadruped…), et les animations demandées qu'il n'a pas pu poser. */

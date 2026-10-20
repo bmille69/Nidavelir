@@ -19,7 +19,13 @@ function fakeTripo(opts: { rigType: string; fail?: (path: string, body: Record<s
     calls.push({ path, body });
     if (opts.fail?.(path, body)) return new Response(JSON.stringify({ code: 2002, message: "Invalid input parameter" }), { status: 400 });
     const id = `t${++n}`;
-    const output = path.endsWith("rig-check") ? { riggable: true, rig_type: opts.rigType } : { model_url: `https://cdn/${id}.glb` };
+    const output = path.endsWith("rig-check")
+      ? { riggable: true, rig_type: opts.rigType }
+      : path.endsWith("image-to-multiview")
+        ? { generate_multiview_image: Object.fromEntries(["front", "left", "back", "right"].map((v) => [`${v}_view_url`, `https://cdn/${id}-${v}.png`])) }
+        : path.endsWith("edit-multiview")
+          ? { generate_multiview_image: { back_view_url: `https://cdn/${id}-back.png` } }
+          : { model_url: `https://cdn/${id}.glb` };
     tasks.set(id, { task_id: id, status: "success", output, credits_consumed: 10 });
     return json({ task_id: id });
   });
@@ -84,6 +90,44 @@ describe("Tripo (atelier 3D)", () => {
     const second = await run(m, ["walk"]);
     expect(second.e).toBeNull();
     expect(t.calls.filter((c) => c.path === "/v3/generation/image-to-model")).toHaveLength(1);
+  });
+
+  it("la planche : quatre vues jugées, une retouchée, puis le modèle tiré des quatre vues (ADR-50)", async () => {
+    const t = fakeTripo({ rigType: "biped" });
+    vi.stubGlobal("fetch", t.fetch);
+    const seen: string[][] = [];
+    const p = new RealModel3D(dir).tripo({
+      image: Buffer.from("png"),
+      ext: "png",
+      spec: { size: 1.8, tris: 6000, rig: false, animations: [] },
+      seed: 1,
+      step: () => {},
+      views: async (views, round) => {
+        seen.push(views.map((v) => `${v.view}:${v.image.toString()}`));
+        return round === 1 ? [{ view: "back", prompt: "Same armor as the front." }] : [];
+      },
+    });
+    for (let i = 0; i < 50; i++) await vi.advanceTimersByTimeAsync(15_000);
+    const r = await p;
+    expect(t.calls.map((c) => c.path)).toEqual(["/v3/generation/image-to-multiview", "/v3/generation/edit-multiview", "/v3/generation/multiview-to-model"]);
+    expect(t.calls[1]!.body).toEqual({ input: "t1", prompts: [{ view: "back", prompt: "Same armor as the front." }] });
+    // Seule la vue retouchée change ; les autres restent celles de la première planche.
+    expect(seen[1]).toEqual(["front:/t1-front.png", "left:/t1-left.png", "back:/t2-back.png", "right:/t1-right.png"]);
+    expect(t.calls[2]!.body).toMatchObject({ inputs: [{ front: "https://cdn/t1-front.png" }, { left: "https://cdn/t1-left.png" }, { back: "https://cdn/t2-back.png" }, { right: "https://cdn/t1-right.png" }], face_limit: 6000 });
+    expect(r.views!.map((v) => v.view)).toEqual(["front", "left", "back", "right"]);
+    expect(r.credits).toBe(30);
+  });
+
+  it("une planche impossible ne bloque rien : le modèle vient de l'image seule", async () => {
+    const t = fakeTripo({ rigType: "biped", fail: (p) => p === "/v3/generation/image-to-multiview" });
+    vi.stubGlobal("fetch", t.fetch);
+    const steps: string[] = [];
+    const p = new RealModel3D(dir).tripo({ image: Buffer.from("png"), ext: "png", spec: { size: 1, tris: 2000, rig: false, animations: [] }, seed: 1, step: (s) => steps.push(s), views: async () => [] });
+    for (let i = 0; i < 50; i++) await vi.advanceTimersByTimeAsync(15_000);
+    const r = await p;
+    expect(t.calls.map((c) => c.path)).toEqual(["/v3/generation/image-to-multiview", "/v3/generation/image-to-model"]);
+    expect(r.views).toBeUndefined();
+    expect(steps.some((s) => /Planche impossible[\s\S]*image seule/.test(s))).toBe(true);
   });
 
   it("les animations que le squelette sait jouer", () => {
