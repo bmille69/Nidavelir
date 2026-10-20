@@ -75,7 +75,15 @@ describe("Tripo (atelier 3D)", () => {
     expect(t.calls.find((c) => c.path === "/v3/animations/rig")!.body).toMatchObject({ model: "v1.0-20240301", rig_type: "biped" });
     // La bibliothèque des bipèdes, faite pour ce squelette ; un modèle à squelette est demandé en qualité détaillée.
     expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:biped:walk", "preset:biped:slash"]);
-    expect(t.calls.find((c) => c.path === "/v3/generation/image-to-model")!.body).toMatchObject({ geometry_quality: "detailed", texture_quality: "detailed" });
+    expect(t.calls.find((c) => c.path === "/v3/generation/image-to-model")!.body).toMatchObject({
+      model: "v3.1-20260211",
+      geometry_quality: "detailed",
+      texture_quality: "detailed",
+      // ADR-54 : des couleurs sans ombres peintes, le modèle de face comme l'image.
+      texture_version: "v3.5-20260815",
+      delight: true,
+      orientation: "align_image",
+    });
     expect(r!.animations).toEqual(["walk", "slash"]);
     expect(r!.extras).toHaveLength(1);
     expect(r!.credits).toBe(50);

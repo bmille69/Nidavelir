@@ -20,10 +20,9 @@ export type Model3DState = {
 
 /**
  * Ce que la fiche demande pour la 3D. `simple` : formes simples, modélisées directement dans Blender, sans image ni
- * Tripo. `figurine` (ADR-53) : un personnage fait de pièces nettes accrochées aux os ; de Tripo, on ne garde que le
- * squelette et les animations, son corps sert seulement de calque.
+ * Tripo. (La figurine de l'ADR-53 est abandonnée, ADR-54 : une ancienne fiche qui la porte est traitée comme les autres.)
  */
-export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean; figurine?: boolean };
+export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
 
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
@@ -60,8 +59,6 @@ export interface Model3DPort {
    * ou une scène vide pour un objet simple que l'artisan modélise lui-même. `palette` : les couleurs de la fiche.
    */
   prepare(req: { dir: string; input: string | null; extras?: string[]; animations?: string[]; spec: Model3DSpec; palette: string[] }): Promise<unknown>;
-  /** Une scène d'atelier déjà faite (et payée) passe en figurine : son corps devient un calque (ADR-53). */
-  calque(dir: string): Promise<unknown>;
   /** Le code Python de l'artisan, dans la scène (gardé par une liste blanche) ; la scène est enregistrée s'il réussit. */
   runCode(req: { dir: string; code: string }): Promise<CodeResult>;
   /** Cinq photos de travail (face, trois-quarts, profil, dos, vue de jeu) et les mesures, sans rien changer. */
@@ -94,7 +91,7 @@ export const MAX_ANIMATIONS = 8;
 export const knownAnimation = (a: string) => TRIPO_ANIMATIONS.includes(a) || TRIPO_BIPED.includes(a.replace(/^biped:/, ""));
 
 const TRIPO = "https://openapi.tripo3d.ai";
-const TRIPO_MODEL = process.env.STUDIO_TRIPO_MODEL ?? "v2.5-20250123";
+const TRIPO_MODEL = process.env.STUDIO_TRIPO_MODEL ?? "v3.1-20260211";
 /** Le modèle à partir de plusieurs vues : la version que le nœud ComfyUI de Tripo utilise par défaut. */
 const TRIPO_MULTIVIEW_MODEL = process.env.STUDIO_TRIPO_MULTIVIEW_MODEL ?? "v3.1-20260211";
 const BLENDER_SERIES = "https://download.blender.org/release/Blender4.5/";
@@ -178,13 +175,8 @@ export class RealModel3D implements Model3DPort {
       animations: req.animations ?? [],
       size: req.spec.size,
       max_tris: req.spec.tris,
-      max_texture: 1024,
-      calque: !!req.spec.figurine,
+      max_texture: maxTexture(req.spec),
     });
-  }
-
-  async calque(dir: string): Promise<unknown> {
-    return this.#run(join(dir, "scene.blend"), dir, "calque", { mode: "calque", blend: join(dir, "scene.blend") });
   }
 
   async runCode(req: { dir: string; code: string }): Promise<CodeResult> {
@@ -206,7 +198,7 @@ export class RealModel3D implements Model3DPort {
       prefix: req.prefix,
       size: req.spec.size,
       max_tris: req.spec.tris,
-      max_texture: 1024,
+      max_texture: maxTexture(req.spec),
     })) as { renders: string[]; tris_after: number; dims: number[]; animations: string[] };
     return { renders: s.renders, tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations };
   }
@@ -318,13 +310,14 @@ export class RealModel3D implements Model3DPort {
         reused = true;
       } else {
         const token = await this.#upload(key, req.image, req.ext);
-        // Un modèle à squelette se déforme en bougeant : géométrie et texture détaillées (le meilleur rendu, ADR-52).
+        // La texture de Tripo porte les détails du modèle, Blender ne la repeint plus (ADR-54) : toujours détaillée. Un modèle
+        // à squelette se déforme en bougeant : géométrie détaillée aussi (ADR-52).
         const shape = {
           face_limit: Math.max(1000, req.spec.tris),
           model_seed: req.seed,
           texture_seed: req.seed,
-          // Une figurine ne garde pas le corps de Tripo (seulement son squelette) : inutile de le payer en détaillé.
-          ...(req.spec.rig && !req.spec.figurine ? { geometry_quality: "detailed", texture_quality: "detailed" } : {}),
+          texture_quality: "detailed",
+          ...(req.spec.rig ? { geometry_quality: "detailed" } : {}),
         };
         // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
         let made: TripoTask | null = null;
@@ -341,7 +334,18 @@ export class RealModel3D implements Model3DPort {
             req.step(`Planche impossible (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
           }
         }
-        model = made ?? (await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", { input: token, model: TRIPO_MODEL, ...shape }));
+        // Depuis une seule image : la texture v3.5 retire l'éclairage peint dans l'image (des couleurs propres, sans ombres
+        // cuites), et le modèle regarde comme l'image, de face.
+        model =
+          made ??
+          (await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", {
+            input: token,
+            model: TRIPO_MODEL,
+            ...shape,
+            texture_version: "v3.5-20260815",
+            delight: true,
+            orientation: "align_image",
+          }));
         if (req.spec.rig) this.#setPending({ ...reuse, task: model.task_id });
       }
       let last = model;
@@ -470,6 +474,11 @@ export class RealModel3D implements Model3DPort {
     if (!res.ok || (payload.code !== undefined && payload.code !== 0)) throw new Error(`Tripo répond ${res.status}${payload.message ? ` : ${payload.message}` : ""}`);
     return payload.data ?? payload;
   }
+}
+
+/** Les textures gardées dans le .glb : un personnage animé, vu de près, garde plus de détail qu'un décor. */
+function maxTexture(spec: Model3DSpec): number {
+  return spec.rig ? 2048 : 1024;
 }
 
 /**

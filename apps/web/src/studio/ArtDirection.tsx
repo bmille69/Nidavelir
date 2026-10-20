@@ -556,7 +556,7 @@ function AssetCard({
       {a.specs && <p className="muted small">{a.specs}</p>}
       {a.model3d && (
         <p className="muted small">
-          <Icon name="cube" size={12} /> Modèle 3D{a.model3d.simple ? " (objet simple, fait dans Blender)" : a.model3d.figurine ? " (figurine : pièces nettes sur le squelette)" : ""} : {a.model3d.size} m, {a.model3d.tris} triangles
+          <Icon name="cube" size={12} /> Modèle 3D{a.model3d.simple ? " (objet simple, fait dans Blender)" : ""} : {a.model3d.size} m, {a.model3d.tris} triangles
           {a.model3d.animations.length ? `, animations ${a.model3d.animations.join(", ")}` : a.model3d.rig ? ", avec squelette" : ""}
         </p>
       )}

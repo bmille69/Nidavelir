@@ -612,15 +612,8 @@ if mode == "prepare":
         budget(int(job.get("max_tris") or 0))
         normalize(float(job.get("size") or 0))
         shrink_textures(int(job.get("max_texture") or 0))
-        if job.get("calque"):
-            marquer_calque()
     bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
     done(summary())
-elif mode == "calque":
-    # Une scene deja faite (et payee) passe en mode figurine : son corps devient un calque.
-    n = marquer_calque()
-    bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
-    done({"calques": n, "mesures": summary()})
 elif mode == "python":
     r = run_code(job["code"])
     if r["ok"]:

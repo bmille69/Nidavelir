@@ -581,6 +581,25 @@ Mesures :
 - **Outils de l'atelier** (`workshop.py`) : `squelette()` (os, têtes, queues), `zones()` (pour chaque os, la boîte du calque qu'il porte, les os de torsion comptés avec leur os principal), `membre(nom, sur, epaisseur…)` (une pièce couchée le long d'un os), `piece(nom, forme, dims, position, rotation, couleur, sur, biseau, lueur)`, `fixer`, `pieces()`, `calque(visible)`. Les pièces se posent en pose de repos. Le paramètre s'appelle `sur`, car le garde-fou refuse le mot `os`. Une figurine a **30 pas** par passe (12 sinon).
 - **Photos en mouvement** : chaque série de photos ajoute jusqu'à trois poses, prises au milieu des animations (marche ou course, coup reçu, coup d'épée…), avec la caméra qui suit le modèle. Le validateur juge aussi la déformation. Dans Blender 4.5, une action ne joue que par son « slot » et l'emporte seulement si le NLA est coupé : les deux sont réglés le temps des poses. Les `.glb` exportés, eux, animaient déjà bien leurs os (vérifié : 21 à 23 os sur 41 bougent par animation).
 - **Essai réel** : sur une copie de la scène du Titan, 18 pièces posées en un pas ont donné 2700 triangles, une course et un coup d'épée corrects, et un export avec les 5 animations.
+- *(Abandonnée par ADR-54.)*
+
+### ADR-54 : la qualité vient de Tripo, Blender range sans repeindre
+**Statut** : **Validée** le 20/10/2026. Le directeur créatif a donné carte blanche (« pour que ce soit 10/10 »). Bilan de la figurine sur le Titan : deux passes, 31 appels Fable (l'équivalent de 26 $ au tarif API), et un jouet en mousse noté 3/10. Le rapport qualité/coût est mauvais. La comparaison des rendus est sans appel : le meilleur Titan reste l'ancien rendu **brut** de Tripo (ADR-47). Ce sont nos retouches qui l'ont abîmé : le repeint en aplats (`quantifier`) a fait baver les couleurs le long des triangles, et le budget de 6000 triangles a écrasé la forme.
+- **La figurine est retirée** du vocabulaire de la DA, de la lecture des directives et du hub (reprise de scène, calque, relance automatique). Une ancienne fiche qui la porte passe par Tripo comme les autres. Les outils de pièces de `workshop.py` restent, pour les objets simples et les accessoires.
+- **Tripo au mieux** :
+  - modèle `v3.1-20260211` par défaut, au lieu de v2.5 qui recevait en plus un `geometry_quality` qu'il ne connaît pas ;
+  - texture **détaillée** toujours, et géométrie détaillée pour un modèle animé ;
+  - depuis une seule image, texture **v3.5 avec `delight`** (l'éclairage peint dans l'image est retiré) et `orientation: align_image` (le modèle regarde comme l'image) ;
+  - textures gardées en 2048 px pour un personnage animé, 1024 sinon.
+- **Budgets réalistes** : la DA vise 15 000 à 25 000 triangles pour un personnage principal, 8 000 à 15 000 pour un ennemi et 1 000 à 5 000 pour un objet. Three.js les affiche sans peine.
+- **L'artisan range, il ne repeint plus** :
+  - sur un modèle Tripo, il a **4 pas par passe** (orientation, matière, lueurs, débris) et l'interdiction de repeindre ou de remodeler le corps ; « fini » au premier pas si tout est juste ;
+  - un objet simple garde 12 pas ;
+  - consigne d'économie : ne relire que les photos utiles.
+  - Au pire, deux passes coûtent 8 appels, au lieu de 24 à 60.
+- **Un pas trop long ne ruine plus l'atelier** : l'artisan a 15 minutes par pas (8 auparavant). Un pas perdu est recommencé plus petit. Au second échec de suite, la scène est exportée telle quelle et le validateur juge.
+- **Validateur** : la peinture de Tripo (nuances, détails peints) est voulue ; il juge sa fidélité à l'image. Une 3D déjà faite ne repart plus d'une directive : la DA renvoie vers « Refaire la 3D », qui repaie Tripo.
+- **Titan** : sa fiche est remise sur Tripo, à 20 000 triangles, sans consigne de figurine, et décrite d'après l'image validée. Le compte Tripo n'a plus que 45 crédits : il en faut environ 130 pour le refaire avec squelette et animations.
 
 ---
 
