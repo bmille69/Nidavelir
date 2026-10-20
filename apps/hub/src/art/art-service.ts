@@ -1016,7 +1016,12 @@ export class ArtService {
     for (const t of d.model3d) {
       const a = m.assets.find((x) => x.id === t.asset);
       if (!a || a.status === "integration" || a.status === "integre") continue;
-      if (t.spec.figurine && !a.model3d?.figurine)
+      // Passer en figurine, ou reprendre une figurine restée en atelier : la scène payée sert, rien à repayer.
+      if (
+        t.spec.figurine &&
+        (!a.model3d?.figurine ||
+          (!!a.model?.rigType && a.status === "production"))
+      )
         this.#toFigurine.add(`${project}/${a.id}`);
       a.model3d = t.spec;
       if (t.spec.simple && a.status === "propose")

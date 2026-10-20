@@ -1253,6 +1253,28 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     });
 
     // La DA passe le Titan en figurine : l'atelier repart seul, sur la scène payée, sans Tripo ni nouvelle préparation.
+    // Deux pas perdus de suite : la figurine part telle quelle chez le validateur, qui la refuse.
+    fake.replies.push(
+      "On le reconstruit en pièces.\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, run | figurine]]",
+    );
+    fake.extractions.push(
+      new Error("Claude Code n'a pas répondu en 900 s") as never,
+      new Error("Claude Code n'a pas répondu en 900 s") as never,
+      {
+        ok: false,
+        forme_ok: false,
+        summary: "Inachevée.",
+        points: [],
+      } as never,
+    );
+    art.send(sb.human(), "bordee", "Fais-en une figurine");
+    await art.idle();
+    expect(art.state("bordee").assets[0]).toMatchObject({
+      status: "production",
+      model: { workshop: expect.stringMatching(/^Interrompu au pas 2/) },
+    });
+
+    // « Continue la 3D » : la même consigne relance l'atelier sur la scène gardée.
     fake.replies.push(
       "On le reconstruit en pièces.\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000 | animations idle, run | figurine]]",
     );
@@ -1282,11 +1304,14 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
       summary: "Net, lisible, rien ne se détache en pose.",
       points: [],
     } as never);
-    art.send(sb.human(), "bordee", "Fais-en une figurine");
+    art.send(sb.human(), "bordee", "Continue la 3D");
     await art.idle();
     expect(m3d.tripoCalls).toHaveLength(1);
     expect(m3d.prepares).toHaveLength(1);
-    expect(m3d.calques).toEqual([m3d.atelier("bordee-A-0001")]);
+    expect(m3d.calques).toEqual([
+      m3d.atelier("bordee-A-0001"),
+      m3d.atelier("bordee-A-0001"),
+    ]);
     const step = fake.calls
       .filter((c) => /ARTISAN 3D/.test(c.systemPrompt))
       .at(-2)!;
