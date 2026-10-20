@@ -172,6 +172,15 @@ export class ArtService {
     return this.#imagegen.state();
   }
 
+  /** Installer Flux Kontext (≈ 17 Go), sur votre clic : retouches par consigne et air de famille (ADR-51). */
+  installKontext(session: HumanSession): GenState {
+    assertHumanSession(session);
+    if (!this.#imagegen.state().installed) throw new ArtError("Installez d'abord le générateur d'images");
+    this.#imagegen.installKontext();
+    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.install_started", subject: "flux-kontext", payload: {} });
+    return this.#imagegen.state();
+  }
+
   /** Installer Blender (≈ 400 Mo), sur votre clic. */
   installBlender(session: HumanSession): Model3DState {
     assertHumanSession(session);
@@ -527,6 +536,11 @@ export class ArtService {
       this.#imagegen.state().installed
         ? "Le générateur d'images local est prêt : pour fabriquer un asset, utilise [[GENERER]] (Flux), pas Midjourney."
         : "Le générateur d'images local n'est pas encore installé : pour fabriquer un asset, donne des prompts [[MIDJOURNEY]].",
+      this.#kontext()
+        ? "Flux Kontext est prêt : « | ref A-xxxx » sur [[CROQUIS]] ou [[GENERER]] dessine dans le style d'un asset validé, et le validateur fait retoucher les essais presque bons au lieu de les refaire."
+        : this.#imagegen.state().installed
+          ? "Flux Kontext n'est pas installé : « | ref » est ignoré (l'utilisateur peut l'installer depuis l'onglet Visuels)."
+          : "",
       this.#missing3d()
         ? `L'atelier 3D n'est pas encore prêt (${this.#missing3d()}) : tu peux déjà marquer les modèles 3D avec [[MODELE3D]], leur 3D attendra.${this.#missing3d(true) ? "" : " Les objets simples (« simple ») peuvent déjà se faire : Blender est là."}`
         : "L'atelier 3D est prêt (Tripo + Blender) : marque chaque modèle 3D avec [[MODELE3D]] ; sa 3D se fabrique dès que son image est retenue, ou tout de suite pour un objet simple.",
@@ -593,6 +607,7 @@ export class ArtService {
       if (!a || a.status === "integration" || a.status === "integre") continue;
       a.prompts = g.prompts.map((p) => p.slice(0, 2000));
       if (g.format) a.format = g.format;
+      if (g.ref) a.styleRef = resolveRef(m.assets, root, g.ref, a.id);
       if (a.status === "propose") this.#setStatus(a, "production");
       a.updated_at = now;
       produce.push(a.id);
@@ -605,6 +620,7 @@ export class ArtService {
       a.sketches = c.options.map((o) => ({ file: "", label: o.label, prompt: o.prompt }));
       a.direction = null;
       if (c.format) a.format = c.format;
+      a.styleRef = c.ref ? resolveRef(m.assets, root, c.ref, a.id) : null;
       a.updated_at = now;
       sketched.push(a.id);
     }
@@ -648,10 +664,11 @@ export class ArtService {
       const options = asset?.sketches ?? [];
       if (!asset || !options.length) return;
       const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
+      const style = this.#styleOf(root, asset);
       const files: string[] = [];
       for (const [k, o] of options.entries()) {
-        progress.step = `Croquis ${k + 1} sur ${options.length}`;
-        const png = await this.#imagegen.generate({ prompt: o.prompt, width, height, seed: randomInt(2 ** 31) });
+        progress.step = `Croquis ${k + 1} sur ${options.length}${style ? " (dans le style de la référence)" : ""}`;
+        const png = await this.#imagegen.generate({ prompt: style ? styled(o.prompt) : o.prompt, width, height, seed: randomInt(2 ** 31), ...(style ? { edit: { images: [style] } } : {}) });
         const file = this.#free(root, "production", `${id.toLowerCase()}-croquis-${k + 1}`, ".png");
         writeAtomic(join(root, file), png);
         files.push(file);
@@ -726,6 +743,8 @@ export class ArtService {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const progress = this.#generating.get(project)!.get(id)!;
+    // Le meilleur essai du tour précédent et la retouche que le validateur propose (Flux Kontext, ADR-51).
+    let retouch: { file: string; edit: string } | null = null;
     try {
       for (let round = 1; round <= ROUNDS; round++) {
         progress.round = round;
@@ -735,12 +754,22 @@ export class ArtService {
         const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
         const direction = asset.direction?.file && existsSync(join(root, asset.direction.file)) ? asset.direction : null;
         const init = direction ? readFileSync(join(root, direction.file)) : null;
+        const style = this.#styleOf(root, asset);
+        const fix = retouch && this.#kontext() && existsSync(join(root, retouch.file)) ? { image: readFileSync(join(root, retouch.file)), edit: retouch.edit } : null;
         const files: string[] = [];
         // Au premier tour, le croquis choisi est lui-même un candidat.
         if (direction && round === 1) files.push(direction.file);
         for (let v = files.length + 1; v <= VARIANTS; v++) {
-          progress.step = direction ? `Variante ${v} sur ${VARIANTS} du croquis choisi` : `Essai ${v} sur ${VARIANTS}`;
-          const png = await this.#imagegen.generate({ prompt, width, height, seed: randomInt(2 ** 31), ...(init ? { init: { image: init, denoise: round === 1 ? 0.5 : 0.75 } } : {}) });
+          // Retouche du meilleur essai, variante du croquis choisi, dessin dans le style de la référence, ou essai neuf.
+          const req = fix
+            ? { prompt: fix.edit, edit: { images: [fix.image] } }
+            : init
+              ? { prompt, init: { image: init, denoise: round === 1 ? 0.5 : 0.75 } }
+              : style
+                ? { prompt: styled(prompt), edit: { images: [style] } }
+                : { prompt };
+          progress.step = fix ? `Retouche ${v} sur ${VARIANTS} du meilleur essai` : direction ? `Variante ${v} sur ${VARIANTS} du croquis choisi` : `Essai ${v} sur ${VARIANTS}`;
+          const png = await this.#imagegen.generate({ width, height, seed: randomInt(2 ** 31), ...req });
           const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, ".png");
           writeAtomic(join(root, file), png);
           files.push(file);
@@ -769,6 +798,7 @@ export class ArtService {
         asset.verdict = { ok, summary: v.summary, points: v.points, prompt: v.prompt, file: best, by: "validator", at: this.#clock.now() };
         this.#setStatus(asset, ok && !to3d ? "valide" : "production");
         if (!ok && v.prompt) asset.prompts = [v.prompt, ...asset.prompts.filter((p) => p !== v.prompt)].slice(0, 6);
+        retouch = !ok && v.edit && this.#kontext() ? { file: best, edit: v.edit } : null;
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: ${id} ${ok ? (to3d ? "image de référence retenue" : "validé") : "à retoucher"} (validateur, tour ${round})`);
         this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "validator", round, kept } });
@@ -789,7 +819,9 @@ export class ArtService {
                 : "Je le fais intégrer dans le jeu."
               : round === ROUNDS
                 ? "Aucun essai utilisable : le meilleur est sur la fiche. « Valider quand même », « Refaire », ou dites-moi ce qui cloche et je repars de nouveaux croquis."
-                : "Je relance un tour avec un prompt corrigé.",
+                : retouch
+                  ? `Je fais retoucher l'essai ${files.indexOf(best) + 1} par Kontext : « ${retouch.edit} »`
+                  : "Je relance un tour avec un prompt corrigé.",
           ].join("\n"),
           null,
         );
@@ -805,6 +837,17 @@ export class ArtService {
       }
     }
     return null;
+  }
+
+  /** Flux Kontext est installé (ADR-51). */
+  #kontext(): boolean {
+    const s = this.#imagegen.state();
+    return s.installed && !!s.kontext?.installed;
+  }
+
+  /** L'image de la référence de style de l'asset, si Kontext peut s'en servir. */
+  #styleOf(root: string, asset: Asset): Buffer | null {
+    return asset.styleRef && this.#kontext() && existsSync(join(root, asset.styleRef)) ? readFileSync(join(root, asset.styleRef)) : null;
   }
 
   // ── Atelier 3D (ADR-47, ADR-49) ──
@@ -1098,7 +1141,12 @@ export class ArtService {
   }
 
   /** Le validateur regarde tous les essais d'un tour, choisit le meilleur et le juge (la forme seulement pour la 3D). */
-  async #pick(project: string, asset: Asset, files: string[], prompt: string): Promise<{ best: number; ok: boolean; usable: boolean; summary: string; points: string[]; prompt: string | null }> {
+  async #pick(
+    project: string,
+    asset: Asset,
+    files: string[],
+    prompt: string,
+  ): Promise<{ best: number; ok: boolean; usable: boolean; summary: string; points: string[]; prompt: string | null; edit: string | null }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(asset.id);
     this.#validating.set(project, busy);
@@ -1109,6 +1157,8 @@ export class ArtService {
           `Le générateur local (Flux) a fait ${files.length} essais pour l'asset ${asset.id} « ${asset.name} » (${asset.type}). Regarde-les tous :`,
           ...files.map((f, k) => `${k + 1}. ${f}`),
           asset.direction ? `Croquis choisi par le directeur créatif (la direction à suivre) : ${asset.direction.file}` : "",
+          asset.styleRef ? `Référence de style (l'asset doit en avoir l'air de famille) : ${asset.styleRef}` : "",
+          this.#kontext() ? "Flux Kontext est prêt : tu peux proposer une retouche (edit)." : "",
           asset.model3d ? "Choisis le meilleur (best) comme modèle pour la 3D, puis juge sa forme seule." : "Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer dans le jeu.",
           `Usage : ${asset.usage}`,
           `Spécifications : ${asset.specs || "aucune"}`,
@@ -1121,8 +1171,16 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { best: number; ok: boolean; usable?: boolean; summary: string; points: string[]; prompt: string | null };
-      return { best: Number(v.best) || 1, ok: !!v.ok, usable: !!v.ok || !!v.usable, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 8), prompt: v.prompt ?? null };
+      const v = data as { best: number; ok: boolean; usable?: boolean; summary: string; points: string[]; prompt: string | null; edit?: string | null };
+      return {
+        best: Number(v.best) || 1,
+        ok: !!v.ok,
+        usable: !!v.ok || !!v.usable,
+        summary: String(v.summary ?? "").slice(0, 400),
+        points: (v.points ?? []).slice(0, 8),
+        prompt: v.prompt ?? null,
+        edit: v.edit?.trim() ? v.edit.trim().slice(0, 1000) : null,
+      };
     } finally {
       busy.delete(asset.id);
     }
@@ -1245,6 +1303,23 @@ export function safeRel(rel: string): boolean {
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
 export const sketchQuestion = (id: string, name: string) => `Quel croquis pour ${id} « ${name} » ?`;
 const SKETCH_ANSWER = /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
+
+/** Un nouveau sujet dans le style de l'image de référence (Flux Kontext). */
+const styled = (prompt: string) => `Using exactly the same art style, rendering, palette and level of detail as this image, draw a new, different subject: ${prompt}`;
+
+/**
+ * « A-0002 » → l'image retenue de cet asset (verdict, sinon croquis choisi) ; « moodboard/x.png » → ce fichier s'il existe.
+ * Un asset ne se prend pas lui-même pour référence.
+ */
+function resolveRef(assets: Asset[], root: string, ref: string, self: string): string | null {
+  const id = /^A-\d{4,}$/i.exec(ref)?.[0]?.toUpperCase();
+  if (id) {
+    const a = id === self ? null : assets.find((x) => x.id === id);
+    const file = a?.verdict?.ok ? a.verdict.file : (a?.direction?.file ?? null);
+    return file && existsSync(join(root, file)) ? file : null;
+  }
+  return safeRel(ref) && IMAGE_MIME[extname(ref).toLowerCase()] && existsSync(join(root, ref)) ? ref : null;
+}
 
 /** Les vues de la planche, dans l'ordre de Tripo, et leur nom en clair. */
 const VIEW_EN: string[] = ["front", "left", "back", "right"];

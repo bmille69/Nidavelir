@@ -311,7 +311,13 @@ function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string
 
 /** Le générateur d'images local : à installer d'un clic, puis il fabrique et fait juger les visuels tout seul. */
 function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (fn: () => Promise<unknown>) => Promise<void> }) {
-  if (g.installed) return <p className="muted small art-gen-ready"><Icon name="check" size={14} /> Générateur d'images local prêt (Flux, sur votre carte graphique).</p>;
+  if (g.installed && g.kontext?.installed)
+    return (
+      <p className="muted small art-gen-ready">
+        <Icon name="check" size={14} /> Générateur d'images local prêt (Flux et Flux Kontext, sur votre carte graphique).
+      </p>
+    );
+  if (g.installed) return <KontextCard kontext={g.kontext} act={act} />;
   return (
     <div className="art-gen panel-card">
       <p className="small">
@@ -336,6 +342,41 @@ function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (f
             <Icon name="upload" size={14} /> {g.error ? "Reprendre l'installation" : "Installer le générateur"} ({g.size})
           </button>
           <p className="muted small">ComfyUI (2 Go) et le modèle Flux (17 Go), depuis leurs pages officielles (GitHub, Hugging Face). Gratuit ; ensuite, tout se fait sur votre PC.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Flux Kontext (ADR-51) : retouches par consigne et air de famille, installé sur votre clic. */
+function KontextCard({ kontext: k, act }: { kontext: ArtGenerator["kontext"] | undefined; act: (fn: () => Promise<unknown>) => Promise<void> }) {
+  return (
+    <div className="art-gen panel-card">
+      <p className="muted small">
+        <Icon name="check" size={14} /> Générateur d'images local prêt (Flux, sur votre carte graphique).
+      </p>
+      <p className="small">
+        <b>Flux Kontext</b> : il retouche une image par consigne (« mets l'épaulière sur l'autre épaule ») au lieu de tout redessiner, et dessine un nouveau
+        personnage dans le style d'un visuel déjà validé, pour un vrai air de famille.
+      </p>
+      {k?.installing ? (
+        <div className="meter">
+          <div className="meter-head">
+            <span>{k.installing.step}</span>
+            <b>{Math.round(k.installing.progress * 100)} %</b>
+          </div>
+          <div className="meter-track">
+            <div className="meter-fill" style={{ width: `${Math.round(k.installing.progress * 100)}%` }} />
+          </div>
+          <span className="muted small">Vous pouvez fermer cette page : le téléchargement continue, et reprend là où il en était si le hub redémarre.</span>
+        </div>
+      ) : (
+        <>
+          {k?.error && <p className="error small">L'installation s'est arrêtée : {k.error}</p>}
+          <button className="small" onClick={() => void act(() => api.artInstallKontext())}>
+            <Icon name="upload" size={14} /> {k?.error ? "Reprendre l'installation" : "Installer Flux Kontext"} ({k?.size ?? "≈ 17 Go"})
+          </button>
+          <p className="muted small">Le modèle Kontext (12 Go) et ses encodeurs (5,5 Go), depuis les pages publiques de ComfyUI sur Hugging Face, sans compte. Gratuit.</p>
         </>
       )}
     </div>

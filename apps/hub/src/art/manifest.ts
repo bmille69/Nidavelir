@@ -49,6 +49,8 @@ export type Asset = {
   ingame?: InGame | null;
   /** Croquis du cadrage (ADR-49) : plusieurs directions, dont le directeur créatif choisit une. */
   sketches?: Sketch[] | null;
+  /** Référence de style (Flux Kontext, ADR-51) : l'image dans le style de laquelle cet asset est dessiné. */
+  styleRef?: string | null;
   /** Le croquis choisi : la fabrication en tire des variantes. */
   direction?: Sketch | null;
   /** Rendus déposés, du plus ancien au plus récent (chemins relatifs à studio/art). */

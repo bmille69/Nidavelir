@@ -5,9 +5,9 @@ import { join } from "node:path";
 import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
-import { fluxWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
+import { fluxWorkflow, kontextWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
 import { VIEWS, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
-import { parseArtDirectives, parseFormat, parseModel3D } from "../src/art/prompts.ts";
+import { parseArtDirectives, parseFormat, parseModel3D, parseRef } from "../src/art/prompts.ts";
 import type { CheckerPort } from "../src/quality/checks.ts";
 import { createHub } from "../src/hub.ts";
 import { PolicyEngine } from "../src/executor/policy-engine.ts";
@@ -44,12 +44,16 @@ async function setup() {
 /** Le générateur local factice : il retient les demandes et rend une petite image PNG. */
 class FakeImageGen implements ImageGenPort {
   installed = false;
+  kontext = false;
   requests: GenRequest[] = [];
   state(): GenState {
-    return { installed: this.installed, installing: null, error: null, size: "≈ 19 Go" };
+    return { installed: this.installed, installing: null, error: null, size: "≈ 19 Go", kontext: { installed: this.kontext, installing: null, error: null, size: "≈ 17 Go" } };
   }
   install(): void {
     this.installed = true;
+  }
+  installKontext(): void {
+    this.kontext = true;
   }
   async generate(req: GenRequest): Promise<Buffer> {
     this.requests.push(req);
@@ -608,7 +612,74 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(fake.calls.filter((c) => c.kind === "structured").at(-1)!.prompt).toMatch(/Capture de la scène vitrine du jeu \(\?vitrine=A-0001\)/);
   }, 30_000);
 
+  it("Flux Kontext : installé sur votre clic, il retouche le meilleur essai au lieu de tout redessiner (ADR-51)", async () => {
+    const { sb, fake, gen, art } = await setupLocal();
+    expect(() => art.installKontext(sb.human())).toThrow(/d'abord le générateur/);
+    gen.installed = true;
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    // Sans Kontext, le validateur n'en parle pas ; son « edit » est ignoré.
+    fake.extractions.push({ best: 2, ok: false, usable: false, summary: "Épaulière du mauvais côté.", points: [], prompt: "A knight, huge left pauldron.", edit: "Move the pauldron." } as never);
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(fake.calls.filter((c) => c.kind === "structured")[0]!.prompt).not.toMatch(/Kontext/);
+    expect(gen.requests.slice(3).every((r) => !r.edit && r.prompt === "A knight, huge left pauldron.")).toBe(true);
+
+    // Avec Kontext : le meilleur essai est retouché par consigne au tour suivant.
+    expect(art.installKontext(sb.human()).kontext.installed).toBe(true);
+    const edit = "Move the huge pauldron to the character's left shoulder; keep everything else exactly the same.";
+    fake.extractions.push({ best: 3, ok: false, usable: false, summary: "Presque : l'épaulière est à droite.", points: ["Épaulière"], prompt: null, edit } as never);
+    fake.extractions.push({ best: 2, ok: true, usable: true, summary: "Corrigé.", points: [], prompt: null, edit: null } as never);
+    await art.decide(sb.human(), "bordee", "A-0001", "refaire");
+    await art.idle();
+    const picks = fake.calls.filter((c) => c.kind === "structured");
+    expect(picks.at(-2)!.prompt).toMatch(/Flux Kontext est prêt/);
+    expect(picks.at(-2)!.systemPrompt).toMatch(/Kontext retouche l'image au lieu de/);
+    const retouches = gen.requests.slice(-3);
+    expect(retouches.map((r) => [r.prompt, r.edit?.images.length])).toEqual([
+      [edit, 1],
+      [edit, 1],
+      [edit, 1],
+    ]);
+    expect(art.state("bordee").messages.map((m) => m.text).find((t) => t.includes("Presque"))).toMatch(/Je fais retoucher l'essai 3 par Kontext : « Move the huge pauldron/);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", verdict: { ok: true, file: "production/a-0001-t2-e2-2.png" } });
+  }, 30_000);
+
+  it("Flux Kontext : « ref A-0001 » dessine les croquis d'un nouvel asset dans le style d'un asset validé", async () => {
+    const { sb, fake, gen, art } = await setupLocal();
+    gen.installed = true;
+    gen.kontext = true;
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(fake.calls.filter((c) => c.kind === "reply").at(-1)!.systemPrompt).toMatch(/Flux Kontext est prêt : « \| ref A-xxxx »/);
+    const before = gen.requests.length;
+    fake.replies.push(
+      '[[ASSET]] {"name": "Chasseur", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[CROQUIS: A-0002 | 1024x1024 | ref A-0001]] # Encapuchonné\nA slender hooded hunter.\n---\n# Cape\nA hunter with a torn cape.\n[[/CROQUIS]]',
+    );
+    art.send(sb.human(), "bordee", "Le Chasseur, même famille que le Titan");
+    await art.idle();
+    const sketches = gen.requests.slice(before);
+    expect(sketches).toHaveLength(2);
+    expect(sketches[0]!.prompt).toMatch(/^Using exactly the same art style[\s\S]*A slender hooded hunter\.$/);
+    expect(sketches.every((r) => r.edit?.images.length === 1)).toBe(true);
+    expect(art.state("bordee").assets[1]).toMatchObject({ id: "A-0002", styleRef: "production/a-0001-t1-e1.png" });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Quel croquis pour A-0002 « Chasseur »/);
+  }, 30_000);
+
   it("formats, mesures 3D, croquis et graphe Flux (avec ou sans image de départ)", () => {
+    expect(parseRef("A-0002 | 1024x1024 | ref A-0001")).toBe("A-0001");
+    expect(parseRef("A-0002 | ref: moodboard/titan.png")).toBe("moodboard/titan.png");
+    expect(parseRef("A-0002 | 1024x1024")).toBeNull();
+    const k = kontextWorkflow({ prompt: "Remove the rivets.", width: 0, height: 0, seed: 3, edit: { images: [PNG, PNG] } }, ["a.png", "b.png"]) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(k["1"]).toMatchObject({ class_type: "UNETLoader", inputs: { unet_name: "flux1-dev-kontext_fp8_scaled.safetensors" } });
+    expect(k["2"]).toMatchObject({ class_type: "DualCLIPLoader", inputs: { type: "flux" } });
+    // Deux références enchaînées ; la première sert de toile.
+    expect(k["13"]).toMatchObject({ class_type: "ReferenceLatent", inputs: { conditioning: ["4", 0], latent: ["12", 0] } });
+    expect(k["17"]).toMatchObject({ class_type: "ReferenceLatent", inputs: { conditioning: ["13", 0], latent: ["16", 0] } });
+    expect(k["5"]).toMatchObject({ class_type: "FluxGuidance", inputs: { guidance: 2.5, conditioning: ["17", 0] } });
+    expect(k["7"]!.inputs).toMatchObject({ model: ["1", 0], seed: 3, latent_image: ["12", 0], negative: ["6", 0] });
     expect(parseModel3D("taille 1,8 | triangles 9000 | animations walk, slash, preset:run, danse")).toEqual({ size: 1.8, tris: 9000, rig: true, animations: ["walk", "slash", "run"] });
     expect(parseModel3D("taille 40 | triangles 50")).toEqual({ size: 40, tris: 500, rig: false, animations: [] });
     expect(parseModel3D("squelette")).toMatchObject({ rig: true, animations: [] });
@@ -625,6 +696,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
           { label: "Lourd", prompt: "A heavy knight." },
           { label: "Direction 2", prompt: "A nimble scout." },
         ],
+        ref: null,
       },
     ]);
     const g = fluxWorkflow({ prompt: "a ship", width: 768, height: 1024, seed: 7 }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;

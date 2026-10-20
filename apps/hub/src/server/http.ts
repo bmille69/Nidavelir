@@ -220,6 +220,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return hub.art.generate(req.human!, slug, id);
     });
     api.post("/art/generator/install", async (req) => hub.art.installGenerator(req.human!));
+    api.post("/art/kontext/install", async (req) => hub.art.installKontext(req.human!));
     api.post("/art/blender/install", async (req) => hub.art.installBlender(req.human!));
     api.post("/art/tripo/key", async (req) => hub.art.setTripoKey(req.human!, Body.tripoKey.parse(req.body).key));
     api.post("/projects/:slug/art/assets/:id/model", async (req) => {

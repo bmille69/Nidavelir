@@ -114,7 +114,13 @@ export type Art3D = {
   tripo: { configured: boolean; month: string; credits: number; cap: number };
 };
 export type ArtGenerating = { asset: string; round: number; rounds: number; step: string };
-export type ArtGenerator = { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
+export type ArtGenerator = {
+  installed: boolean;
+  installing: { step: string; progress: number } | null;
+  error: string | null;
+  size: string;
+  kontext?: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
+};
 export type ArtState = {
   bible: string | null;
   assets: ArtAsset[];
@@ -305,6 +311,7 @@ export const api = {
   artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
   artGenerate: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/generate`, {}),
   artInstallGenerator: () => request<ArtGenerator>("POST", "/art/generator/install", {}),
+  artInstallKontext: () => request<ArtGenerator>("POST", "/art/kontext/install", {}),
   artInstallBlender: () => request<Art3D>("POST", "/art/blender/install", {}),
   artTripoKey: (key: string) => request<Art3D>("POST", "/art/tripo/key", { key }),
   artModel: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/model`, {}),

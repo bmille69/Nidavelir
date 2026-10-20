@@ -559,6 +559,14 @@ Mesures :
 - **Coût** : quelques crédits Tripo de plus par modèle (planche et retouche éventuelle), à mesurer au premier essai réel, et un appel du validateur de plus. Flux n'est pas concerné.
 - **Non vérifié en vrai** : les formes des requêtes suivent le nœud ComfyUI officiel de Tripo (`comfy_api_nodes/nodes_tripo.py`, v0.41.0), mais aucune planche n'a encore été demandée à Tripo depuis le hub.
 
+### ADR-51 : Flux Kontext, retouches par consigne et air de famille
+**Statut** : **Validée** le 20/10/2026, à la demande du directeur créatif (bouton « Oui, ajoute-le »). Flux ne sait pas regarder une image de référence. Il repartait donc de zéro pour un détail (une épaulière du mauvais côté, des rivets), ce qui a coûté 36 images au Titan, et rien ne garantissait un air de famille entre les personnages.
+- **Outil** : Flux Kontext dev (fp8), dans le ComfyUI déjà installé. Le modèle (11,9 Go, `Comfy-Org/flux1-kontext-dev_ComfyUI`), ses encodeurs de texte (`clip_l`, `t5xxl_fp8_e4m3fn`, `comfyanonymous/flux_text_encoders`) et son décodeur (`ae`, `Comfy-Org/Lumina_Image_2.0_Repackaged`) viennent de dépôts publics, sans compte (vérifié le 20/10/2026), soit environ 17 Go. Ces fichiers sont séparés pour ne pas charger aussi le Flux tout-en-un : cela saturerait les 32 Go de mémoire. L'installation se fait **sur votre clic** (onglet Visuels, une fois le générateur installé) et reprend là où elle s'était arrêtée. Licence : celle de Flux dev, la même que le générateur actuel.
+- **Graphe** : celui du modèle de ComfyUI. Chaque image passe par `FluxKontextImageScale`, `VAEEncode` puis `ReferenceLatent` (les références s'enchaînent), avec une guidance de 2,5 et un négatif `ConditioningZeroOut`. La première image sert de toile.
+- **Retouches** : quand Kontext est prêt, le validateur peut donner une consigne `edit` en anglais si le meilleur essai est proche et que ses défauts sont localisés. Le tour suivant fait alors trois retouches de cet essai au lieu de trois images neuves.
+- **Air de famille** : `| ref A-xxxx` (un asset retenu) ou `| ref moodboard/x.png` sur `[[CROQUIS]]` et `[[GENERER]]`. Les croquis et les essais sont alors dessinés dans le style de cette image (`styleRef` sur la fiche, citée au validateur). Sans Kontext, la référence est ignorée et la DA le sait.
+- **Non vérifié en vrai** : le graphe suit les nœuds de ComfyUI v0.41.0 (tous présents), mais Kontext n'est pas encore téléchargé : la première retouche réelle sert d'essai.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)
