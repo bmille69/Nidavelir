@@ -44,7 +44,8 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
             : input.tier === "concept"
               ? (models.concept ?? models.structured)
               : models.structured,
-      timeoutMs: input.tools?.length || input.readDir ? 480_000 : 240_000,
+      // L'artisan 3D regarde des photos et écrit du Python à chaque pas : plus lent qu'un validateur.
+      timeoutMs: input.role === "artisan" ? 900_000 : input.tools?.length || input.readDir ? 480_000 : 240_000,
       tag: input.meta,
       tools: input.tools,
       readDir: input.readDir,

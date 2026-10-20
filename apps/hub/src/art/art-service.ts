@@ -1,8 +1,18 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { basename, extname, join, normalize, relative } from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import type { Task } from "@studio/contracts";
-import { assertHumanSession, type HumanSession } from "../auth/human-session.ts";
+import {
+  assertHumanSession,
+  type HumanSession,
+} from "../auth/human-session.ts";
 import type { Clock } from "../clock.ts";
 import type { ConversationService } from "../conversation/conversation-service.ts";
 import type { Db } from "../db/database.ts";
@@ -10,9 +20,25 @@ import type { Journal } from "../journal/journal.ts";
 import type { OrchestratorPort } from "../orchestrator/port.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
-import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
+import {
+  ART_DIR,
+  artRoot,
+  nextAssetId,
+  readManifest,
+  writeAtomic,
+  writeManifest,
+  type Asset,
+  type AssetStatus,
+  type Verdict,
+} from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
-import type { Model3DPort, Model3DSpec, Model3DState, ViewEdit, ViewImage } from "./model3d.ts";
+import type {
+  Model3DPort,
+  Model3DSpec,
+  Model3DState,
+  ViewEdit,
+  ViewImage,
+} from "./model3d.ts";
 import {
   ART_SYSTEM,
   CHOICE_MARK,
@@ -41,7 +67,15 @@ export class ArtError extends Error {
   }
 }
 
-export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
+export type ArtMessage = {
+  id: string;
+  project: string;
+  seq: number;
+  role: "human" | "art";
+  text: string;
+  at: string;
+  cost_usd: number | null;
+};
 export type MoodImage = { file: string; note: string | null };
 export type ArtState = {
   bible: string | null;
@@ -68,7 +102,8 @@ export type Generating = {
   note?: string | null;
   preview?: { kind: "art" | "atelier"; file: string } | null;
 };
-export type Stage = "croquis" | "image" | "planche" | "tripo" | "atelier" | "controle";
+export type Stage =
+  "croquis" | "image" | "planche" | "tripo" | "atelier" | "controle";
 
 /** Essais par tour et tours au plus : le générateur réessaie seul avec le prompt corrigé du validateur (deux tours, ADR-49). */
 const VARIANTS = 3;
@@ -81,12 +116,34 @@ const FIGURINE_STEPS = 30;
 
 const MAX_IMAGE = 15 * 1024 * 1024;
 const HISTORY = 30;
-const IMAGE_TYPES: Record<string, { ext: string; magic: (b: Buffer) => boolean }> = {
-  "image/png": { ext: ".png", magic: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  "image/jpeg": { ext: ".jpg", magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  "image/webp": { ext: ".webp", magic: (b) => b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP" },
+const IMAGE_TYPES: Record<
+  string,
+  { ext: string; magic: (b: Buffer) => boolean }
+> = {
+  "image/png": {
+    ext: ".png",
+    magic: (b) =>
+      b
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  },
+  "image/jpeg": {
+    ext: ".jpg",
+    magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  },
+  "image/webp": {
+    ext: ".webp",
+    magic: (b) =>
+      b.subarray(0, 4).toString("latin1") === "RIFF" &&
+      b.subarray(8, 12).toString("latin1") === "WEBP",
+  },
 };
-export const IMAGE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+export const IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+};
 
 /**
  * Le Directeur artistique (ADR-43) : une discussion par projet, la bible visuelle, le moodboard, le manifeste des
@@ -109,7 +166,11 @@ export class ArtService {
   readonly #model3d: Model3DPort;
   readonly #screenshot: (project: string, task: string) => string | null;
   readonly #generating = new Map<string, Map<string, Generating>>();
-  readonly #vitrine: (project: string, id: string, file: string) => Promise<string | null>;
+  readonly #vitrine: (
+    project: string,
+    id: string,
+    file: string,
+  ) => Promise<string | null>;
   /** Les assets que la DA vient de passer en figurine (ADR-53) : leur atelier repart tout seul après le tour. */
   readonly #toFigurine = new Set<string>();
 
@@ -126,7 +187,11 @@ export class ArtService {
     /** La capture du jeu prise par le hub avant la fusion d'un chantier (ADR-32), si elle existe. */
     screenshot?: (project: string, task: string) => string | null;
     /** Une capture de la scène vitrine du jeu (« ?vitrine=A-0001 ») dans `file`, ou null si elle n'a pas pu être prise (ADR-49). */
-    vitrine?: (project: string, id: string, file: string) => Promise<string | null>;
+    vitrine?: (
+      project: string,
+      id: string,
+      file: string,
+    ) => Promise<string | null>;
   }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
@@ -154,29 +219,57 @@ export class ArtService {
       ? readdirSync(mood)
           .filter((f) => IMAGE_MIME[extname(f).toLowerCase()])
           .sort()
-          .map((f) => ({ file: `moodboard/${f}`, note: notes[`moodboard/${f}`] ?? null }))
+          .map((f) => ({
+            file: `moodboard/${f}`,
+            note: notes[`moodboard/${f}`] ?? null,
+          }))
       : [];
     return {
       bible: existsSync(bibleFile) ? readFileSync(bibleFile, "utf8") : null,
       assets: readManifest(this.#projects.get(project).root).assets,
       moodboard,
       messages: this.messages(project),
-      busy: { replying: this.#replying.has(project), validating: [...(this.#validating.get(project) ?? [])], generating: [...(this.#generating.get(project)?.values() ?? [])] },
+      busy: {
+        replying: this.#replying.has(project),
+        validating: [...(this.#validating.get(project) ?? [])],
+        generating: [...(this.#generating.get(project)?.values() ?? [])],
+      },
       generator: this.#imagegen.state(),
       workshop3d: this.#model3d.state(),
     };
   }
 
   messages(project: string): ArtMessage[] {
-    return this.#db.prepare("SELECT * FROM art_messages WHERE project = ? ORDER BY seq").all(project) as ArtMessage[];
+    return this.#db
+      .prepare("SELECT * FROM art_messages WHERE project = ? ORDER BY seq")
+      .all(project) as ArtMessage[];
   }
 
   /** Activité en cours, pour « Le studio en direct ». */
-  activity(): { project: string; kind: "reply" | "validate" | "generate"; asset?: string }[] {
+  activity(): {
+    project: string;
+    kind: "reply" | "validate" | "generate";
+    asset?: string;
+  }[] {
     return [
-      ...[...this.#replying].map((project) => ({ project, kind: "reply" as const })),
-      ...[...this.#validating].flatMap(([project, ids]) => [...ids].map((asset) => ({ project, kind: "validate" as const, asset }))),
-      ...[...this.#generating].flatMap(([project, gens]) => [...gens.keys()].map((asset) => ({ project, kind: "generate" as const, asset }))),
+      ...[...this.#replying].map((project) => ({
+        project,
+        kind: "reply" as const,
+      })),
+      ...[...this.#validating].flatMap(([project, ids]) =>
+        [...ids].map((asset) => ({
+          project,
+          kind: "validate" as const,
+          asset,
+        })),
+      ),
+      ...[...this.#generating].flatMap(([project, gens]) =>
+        [...gens.keys()].map((asset) => ({
+          project,
+          kind: "generate" as const,
+          asset,
+        })),
+      ),
     ];
   }
 
@@ -184,16 +277,29 @@ export class ArtService {
   installGenerator(session: HumanSession): GenState {
     assertHumanSession(session);
     this.#imagegen.install();
-    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.install_started", subject: "comfyui", payload: {} });
+    this.#journal.append({
+      project: null,
+      actor: { kind: "human" },
+      type: "tool.install_started",
+      subject: "comfyui",
+      payload: {},
+    });
     return this.#imagegen.state();
   }
 
   /** Installer Flux Kontext (≈ 17 Go), sur votre clic : retouches par consigne et air de famille (ADR-51). */
   installKontext(session: HumanSession): GenState {
     assertHumanSession(session);
-    if (!this.#imagegen.state().installed) throw new ArtError("Installez d'abord le générateur d'images");
+    if (!this.#imagegen.state().installed)
+      throw new ArtError("Installez d'abord le générateur d'images");
     this.#imagegen.installKontext();
-    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.install_started", subject: "flux-kontext", payload: {} });
+    this.#journal.append({
+      project: null,
+      actor: { kind: "human" },
+      type: "tool.install_started",
+      subject: "flux-kontext",
+      payload: {},
+    });
     return this.#imagegen.state();
   }
 
@@ -201,7 +307,13 @@ export class ArtService {
   installBlender(session: HumanSession): Model3DState {
     assertHumanSession(session);
     this.#model3d.installBlender();
-    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.install_started", subject: "blender", payload: {} });
+    this.#journal.append({
+      project: null,
+      actor: { kind: "human" },
+      type: "tool.install_started",
+      subject: "blender",
+      payload: {},
+    });
     return this.#model3d.state();
   }
 
@@ -211,20 +323,30 @@ export class ArtService {
     await this.#model3d.setTripoKey(key).catch((err: Error) => {
       throw new ArtError(err.message);
     });
-    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.configured", subject: "tripo", payload: {} });
+    this.#journal.append({
+      project: null,
+      actor: { kind: "human" },
+      type: "tool.configured",
+      subject: "tripo",
+      payload: {},
+    });
     return this.#model3d.state();
   }
 
   /** Fabriquer (ou refaire) la 3D d'un asset dont l'image est validée. */
   generateModel(session: HumanSession, project: string, id: string): Asset {
     assertHumanSession(session);
-    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    const asset = readManifest(this.#projects.get(project).root).assets.find(
+      (a) => a.id === id,
+    );
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
     if (!asset.model3d) throw new ArtError("Cet asset n'est pas un modèle 3D");
-    if (!asset.model3d.simple && !asset.verdict?.ok) throw new ArtError("Il faut d'abord une image validée");
+    if (!asset.model3d.simple && !asset.verdict?.ok)
+      throw new ArtError("Il faut d'abord une image validée");
     const missing = this.#missing3d(!!asset.model3d.simple);
     if (missing) throw new ArtError(missing);
-    if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    if (asset.status === "integration" || asset.status === "integre")
+      throw new ArtError("Cet asset est déjà parti dans le jeu");
     this.#startModel(project, id);
     return asset;
   }
@@ -232,11 +354,18 @@ export class ArtService {
   /** Fabriquer un asset avec le générateur local : essais, validateur, nouvelles tentatives, sans vous. */
   generate(session: HumanSession, project: string, id: string): Asset {
     assertHumanSession(session);
-    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    const asset = readManifest(this.#projects.get(project).root).assets.find(
+      (a) => a.id === id,
+    );
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
-    if (!this.#imagegen.state().installed) throw new ArtError("Installez d'abord le générateur d'images");
-    if (!asset.prompts.length) throw new ArtError("Pas encore de prompt : demandez-le au Directeur artistique");
-    if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    if (!this.#imagegen.state().installed)
+      throw new ArtError("Installez d'abord le générateur d'images");
+    if (!asset.prompts.length)
+      throw new ArtError(
+        "Pas encore de prompt : demandez-le au Directeur artistique",
+      );
+    if (asset.status === "integration" || asset.status === "integre")
+      throw new ArtError("Cet asset est déjà parti dans le jeu");
     this.#startProduce(project, id);
     return asset;
   }
@@ -249,10 +378,17 @@ export class ArtService {
     if (body.length > 20_000) throw new ArtError("Message trop long");
     this.#projects.get(project);
     const human = this.#insert(project, "human", body, null);
-    this.#journal.append({ project, actor: { kind: "human" }, type: "art.message", subject: human.id, payload: {} });
+    this.#journal.append({
+      project,
+      actor: { kind: "human" },
+      type: "art.message",
+      subject: human.id,
+      payload: {},
+    });
     // Un croquis choisi d'un clic : la fabrication part tout de suite, sans tour du Directeur artistique (ADR-49).
     const pick = SKETCH_ANSWER.exec(body);
-    if (pick) this.#track(this.#chooseSketch(project, pick[1]!, Number(pick[2])));
+    if (pick)
+      this.#track(this.#chooseSketch(project, pick[1]!, Number(pick[2])));
     else this.#turn(project);
     return human;
   }
@@ -261,38 +397,78 @@ export class ArtService {
    * Une image déposée : au moodboard (inspiration) ou comme rendu d'un asset (« A-0001 »), qui part alors au validateur.
    * Le fichier est vérifié (type réel, taille) et rangé dans studio/art ; le nom d'origine ne sert qu'à le reconnaître.
    */
-  async upload(session: HumanSession, project: string, target: string, data: Buffer, mime: string, name = "image"): Promise<{ file: string }> {
+  async upload(
+    session: HumanSession,
+    project: string,
+    target: string,
+    data: Buffer,
+    mime: string,
+    name = "image",
+  ): Promise<{ file: string }> {
     assertHumanSession(session);
     const kind = IMAGE_TYPES[mime];
-    if (!kind) throw new ArtError("Seules les images PNG, JPEG et WebP sont acceptées");
-    if (data.length > MAX_IMAGE) throw new ArtError("Image trop lourde (15 Mo au plus)");
-    if (!kind.magic(data)) throw new ArtError("Ce fichier n'est pas une image valide");
+    if (!kind)
+      throw new ArtError("Seules les images PNG, JPEG et WebP sont acceptées");
+    if (data.length > MAX_IMAGE)
+      throw new ArtError("Image trop lourde (15 Mo au plus)");
+    if (!kind.magic(data))
+      throw new ArtError("Ce fichier n'est pas une image valide");
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
-    const base = (name.replace(/\.[^.]*$/, "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "image").slice(0, 40);
+    const base = (
+      name
+        .replace(/\.[^.]*$/, "")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "image"
+    ).slice(0, 40);
     if (target === "moodboard") {
       const file = this.#free(root, "moodboard", base, kind.ext);
       writeAtomic(join(root, file), data);
       await this.#commit(gameRoot, `art: image d'inspiration ${file}`);
-      this.#journal.append({ project, actor: { kind: "human" }, type: "art.image_added", subject: file, payload: {} });
+      this.#journal.append({
+        project,
+        actor: { kind: "human" },
+        type: "art.image_added",
+        subject: file,
+        payload: {},
+      });
       return { file };
     }
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === target);
     if (!asset) throw new ArtError(`Asset introuvable : ${target}`);
-    const file = this.#free(root, "production", `${asset.id.toLowerCase()}-${base}`, kind.ext);
+    const file = this.#free(
+      root,
+      "production",
+      `${asset.id.toLowerCase()}-${base}`,
+      kind.ext,
+    );
     writeAtomic(join(root, file), data);
     asset.renders.push(file);
     this.#setStatus(asset, "a_valider");
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: rendu ${file} pour ${asset.id}`);
-    this.#journal.append({ project, actor: { kind: "human" }, type: "art.render_added", subject: asset.id, payload: { file } });
+    this.#journal.append({
+      project,
+      actor: { kind: "human" },
+      type: "art.render_added",
+      subject: asset.id,
+      payload: { file },
+    });
     this.#track(this.#validate(project, asset.id, file));
     return { file };
   }
 
   /** Vous tranchez vous-même : valider le dernier rendu malgré le validateur, ou le renvoyer en production. */
-  async decide(session: HumanSession, project: string, id: string, decision: "valider" | "refaire"): Promise<Asset> {
+  async decide(
+    session: HumanSession,
+    project: string,
+    id: string,
+    decision: "valider" | "refaire",
+  ): Promise<Asset> {
     assertHumanSession(session);
     const gameRoot = this.#projects.get(project).root;
     const m = readManifest(gameRoot);
@@ -303,24 +479,59 @@ export class ArtService {
     if (decision === "valider") {
       if (asset.model3d && asset.model) {
         // Le modèle 3D, malgré le validateur.
-        asset.model.verdict = { ok: true, summary: "Validé par le directeur créatif.", points: asset.model.verdict?.points ?? [], prompt: null, file: asset.model.file, by: "human", at: this.#clock.now() };
+        asset.model.verdict = {
+          ok: true,
+          summary: "Validé par le directeur créatif.",
+          points: asset.model.verdict?.points ?? [],
+          prompt: null,
+          file: asset.model.file,
+          by: "human",
+          at: this.#clock.now(),
+        };
         this.#setStatus(asset, "valide");
         next = "integrate";
       } else {
-        if (!file) throw new ArtError("Aucun rendu à valider : déposez d'abord une image");
-        asset.verdict = { ok: true, summary: "Validé par le directeur créatif.", points: asset.verdict?.points ?? [], prompt: null, file, by: "human", at: this.#clock.now() };
+        if (!file)
+          throw new ArtError(
+            "Aucun rendu à valider : déposez d'abord une image",
+          );
+        asset.verdict = {
+          ok: true,
+          summary: "Validé par le directeur créatif.",
+          points: asset.verdict?.points ?? [],
+          prompt: null,
+          file,
+          by: "human",
+          at: this.#clock.now(),
+        };
         // Un modèle 3D : l'image validée part à l'atelier 3D ; sinon, direction le jeu.
         this.#setStatus(asset, asset.model3d ? "production" : "valide");
         next = asset.model3d ? "model" : "integrate";
       }
     } else this.#setStatus(asset, "production");
     writeManifest(gameRoot, m);
-    await this.#commit(gameRoot, `art: ${id} ${decision === "valider" ? "validé" : "à refaire"} (directeur créatif)`);
-    this.#journal.append({ project, actor: { kind: "human" }, type: decision === "valider" ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "human" } });
+    await this.#commit(
+      gameRoot,
+      `art: ${id} ${decision === "valider" ? "validé" : "à refaire"} (directeur créatif)`,
+    );
+    this.#journal.append({
+      project,
+      actor: { kind: "human" },
+      type:
+        decision === "valider" ? "art.asset_validated" : "art.asset_rejected",
+      subject: id,
+      payload: { by: "human" },
+    });
     // « Refaire » avec le générateur local : il repart tout seul.
-    if (decision === "refaire" && asset.prompts.length && this.#imagegen.state().installed) this.#startProduce(project, id);
+    if (
+      decision === "refaire" &&
+      asset.prompts.length &&
+      this.#imagegen.state().installed
+    )
+      this.#startProduce(project, id);
     if (next === "model") this.#startModel(project, id);
-    if (next === "integrate") this.#track(this.#autoIntegrate(project, id, "human"));
+    if (next === "integrate")
+      this.#track(this.#autoIntegrate(project, id, "human"));
     return asset;
   }
 
@@ -328,32 +539,54 @@ export class ArtService {
    * Faire brancher un asset validé dans le jeu : une demande au directeur du projet, dans une nouvelle discussion.
    * Il lance le chantier ; quand un chantier qui porte l'identifiant de l'asset est fusionné, l'asset passe « intégré ».
    */
-  async integrate(session: HumanSession, project: string, id: string): Promise<{ thread: string }> {
+  async integrate(
+    session: HumanSession,
+    project: string,
+    id: string,
+  ): Promise<{ thread: string }> {
     assertHumanSession(session);
     return this.#requestIntegration(project, id, "human");
   }
 
   /** L'intégration lancée en arrière-plan : un échec s'affiche dans la discussion au lieu de se perdre. */
-  async #autoIntegrate(project: string, id: string, by: "human" | "system"): Promise<void> {
+  async #autoIntegrate(
+    project: string,
+    id: string,
+    by: "human" | "system",
+  ): Promise<void> {
     try {
       await this.#requestIntegration(project, id, by);
     } catch (err) {
-      this.#insert(project, "art", `Je n'ai pas pu envoyer ${id} au directeur pour l'intégrer : ${(err as Error).message.slice(0, 300)}. Utilisez « Faire intégrer » sur sa fiche.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Je n'ai pas pu envoyer ${id} au directeur pour l'intégrer : ${(err as Error).message.slice(0, 300)}. Utilisez « Faire intégrer » sur sa fiche.`,
+        null,
+      );
     }
   }
 
   /** La demande au directeur. Un visuel validé (par le validateur ou par vous) y part tout seul (ADR-48). */
-  async #requestIntegration(project: string, id: string, by: "human" | "system"): Promise<{ thread: string }> {
+  async #requestIntegration(
+    project: string,
+    id: string,
+    by: "human" | "system",
+  ): Promise<{ thread: string }> {
     const gameRoot = this.#projects.get(project).root;
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === id);
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
-    if (asset.status !== "valide" && asset.status !== "integration") throw new ArtError("Seul un asset validé peut être intégré");
-    const file = asset.model?.file ?? asset.verdict?.file ?? asset.renders.at(-1);
+    if (asset.status !== "valide" && asset.status !== "integration")
+      throw new ArtError("Seul un asset validé peut être intégré");
+    const file =
+      asset.model?.file ?? asset.verdict?.file ?? asset.renders.at(-1);
     this.#setStatus(asset, "integration");
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: intégration demandée pour ${id}`);
-    const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80));
+    const thread = this.#conversations.createThread(
+      project,
+      `Intégrer ${id} : ${asset.name}`.slice(0, 80),
+    );
     const model = asset.model;
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
@@ -370,8 +603,20 @@ export class ArtService {
       .filter(Boolean)
       .join("\n");
     void this.#conversations.send(project, thread.id, text).catch(() => {});
-    this.#journal.append({ project, actor: by === "human" ? { kind: "human" } : { kind: "system" }, type: "art.integration_requested", subject: id, payload: { thread: thread.id } });
-    if (by === "system") this.#insert(project, "art", `${id} « ${asset.name} » part dans le jeu : demande envoyée au directeur du projet (discussion « Intégrer ${id} »).`, null);
+    this.#journal.append({
+      project,
+      actor: by === "human" ? { kind: "human" } : { kind: "system" },
+      type: "art.integration_requested",
+      subject: id,
+      payload: { thread: thread.id },
+    });
+    if (by === "system")
+      this.#insert(
+        project,
+        "art",
+        `${id} « ${asset.name} » part dans le jeu : demande envoyée au directeur du projet (discussion « Intégrer ${id} »).`,
+        null,
+      );
     return { thread: thread.id };
   }
 
@@ -387,13 +632,28 @@ export class ArtService {
       return;
     }
     const m = readManifest(gameRoot);
-    const done = m.assets.filter((a) => ids.has(a.id) && a.status === "integration");
+    const done = m.assets.filter(
+      (a) => ids.has(a.id) && a.status === "integration",
+    );
     if (!done.length) return;
     for (const a of done) this.#setStatus(a, "integre");
     writeManifest(gameRoot, m);
-    this.#track(this.#commit(gameRoot, `art: ${done.map((a) => a.id).join(", ")} intégré(s) par ${task.id}`));
-    for (const a of done) this.#journal.append({ project: task.project, actor: { kind: "system" }, type: "art.asset_integrated", subject: a.id, payload: { task: task.id } });
-    for (const a of done) this.#track(this.#checkInGame(task.project, a.id, task.id));
+    this.#track(
+      this.#commit(
+        gameRoot,
+        `art: ${done.map((a) => a.id).join(", ")} intégré(s) par ${task.id}`,
+      ),
+    );
+    for (const a of done)
+      this.#journal.append({
+        project: task.project,
+        actor: { kind: "system" },
+        type: "art.asset_integrated",
+        subject: a.id,
+        payload: { task: task.id },
+      });
+    for (const a of done)
+      this.#track(this.#checkInGame(task.project, a.id, task.id));
   }
 
   /**
@@ -404,17 +664,39 @@ export class ArtService {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     mkdirSync(join(root, "production"), { recursive: true });
-    const vitrine = this.#free(root, "production", `${id.toLowerCase()}-vitrine-${task.toLowerCase()}`, ".png");
-    const shotVitrine = await this.#vitrine(project, id, join(root, vitrine)).catch(() => null);
-    const shot = shotVitrine && existsSync(shotVitrine) ? null : this.#screenshot(project, task);
+    const vitrine = this.#free(
+      root,
+      "production",
+      `${id.toLowerCase()}-vitrine-${task.toLowerCase()}`,
+      ".png",
+    );
+    const shotVitrine = await this.#vitrine(
+      project,
+      id,
+      join(root, vitrine),
+    ).catch(() => null);
+    const shot =
+      shotVitrine && existsSync(shotVitrine)
+        ? null
+        : this.#screenshot(project, task);
     if (!shotVitrine && (!shot || !existsSync(shot))) {
-      this.#insert(project, "art", `${id} est dans le jeu (${task}). Pas de capture du jeu pour vérifier le rendu : regardez-le en jouant.`, null);
+      this.#insert(
+        project,
+        "art",
+        `${id} est dans le jeu (${task}). Pas de capture du jeu pour vérifier le rendu : regardez-le en jouant.`,
+        null,
+      );
       return;
     }
     let file = vitrine;
     if (!shotVitrine) {
       rmSync(join(root, vitrine), { force: true });
-      file = this.#free(root, "production", `${id.toLowerCase()}-en-jeu-${task.toLowerCase()}`, ".png");
+      file = this.#free(
+        root,
+        "production",
+        `${id.toLowerCase()}-en-jeu-${task.toLowerCase()}`,
+        ".png",
+      );
       copyFileSync(shot!, join(root, file));
     }
     const busy = this.#validating.get(project) ?? new Set<string>();
@@ -422,7 +704,9 @@ export class ArtService {
     this.#validating.set(project, busy);
     try {
       const asset = readManifest(gameRoot).assets.find((a) => a.id === id)!;
-      const validated = asset.model ? asset.model.renders.join(", ") : (asset.verdict?.file ?? "?");
+      const validated = asset.model
+        ? asset.model.renders.join(", ")
+        : (asset.verdict?.file ?? "?");
       const { data } = await this.#orchestrator.structured({
         systemPrompt: INGAME_SYSTEM,
         prompt: `Asset ${id} « ${asset.name} » (${asset.type}), usage : ${asset.usage}.\nFichier validé : ${validated}\n${shotVitrine ? `Capture de la scène vitrine du jeu (?vitrine=${id}), après le chantier ${task}` : `Capture de lancement du jeu après le chantier ${task} (pas de scène vitrine)`} : ${file}`,
@@ -431,12 +715,26 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { visible: boolean; ok: boolean; summary: string; points: string[] };
+      const v = data as {
+        visible: boolean;
+        ok: boolean;
+        summary: string;
+        points: string[];
+      };
       const m = readManifest(gameRoot);
       const a = m.assets.find((x) => x.id === id);
       if (!a) return;
       const retry = !!v.visible && !v.ok && !a.ingame?.retried;
-      a.ingame = { task, file, visible: !!v.visible, ok: !!v.visible && !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 6), retried: retry || !!a.ingame?.retried, at: this.#clock.now() };
+      a.ingame = {
+        task,
+        file,
+        visible: !!v.visible,
+        ok: !!v.visible && !!v.ok,
+        summary: String(v.summary ?? "").slice(0, 400),
+        points: (v.points ?? []).slice(0, 6),
+        retried: retry || !!a.ingame?.retried,
+        at: this.#clock.now(),
+      };
       writeManifest(gameRoot, m);
       await this.#commit(gameRoot, `art: ${id} vérifié dans le jeu (${task})`);
       this.#insert(
@@ -450,14 +748,21 @@ export class ArtService {
               ? `**${id} dans le jeu : rend bien.** ${a.ingame.summary}`
               : `**${id} dans le jeu : à retoucher.** ${a.ingame.summary}`,
           ...a.ingame.points.map((p) => `- ${p}`),
-          retry ? "J'ai demandé une retouche au directeur du projet." : v.visible && !v.ok ? "La retouche automatique a déjà été tentée une fois : dites-moi comment vous voulez la reprendre." : "",
+          retry
+            ? "J'ai demandé une retouche au directeur du projet."
+            : v.visible && !v.ok
+              ? "La retouche automatique a déjà été tentée une fois : dites-moi comment vous voulez la reprendre."
+              : "",
         ]
           .filter(Boolean)
           .join("\n"),
         null,
       );
       if (retry) {
-        const thread = this.#conversations.createThread(project, `Retoucher ${id} dans le jeu`.slice(0, 80));
+        const thread = this.#conversations.createThread(
+          project,
+          `Retoucher ${id} dans le jeu`.slice(0, 80),
+        );
         const text = [
           `Le validateur artistique a regardé ${id} « ${a.name} » dans le jeu (capture : studio/art/${file}) : à retoucher.`,
           a.ingame.summary,
@@ -470,14 +775,20 @@ export class ArtService {
         writeManifest(gameRoot, m);
       }
     } catch (err) {
-      this.#insert(project, "art", `Le validateur n'a pas pu regarder ${id} dans le jeu : ${(err as Error).message.slice(0, 300)}.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Le validateur n'a pas pu regarder ${id} dans le jeu : ${(err as Error).message.slice(0, 300)}.`,
+        null,
+      );
     } finally {
       busy.delete(id);
     }
   }
 
   async idle(): Promise<void> {
-    while (this.#background.size) await Promise.allSettled([...this.#background]);
+    while (this.#background.size)
+      await Promise.allSettled([...this.#background]);
   }
 
   // ── Tours du Directeur artistique ──
@@ -510,31 +821,66 @@ export class ArtService {
       const applied = this.#apply(project, directives);
       // Le cadrage d'abord (ADR-49) : une réponse qui pose une question ne lance aucune fabrication.
       const asking = text.includes(CHOICE_MARK);
-      const launches = directives.sketches.length + directives.generate.length + directives.model3d.length;
-      if (asking && launches) applied.push("fabrication en attente de vos réponses");
-      const summary = applied.length ? `\n${DONE_MARK}${applied.join(" · ")}` : "";
-      this.#insert(project, "art", `${text || "C'est noté."}${summary}`, costUsd);
-      await this.#commit(p.root, `art: ${applied.join(", ") || "réponse du Directeur artistique"}`);
+      const launches =
+        directives.sketches.length +
+        directives.generate.length +
+        directives.model3d.length;
+      if (asking && launches)
+        applied.push("fabrication en attente de vos réponses");
+      const summary = applied.length
+        ? `\n${DONE_MARK}${applied.join(" · ")}`
+        : "";
+      this.#insert(
+        project,
+        "art",
+        `${text || "C'est noté."}${summary}`,
+        costUsd,
+      );
+      await this.#commit(
+        p.root,
+        `art: ${applied.join(", ") || "réponse du Directeur artistique"}`,
+      );
       if (asking) return;
       // Le générateur part de la fiche à jour, une fois le tour écrit et commité.
       if (this.#imagegen.state().installed) {
-        for (const c of directives.sketches) this.#startSketches(project, c.asset);
-        for (const g of directives.generate) if (!directives.sketches.some((c) => c.asset === g.asset)) this.#startProduce(project, g.asset);
+        for (const c of directives.sketches)
+          this.#startSketches(project, c.asset);
+        for (const g of directives.generate)
+          if (!directives.sketches.some((c) => c.asset === g.asset))
+            this.#startProduce(project, g.asset);
       }
       // Une 3D sans image à attendre part tout de suite : objet simple, ou image déjà validée (sinon elle suivra l'image).
       const assets = readManifest(p.root).assets;
       for (const t of directives.model3d) {
         const a = assets.find((x) => x.id === t.asset);
-        if (a?.model3d && this.#toFigurine.delete(`${project}/${a.id}`) && a.status !== "integration" && a.status !== "integre") {
+        if (
+          a?.model3d &&
+          this.#toFigurine.delete(`${project}/${a.id}`) &&
+          a.status !== "integration" &&
+          a.status !== "integre"
+        ) {
           this.#startModel(project, a.id);
           continue;
         }
-        if (!a?.model3d || a.model || a.status !== "production" && a.status !== "propose") continue;
-        const pending = directives.generate.some((g) => g.asset === a.id) || directives.sketches.some((c) => c.asset === a.id);
-        if (a.model3d.simple || (a.verdict?.ok && !pending)) this.#startModel(project, a.id);
+        if (
+          !a?.model3d ||
+          a.model ||
+          (a.status !== "production" && a.status !== "propose")
+        )
+          continue;
+        const pending =
+          directives.generate.some((g) => g.asset === a.id) ||
+          directives.sketches.some((c) => c.asset === a.id);
+        if (a.model3d.simple || (a.verdict?.ok && !pending))
+          this.#startModel(project, a.id);
       }
     } catch (err) {
-      this.#insert(project, "art", `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`,
+        null,
+      );
     } finally {
       this.#replying.delete(project);
     }
@@ -551,8 +897,12 @@ export class ArtService {
     const brief = read(join("studio", "BRIEF.md"), 6000);
     return [
       `<projet nom="${p.name}">Le jeu dont tu es le Directeur artistique.</projet>`,
-      claude ? `<consignes_du_projet source="CLAUDE.md">\n${claude}\n</consignes_du_projet>` : "",
-      brief ? `<vision_du_jeu source="studio/BRIEF.md">\n${brief}\n</vision_du_jeu>` : "",
+      claude
+        ? `<consignes_du_projet source="CLAUDE.md">\n${claude}\n</consignes_du_projet>`
+        : "",
+      brief
+        ? `<vision_du_jeu source="studio/BRIEF.md">\n${brief}\n</vision_du_jeu>`
+        : "",
       this.#imagegen.state().installed
         ? "Le générateur d'images local est prêt : pour fabriquer un asset, utilise [[GENERER]] (Flux), pas Midjourney."
         : "Le générateur d'images local n'est pas encore installé : pour fabriquer un asset, donne des prompts [[MIDJOURNEY]].",
@@ -580,17 +930,32 @@ export class ArtService {
     if (d.bible) {
       writeAtomic(join(root, "bible.md"), `${d.bible}\n`);
       done.push("bible mise à jour");
-      this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: "art.bible_updated", subject: null, payload: {} });
+      this.#journal.append({
+        project,
+        actor: {
+          kind: "agent",
+          role: "art_director",
+          run: this.#orchestrator.name,
+        },
+        type: "art.bible_updated",
+        subject: null,
+        payload: {},
+      });
     }
     const m = readManifest(gameRoot);
     const now = this.#clock.now();
     for (const raw of d.assets) {
-      const str = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string).trim().slice(0, 2000) : "");
+      const str = (k: string) =>
+        typeof raw[k] === "string"
+          ? (raw[k] as string).trim().slice(0, 2000)
+          : "";
       const existing = m.assets.find((a) => a.id === str("id"));
       if (existing) {
-        for (const k of ["name", "type", "usage", "specs"] as const) if (str(k)) existing[k] = str(k);
+        for (const k of ["name", "type", "usage", "specs"] as const)
+          if (str(k)) existing[k] = str(k);
         const status = str("status") as AssetStatus;
-        if (status === "production" || status === "propose") this.#setStatus(existing, status);
+        if (status === "production" || status === "propose")
+          this.#setStatus(existing, status);
         existing.updated_at = now;
         done.push(`${existing.id} modifié`);
       } else if (str("name")) {
@@ -637,7 +1002,11 @@ export class ArtService {
       const a = m.assets.find((x) => x.id === c.asset);
       if (!a || a.status === "integration" || a.status === "integre") continue;
       // De nouveaux croquis remplacent la direction choisie : on repart du cadrage.
-      a.sketches = c.options.map((o) => ({ file: "", label: o.label, prompt: o.prompt }));
+      a.sketches = c.options.map((o) => ({
+        file: "",
+        label: o.label,
+        prompt: o.prompt,
+      }));
       a.direction = null;
       if (c.format) a.format = c.format;
       a.styleRef = c.ref ? resolveRef(m.assets, root, c.ref, a.id) : null;
@@ -647,19 +1016,45 @@ export class ArtService {
     for (const t of d.model3d) {
       const a = m.assets.find((x) => x.id === t.asset);
       if (!a || a.status === "integration" || a.status === "integre") continue;
-      if (t.spec.figurine && !a.model3d?.figurine) this.#toFigurine.add(`${project}/${a.id}`);
+      if (t.spec.figurine && !a.model3d?.figurine)
+        this.#toFigurine.add(`${project}/${a.id}`);
       a.model3d = t.spec;
-      if (t.spec.simple && a.status === "propose") this.#setStatus(a, "production");
+      if (t.spec.simple && a.status === "propose")
+        this.#setStatus(a, "production");
       a.updated_at = now;
-      done.push(`3D prévue pour ${a.id} (${t.spec.simple ? "objet simple, " : t.spec.figurine ? "figurine, " : ""}${t.spec.size} m, ${t.spec.tris} triangles${t.spec.animations.length ? `, ${t.spec.animations.join(", ")}` : ""})`);
+      done.push(
+        `3D prévue pour ${a.id} (${t.spec.simple ? "objet simple, " : t.spec.figurine ? "figurine, " : ""}${t.spec.size} m, ${t.spec.tris} triangles${t.spec.animations.length ? `, ${t.spec.animations.join(", ")}` : ""})`,
+      );
     }
-    if (sketched.length) done.push(this.#imagegen.state().installed ? `croquis demandés pour ${sketched.join(", ")}` : `croquis prêts pour ${sketched.join(", ")} (générateur pas encore installé)`);
-    if (produce.length) done.push(this.#imagegen.state().installed ? `génération lancée pour ${produce.join(", ")}` : `prompts prêts pour ${produce.join(", ")} (générateur pas encore installé)`);
-    if (d.assets.length || d.midjourney.length || d.generate.length || d.sketches.length || d.model3d.length) writeManifest(gameRoot, m);
+    if (sketched.length)
+      done.push(
+        this.#imagegen.state().installed
+          ? `croquis demandés pour ${sketched.join(", ")}`
+          : `croquis prêts pour ${sketched.join(", ")} (générateur pas encore installé)`,
+      );
+    if (produce.length)
+      done.push(
+        this.#imagegen.state().installed
+          ? `génération lancée pour ${produce.join(", ")}`
+          : `prompts prêts pour ${produce.join(", ")} (générateur pas encore installé)`,
+      );
+    if (
+      d.assets.length ||
+      d.midjourney.length ||
+      d.generate.length ||
+      d.sketches.length ||
+      d.model3d.length
+    )
+      writeManifest(gameRoot, m);
     if (d.notes.length) {
       const notes = this.#notes(root);
-      for (const n of d.notes) if (safeRel(n.file) && existsSync(join(root, n.file))) notes[n.file] = n.note;
-      writeAtomic(join(root, "moodboard", "notes.json"), `${JSON.stringify(notes, null, 2)}\n`);
+      for (const n of d.notes)
+        if (safeRel(n.file) && existsSync(join(root, n.file)))
+          notes[n.file] = n.note;
+      writeAtomic(
+        join(root, "moodboard", "notes.json"),
+        `${JSON.stringify(notes, null, 2)}\n`,
+      );
       done.push(`${d.notes.length} image(s) commentée(s)`);
     }
     return done;
@@ -671,7 +1066,12 @@ export class ArtService {
   #startSketches(project: string, id: string): void {
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
-    gens.set(id, { asset: id, round: 1, rounds: 1, step: "Croquis en attente de la carte graphique" });
+    gens.set(id, {
+      asset: id,
+      round: 1,
+      rounds: 1,
+      step: "Croquis en attente de la carte graphique",
+    });
     this.#generating.set(project, gens);
     this.#track(this.#sketch(project, id).finally(() => gens.delete(id)));
   }
@@ -684,14 +1084,27 @@ export class ArtService {
       let asset = readManifest(gameRoot).assets.find((a) => a.id === id);
       const options = asset?.sketches ?? [];
       if (!asset || !options.length) return;
-      const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
+      const [width, height] = (asset.format ?? "1024x1024")
+        .split("x")
+        .map(Number) as [number, number];
       const style = this.#styleOf(root, asset);
       const files: string[] = [];
       for (const [k, o] of options.entries()) {
         progress.stage = "croquis";
         progress.step = `Croquis ${k + 1} sur ${options.length}${style ? " (dans le style de la référence)" : ""}`;
-        const png = await this.#imagegen.generate({ prompt: style ? styled(o.prompt) : o.prompt, width, height, seed: randomInt(2 ** 31), ...(style ? { edit: { images: [style] } } : {}) });
-        const file = this.#free(root, "production", `${id.toLowerCase()}-croquis-${k + 1}`, ".png");
+        const png = await this.#imagegen.generate({
+          prompt: style ? styled(o.prompt) : o.prompt,
+          width,
+          height,
+          seed: randomInt(2 ** 31),
+          ...(style ? { edit: { images: [style] } } : {}),
+        });
+        const file = this.#free(
+          root,
+          "production",
+          `${id.toLowerCase()}-croquis-${k + 1}`,
+          ".png",
+        );
         writeAtomic(join(root, file), png);
         files.push(file);
         progress.preview = { kind: "art", file };
@@ -699,7 +1112,10 @@ export class ArtService {
       const m = readManifest(gameRoot);
       asset = m.assets.find((a) => a.id === id);
       if (!asset?.sketches) return;
-      asset.sketches = asset.sketches.map((s, k) => ({ ...s, file: files[k] ?? s.file }));
+      asset.sketches = asset.sketches.map((s, k) => ({
+        ...s,
+        file: files[k] ?? s.file,
+      }));
       asset.updated_at = this.#clock.now();
       writeManifest(gameRoot, m);
       await this.#commit(gameRoot, `art: ${files.length} croquis pour ${id}`);
@@ -707,14 +1123,22 @@ export class ArtService {
         project,
         "art",
         [
-          ...asset.sketches.flatMap((s, k) => [`**Croquis ${k + 1} : ${s.label}**`, `${IMAGE_MARK}${s.file}`]),
+          ...asset.sketches.flatMap((s, k) => [
+            `**Croquis ${k + 1} : ${s.label}**`,
+            `${IMAGE_MARK}${s.file}`,
+          ]),
           `Voici ${asset.sketches.length} directions pour ${id} « ${asset.name} ». Choisissez celle qui vous parle : je la fabrique et la mène jusqu'au jeu sans vous redemander.`,
           `${CHOICE_MARK}${sketchQuestion(id, asset.name)} || ${[...asset.sketches.map((s, k) => `Croquis ${k + 1} : ${s.label}`), "Aucun, on en reparle"].join(" || ")}`,
         ].join("\n"),
         null,
       );
     } catch (err) {
-      this.#insert(project, "art", `Le générateur n'a pas pu dessiner les croquis de ${id} : ${(err as Error).message.slice(0, 300)}. Redemandez-les-moi.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Le générateur n'a pas pu dessiner les croquis de ${id} : ${(err as Error).message.slice(0, 300)}. Redemandez-les-moi.`,
+        null,
+      );
     }
   }
 
@@ -726,11 +1150,20 @@ export class ArtService {
     const sketch = asset?.sketches?.[k - 1];
     if (!asset || !sketch?.file) return this.#turn(project);
     asset.direction = sketch;
-    asset.prompts = [sketch.prompt, ...asset.prompts.filter((p) => p !== sketch.prompt)].slice(0, 6);
+    asset.prompts = [
+      sketch.prompt,
+      ...asset.prompts.filter((p) => p !== sketch.prompt),
+    ].slice(0, 6);
     this.#setStatus(asset, "production");
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: croquis ${k} retenu pour ${id}`);
-    this.#journal.append({ project, actor: { kind: "human" }, type: "art.sketch_chosen", subject: id, payload: { sketch: sketch.file } });
+    this.#journal.append({
+      project,
+      actor: { kind: "human" },
+      type: "art.sketch_chosen",
+      subject: id,
+      payload: { sketch: sketch.file },
+    });
     this.#insert(
       project,
       "art",
@@ -745,14 +1178,20 @@ export class ArtService {
   #startProduce(project: string, id: string): void {
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
-    gens.set(id, { asset: id, round: 1, rounds: ROUNDS, step: "En attente de la carte graphique" });
+    gens.set(id, {
+      asset: id,
+      round: 1,
+      rounds: ROUNDS,
+      step: "En attente de la carte graphique",
+    });
     this.#generating.set(project, gens);
     this.#track(
       this.#produce(project, id)
         .finally(() => gens.delete(id))
         .then((next) => {
           if (next === "model") this.#startModel(project, id);
-          if (next === "integrate") return this.#autoIntegrate(project, id, "system");
+          if (next === "integrate")
+            return this.#autoIntegrate(project, id, "system");
         }),
     );
   }
@@ -762,7 +1201,10 @@ export class ArtService {
    * validateur choisit le meilleur ; s'il refuse, nouveau tour avec son prompt corrigé. Au dernier tour, un essai
    * « utilisable » est gardé : ses défauts se corrigent ensuite (dans Blender pour la 3D).
    */
-  async #produce(project: string, id: string): Promise<"model" | "integrate" | null> {
+  async #produce(
+    project: string,
+    id: string,
+  ): Promise<"model" | "integrate" | null> {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const progress = this.#generating.get(project)!.get(id)!;
@@ -774,11 +1216,24 @@ export class ArtService {
         let asset = readManifest(gameRoot).assets.find((a) => a.id === id);
         if (!asset?.prompts[0]) return null;
         const prompt = asset.prompts[0];
-        const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
-        const direction = asset.direction?.file && existsSync(join(root, asset.direction.file)) ? asset.direction : null;
-        const init = direction ? readFileSync(join(root, direction.file)) : null;
+        const [width, height] = (asset.format ?? "1024x1024")
+          .split("x")
+          .map(Number) as [number, number];
+        const direction =
+          asset.direction?.file && existsSync(join(root, asset.direction.file))
+            ? asset.direction
+            : null;
+        const init = direction
+          ? readFileSync(join(root, direction.file))
+          : null;
         const style = this.#styleOf(root, asset);
-        const fix = retouch && this.#kontext() && existsSync(join(root, retouch.file)) ? { image: readFileSync(join(root, retouch.file)), edit: retouch.edit } : null;
+        const fix =
+          retouch && this.#kontext() && existsSync(join(root, retouch.file))
+            ? {
+                image: readFileSync(join(root, retouch.file)),
+                edit: retouch.edit,
+              }
+            : null;
         const files: string[] = [];
         // Au premier tour, le croquis choisi est lui-même un candidat.
         if (direction && round === 1) files.push(direction.file);
@@ -787,14 +1242,31 @@ export class ArtService {
           const req = fix
             ? { prompt: fix.edit, edit: { images: [fix.image] } }
             : init
-              ? { prompt, init: { image: init, denoise: round === 1 ? 0.5 : 0.75 } }
+              ? {
+                  prompt,
+                  init: { image: init, denoise: round === 1 ? 0.5 : 0.75 },
+                }
               : style
                 ? { prompt: styled(prompt), edit: { images: [style] } }
                 : { prompt };
           progress.stage = "image";
-          progress.step = fix ? `Retouche ${v} sur ${VARIANTS} du meilleur essai` : direction ? `Variante ${v} sur ${VARIANTS} du croquis choisi` : `Essai ${v} sur ${VARIANTS}`;
-          const png = await this.#imagegen.generate({ width, height, seed: randomInt(2 ** 31), ...req });
-          const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, ".png");
+          progress.step = fix
+            ? `Retouche ${v} sur ${VARIANTS} du meilleur essai`
+            : direction
+              ? `Variante ${v} sur ${VARIANTS} du croquis choisi`
+              : `Essai ${v} sur ${VARIANTS}`;
+          const png = await this.#imagegen.generate({
+            width,
+            height,
+            seed: randomInt(2 ** 31),
+            ...req,
+          });
+          const file = this.#free(
+            root,
+            "production",
+            `${id.toLowerCase()}-t${round}-e${v}`,
+            ".png",
+          );
           writeAtomic(join(root, file), png);
           files.push(file);
           progress.preview = { kind: "art", file };
@@ -806,7 +1278,10 @@ export class ArtService {
         asset.renders.push(...files.filter((f) => !known.has(f)));
         this.#setStatus(asset, "a_valider");
         writeManifest(gameRoot, m);
-        await this.#commit(gameRoot, `art: ${files.length} essais pour ${id} (tour ${round})`);
+        await this.#commit(
+          gameRoot,
+          `art: ${files.length} essais pour ${id} (tour ${round})`,
+        );
 
         progress.step = "Le validateur compare les essais";
         const v = await this.#pick(project, asset, files, prompt);
@@ -820,13 +1295,41 @@ export class ArtService {
         const ok = v.ok || kept;
         // Le meilleur essai passe en dernier : c'est lui que la fiche montre.
         asset.renders = [...asset.renders.filter((r) => r !== best), best];
-        asset.verdict = { ok, summary: v.summary, points: v.points, prompt: v.prompt, file: best, by: "validator", at: this.#clock.now() };
+        asset.verdict = {
+          ok,
+          summary: v.summary,
+          points: v.points,
+          prompt: v.prompt,
+          file: best,
+          by: "validator",
+          at: this.#clock.now(),
+        };
         this.#setStatus(asset, ok && !to3d ? "valide" : "production");
-        if (!ok && v.prompt) asset.prompts = [v.prompt, ...asset.prompts.filter((p) => p !== v.prompt)].slice(0, 6);
-        retouch = !ok && v.edit && this.#kontext() ? { file: best, edit: v.edit } : null;
+        if (!ok && v.prompt)
+          asset.prompts = [
+            v.prompt,
+            ...asset.prompts.filter((p) => p !== v.prompt),
+          ].slice(0, 6);
+        retouch =
+          !ok && v.edit && this.#kontext()
+            ? { file: best, edit: v.edit }
+            : null;
         writeManifest(gameRoot, m);
-        await this.#commit(gameRoot, `art: ${id} ${ok ? (to3d ? "image de référence retenue" : "validé") : "à retoucher"} (validateur, tour ${round})`);
-        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "validator", round, kept } });
+        await this.#commit(
+          gameRoot,
+          `art: ${id} ${ok ? (to3d ? "image de référence retenue" : "validé") : "à retoucher"} (validateur, tour ${round})`,
+        );
+        this.#journal.append({
+          project,
+          actor: {
+            kind: "agent",
+            role: "art_director",
+            run: this.#orchestrator.name,
+          },
+          type: ok ? "art.asset_validated" : "art.asset_rejected",
+          subject: id,
+          payload: { by: "validator", round, kept },
+        });
         this.#insert(
           project,
           "art",
@@ -853,7 +1356,12 @@ export class ArtService {
         if (ok) return to3d ? "model" : "integrate";
       }
     } catch (err) {
-      this.#insert(project, "art", `Le générateur n'a pas pu fabriquer ${id} : ${(err as Error).message.slice(0, 300)}. Vous pouvez relancer depuis sa fiche.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Le générateur n'a pas pu fabriquer ${id} : ${(err as Error).message.slice(0, 300)}. Vous pouvez relancer depuis sa fiche.`,
+        null,
+      );
       const m = readManifest(gameRoot);
       const a = m.assets.find((x) => x.id === id);
       if (a?.status === "a_valider") {
@@ -872,7 +1380,11 @@ export class ArtService {
 
   /** L'image de la référence de style de l'asset, si Kontext peut s'en servir. */
   #styleOf(root: string, asset: Asset): Buffer | null {
-    return asset.styleRef && this.#kontext() && existsSync(join(root, asset.styleRef)) ? readFileSync(join(root, asset.styleRef)) : null;
+    return asset.styleRef &&
+      this.#kontext() &&
+      existsSync(join(root, asset.styleRef))
+      ? readFileSync(join(root, asset.styleRef))
+      : null;
   }
 
   // ── Atelier 3D (ADR-47, ADR-49) ──
@@ -880,25 +1392,44 @@ export class ArtService {
   /** Ce qui manque à l'atelier 3D, en clair, ou null s'il est prêt. Un objet simple n'a pas besoin de Tripo. */
   #missing3d(simple = false): string | null {
     const s = this.#model3d.state();
-    const missing = [s.blender.installed ? "" : "installez Blender", s.tripo.configured || simple ? "" : "ajoutez votre clé Tripo"].filter(Boolean);
-    return missing.length ? missing.join(" et ").replace(/^./, (c) => c.toUpperCase()) : null;
+    const missing = [
+      s.blender.installed ? "" : "installez Blender",
+      s.tripo.configured || simple ? "" : "ajoutez votre clé Tripo",
+    ].filter(Boolean);
+    return missing.length
+      ? missing.join(" et ").replace(/^./, (c) => c.toUpperCase())
+      : null;
   }
 
   #startModel(project: string, id: string): void {
-    const simple = !!readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.model3d?.simple;
+    const simple = !!readManifest(this.#projects.get(project).root).assets.find(
+      (a) => a.id === id,
+    )?.model3d?.simple;
     const missing = this.#missing3d(simple);
     if (missing) {
-      this.#insert(project, "art", `La 3D de ${id} attend l'atelier 3D : ${missing.toLowerCase()} (onglet Visuels). Elle partira d'un clic sur « Fabriquer la 3D ».`, null);
+      this.#insert(
+        project,
+        "art",
+        `La 3D de ${id} attend l'atelier 3D : ${missing.toLowerCase()} (onglet Visuels). Elle partira d'un clic sur « Fabriquer la 3D ».`,
+        null,
+      );
       return;
     }
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
-    gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: "Préparation de la 3D" });
+    gens.set(id, {
+      asset: id,
+      round: 1,
+      rounds: MODEL_ROUNDS,
+      step: "Préparation de la 3D",
+    });
     this.#generating.set(project, gens);
     this.#track(
       this.#produceModel(project, id)
         .finally(() => gens.delete(id))
-        .then((ok) => (ok ? this.#autoIntegrate(project, id, "system") : undefined)),
+        .then((ok) =>
+          ok ? this.#autoIntegrate(project, id, "system") : undefined,
+        ),
     );
   }
 
@@ -917,7 +1448,11 @@ export class ArtService {
       const asset = readManifest(gameRoot).assets.find((a) => a.id === id);
       if (!asset?.model3d) return false;
       const spec = asset.model3d;
-      const source = spec.simple ? null : asset.verdict?.ok ? asset.verdict.file : null;
+      const source = spec.simple
+        ? null
+        : asset.verdict?.ok
+          ? asset.verdict.file
+          : null;
       if (!spec.simple && !source) return false;
       let credits = 0;
       let animations: string[] = [];
@@ -925,11 +1460,18 @@ export class ArtService {
       // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
       const planche: string[] = [];
       // Figurine sur une scène déjà faite et payée (squelette et animations de Tripo) : on la reprend, sans Tripo (ADR-53).
-      const reuse = !!spec.figurine && !!asset.model?.rigType && existsSync(join(dir, "scene.blend"));
+      const reuse =
+        !!spec.figurine &&
+        !!asset.model?.rigType &&
+        existsSync(join(dir, "scene.blend"));
       if (reuse) {
         animations = asset.model!.animations;
         rigType = asset.model!.rigType ?? null;
-        planche.push(...(asset.model!.views ?? []).filter((f) => existsSync(join(root, f))));
+        planche.push(
+          ...(asset.model!.views ?? []).filter((f) =>
+            existsSync(join(root, f)),
+          ),
+        );
       }
       if (source && !reuse) {
         const t = await this.#model3d.tripo({
@@ -943,8 +1485,18 @@ export class ArtService {
           },
           views: (views, round) => {
             progress.stage = "planche";
-            progress.step = round === 1 ? "Le validateur regarde la planche" : "Le validateur regarde la planche retouchée";
-            return this.#reviewViews(project, asset, source, views, round, planche);
+            progress.step =
+              round === 1
+                ? "Le validateur regarde la planche"
+                : "Le validateur regarde la planche retouchée";
+            return this.#reviewViews(
+              project,
+              asset,
+              source,
+              views,
+              round,
+              planche,
+            );
           },
         });
         if (!t.views) planche.length = 0;
@@ -959,20 +1511,53 @@ export class ArtService {
         }
       }
       const move = (a: string) => a.split(":").pop();
-      const missingAnimations = spec.animations.filter((w) => !animations.some((a) => move(a) === move(w) || (move(w) === "walk" && move(a) === "march")));
+      const missingAnimations = spec.animations.filter(
+        (w) =>
+          !animations.some(
+            (a) =>
+              move(a) === move(w) ||
+              (move(w) === "walk" && move(a) === "march"),
+          ),
+      );
       progress.stage = "atelier";
       if (reuse) {
-        progress.step = "L'atelier reprend la scène déjà payée : le corps de Tripo devient un calque";
+        progress.step =
+          "L'atelier reprend la scène déjà payée : le corps de Tripo devient un calque";
         await this.#model3d.calque(dir);
       } else {
         progress.step = "Blender prépare la scène de l'atelier";
-        await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+        await this.#model3d.prepare({
+          dir,
+          input: raws[0] ?? null,
+          extras: raws.slice(1),
+          animations,
+          spec,
+          palette: paletteOf(asset),
+        });
       }
       // Ce que l'artisan lit : la fiche, la bible et l'image de référence, copiées dans son dossier.
-      writeAtomic(join(dir, "fiche.json"), JSON.stringify({ id: asset.id, name: asset.name, type: asset.type, usage: asset.usage, specs: asset.specs, model3d: spec }, null, 2));
-      if (existsSync(join(root, "bible.md"))) copyFileSync(join(root, "bible.md"), join(dir, "bible.md"));
-      const reference = source ? `reference${extname(source).toLowerCase()}` : null;
-      if (source && reference) copyFileSync(join(root, source), join(dir, reference));
+      writeAtomic(
+        join(dir, "fiche.json"),
+        JSON.stringify(
+          {
+            id: asset.id,
+            name: asset.name,
+            type: asset.type,
+            usage: asset.usage,
+            specs: asset.specs,
+            model3d: spec,
+          },
+          null,
+          2,
+        ),
+      );
+      if (existsSync(join(root, "bible.md")))
+        copyFileSync(join(root, "bible.md"), join(dir, "bible.md"));
+      const reference = source
+        ? `reference${extname(source).toLowerCase()}`
+        : null;
+      if (source && reference)
+        copyFileSync(join(root, source), join(dir, reference));
       const sheet = planche.map((f, k) => {
         const name = `vue-${VIEW_FR[k]}${extname(f)}`;
         copyFileSync(join(root, f), join(dir, name));
@@ -982,41 +1567,108 @@ export class ArtService {
       let remarks: string[] = [];
       for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
         progress.round = pass;
-        const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
+        const workshop = await this.#artisan(
+          project,
+          asset,
+          dir,
+          reference,
+          sheet,
+          remarks,
+          progress,
+        );
         progress.stage = "controle";
         progress.note = null;
         progress.step = "Blender exporte le modèle aux mesures du jeu";
-        const file = this.#free(root, "models", `${id.toLowerCase()}-3d`, ".glb");
+        const file = this.#free(
+          root,
+          "models",
+          `${id.toLowerCase()}-3d`,
+          ".glb",
+        );
         const prefix = file.slice("models/".length, -".glb".length);
         mkdirSync(join(root, "production"), { recursive: true });
-        const done = await this.#model3d.export({ dir, output: join(root, file), rendersDir: join(root, "production"), prefix, spec });
-        const renders = done.renders.map((r) => relative(root, r).replace(/\\/g, "/"));
+        const done = await this.#model3d.export({
+          dir,
+          output: join(root, file),
+          rendersDir: join(root, "production"),
+          prefix,
+          spec,
+        });
+        const renders = done.renders.map((r) =>
+          relative(root, r).replace(/\\/g, "/"),
+        );
         let m = readManifest(gameRoot);
         let a = m.assets.find((x) => x.id === id);
         if (!a) return false;
-        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, missingAnimations, verdict: null };
+        a.model = {
+          file,
+          source,
+          ...(planche.length ? { views: [...planche] } : {}),
+          renders,
+          tris: done.tris,
+          dims: done.dims,
+          animations: done.animations,
+          workshop,
+          rigType,
+          missingAnimations,
+          verdict: null,
+        };
         this.#setStatus(a, "a_valider");
         writeManifest(gameRoot, m);
-        await this.#commit(gameRoot, `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`);
+        await this.#commit(
+          gameRoot,
+          `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`,
+        );
 
         progress.step = "Le validateur regarde le modèle sous tous les angles";
         progress.preview = { kind: "art", file: renders[1] ?? renders[0]! };
-        const v = await this.#judgeModel(project, a, source, planche, renders, done, spec);
+        const v = await this.#judgeModel(
+          project,
+          a,
+          source,
+          planche,
+          renders,
+          done,
+          spec,
+        );
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
-        a.model.verdict = { ok: v.ok, summary: v.summary, points: v.points, prompt: null, file, by: "validator", at: this.#clock.now() };
+        a.model.verdict = {
+          ok: v.ok,
+          summary: v.summary,
+          points: v.points,
+          prompt: null,
+          file,
+          by: "validator",
+          at: this.#clock.now(),
+        };
         this.#setStatus(a, v.ok ? "valide" : "production");
         writeManifest(gameRoot, m);
-        await this.#commit(gameRoot, `art: modèle 3D de ${id} ${v.ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
-        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: v.ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits } });
+        await this.#commit(
+          gameRoot,
+          `art: modèle 3D de ${id} ${v.ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`,
+        );
+        this.#journal.append({
+          project,
+          actor: {
+            kind: "agent",
+            role: "art_director",
+            run: this.#orchestrator.name,
+          },
+          type: v.ok ? "art.model_validated" : "art.model_rejected",
+          subject: id,
+          payload: { pass, credits },
+        });
         const retry = !v.ok && v.forme_ok && pass < MODEL_ROUNDS;
         this.#insert(
           project,
           "art",
           [
             ...renders.map((r) => `${IMAGE_MARK}${r}`),
-            v.ok ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}` : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${MODEL_ROUNDS}). ${v.summary}`,
+            v.ok
+              ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}`
+              : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${MODEL_ROUNDS}). ${v.summary}`,
             ...v.points.map((p) => `- ${p}`),
             workshop ? `Dans Blender : ${workshop}` : "",
             `${done.dims.map((d) => `${d} m`).join(" × ")}, ${done.tris} triangles${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}${credits && pass === 1 ? ` · ${credits} crédits Tripo` : ""}.`,
@@ -1040,7 +1692,12 @@ export class ArtService {
         remarks = v.points.length ? v.points : [v.summary];
       }
     } catch (err) {
-      this.#insert(project, "art", `L'atelier 3D n'a pas pu fabriquer ${id} : ${(err as Error).message.slice(0, 300)}. Vous pouvez relancer depuis sa fiche (« Fabriquer la 3D »).`, null);
+      this.#insert(
+        project,
+        "art",
+        `L'atelier 3D n'a pas pu fabriquer ${id} : ${(err as Error).message.slice(0, 300)}. Vous pouvez relancer depuis sa fiche (« Fabriquer la 3D »).`,
+        null,
+      );
       const m = readManifest(gameRoot);
       const a = m.assets.find((x) => x.id === id);
       if (a?.status === "a_valider") {
@@ -1057,18 +1714,33 @@ export class ArtService {
    * La planche de Tripo (ADR-50) : rangée dans production/, jugée par le validateur, montrée dans la discussion. Au premier
    * passage, les retouches demandées repartent chez Tripo ; au second (planche retouchée), le jugement est seulement dit.
    */
-  async #reviewViews(project: string, asset: Asset, source: string, views: ViewImage[], round: number, saved: string[]): Promise<ViewEdit[]> {
+  async #reviewViews(
+    project: string,
+    asset: Asset,
+    source: string,
+    views: ViewImage[],
+    round: number,
+    saved: string[],
+  ): Promise<ViewEdit[]> {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const files = views.map((v, k) => {
-      const file = this.#free(root, "production", `${asset.id.toLowerCase()}-planche-${VIEW_FR[k]}`, imageExt(v.image));
+      const file = this.#free(
+        root,
+        "production",
+        `${asset.id.toLowerCase()}-planche-${VIEW_FR[k]}`,
+        imageExt(v.image),
+      );
       writeAtomic(join(root, file), v.image);
       return file;
     });
     saved.splice(0, saved.length, ...files);
     const progress = this.#generating.get(project)?.get(asset.id);
     if (progress) progress.preview = { kind: "art", file: files[0]! };
-    await this.#commit(gameRoot, `art: planche de ${asset.id}${round > 1 ? " retouchée" : ""}`);
+    await this.#commit(
+      gameRoot,
+      `art: planche de ${asset.id}${round > 1 ? " retouchée" : ""}`,
+    );
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(asset.id);
     this.#validating.set(project, busy);
@@ -1079,7 +1751,9 @@ export class ArtService {
           `Planche de l'asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}. Spécifications : ${asset.specs || "aucune"}.`,
           `Image de référence : ${source}`,
           ...views.map((v, k) => `Vue ${VIEW_FR[k]} (${v.view}) : ${files[k]}`),
-          round > 1 ? "C'est la planche déjà retouchée : juge-la, sans nouvelle retouche." : "",
+          round > 1
+            ? "C'est la planche déjà retouchée : juge-la, sans nouvelle retouche."
+            : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -1088,8 +1762,18 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { ok: boolean; summary: string; points: string[]; edits: ViewEdit[] };
-      const edits = round === 1 && !v.ok ? (v.edits ?? []).filter((e) => VIEW_EN.includes(e.view) && e.prompt?.trim()).slice(0, 4) : [];
+      const v = data as {
+        ok: boolean;
+        summary: string;
+        points: string[];
+        edits: ViewEdit[];
+      };
+      const edits =
+        round === 1 && !v.ok
+          ? (v.edits ?? [])
+              .filter((e) => VIEW_EN.includes(e.view) && e.prompt?.trim())
+              .slice(0, 4)
+          : [];
       this.#insert(
         project,
         "art",
@@ -1110,7 +1794,15 @@ export class ArtService {
   }
 
   /** L'artisan 3D, pas à pas : il regarde, écrit un peu de Python, le hub l'exécute et lui rend sortie, mesures et photos. */
-  async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating): Promise<string> {
+  async #artisan(
+    project: string,
+    asset: Asset,
+    dir: string,
+    reference: string | null,
+    sheet: string[],
+    remarks: string[],
+    progress: Generating,
+  ): Promise<string> {
     const journal: string[] = [];
     const spec = asset.model3d!;
     const steps = spec.figurine ? FIGURINE_STEPS : WORKSHOP_STEPS;
@@ -1119,36 +1811,67 @@ export class ArtService {
     let shots = await this.#model3d.photos({ dir, prefix: "photo-0" });
     // La capture montrée dans l'onglet Visuels : la photo de trois-quarts la plus récente.
     const show = () => {
-      const p = shots.photos.find((f) => /trois-quarts/.test(f)) ?? shots.photos[0];
+      const p =
+        shots.photos.find((f) => /trois-quarts/.test(f)) ?? shots.photos[0];
       if (p) progress.preview = { kind: "atelier", file: basename(p) };
     };
     show();
+    let lost = 0;
     for (let step = 1; step <= steps; step++) {
       progress.step = `L'artisan 3D ${spec.figurine ? "construit la figurine" : "retouche"} dans Blender (pas ${step} sur ${steps})`;
-      const { data } = await this.#orchestrator.structured({
-        systemPrompt: WORKSHOP_SYSTEM,
-        prompt: [
-          `Asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}`,
-          `Spécifications : ${asset.specs || "aucune"}`,
-          `Palette de la fiche (variable palette) : ${paletteOf(asset).join(", ") || "aucune : lis la bible"}`,
-          `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ""}${spec.figurine ? ", MODE FIGURINE : construis-le en pièces accrochées aux os, le corps de Tripo n'est qu'un calque" : ""}.`,
-          reference ? `Image de référence : ${reference}` : "Pas d'image de référence : suis la fiche et la bible.",
-          sheet.length ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}` : "",
-          remarks.length ? `Le validateur a refusé la passe précédente ; corrige ceci :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
-          journal.length ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}` : "",
-          `Photos actuelles (à regarder avec Read) : ${shots.photos.map((p) => basename(p)).join(", ")}`,
-          `Mesures actuelles : ${JSON.stringify(shots.mesures).slice(0, 3000)}`,
-          `Pas ${step} sur ${steps}.`,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-        jsonSchema: WORKSHOP_STEP_SCHEMA,
-        readDir: dir,
-        // Son propre modèle, réglable à part (ADR-52) : Fable par défaut.
-        role: "artisan",
-        meta: { project, agent: "art_director" },
-      });
-      const s = data as { note: string; code: string | null; photos: boolean; fini: boolean; summary: string };
+      let data: unknown;
+      try {
+        ({ data } = await this.#orchestrator.structured({
+          systemPrompt: WORKSHOP_SYSTEM,
+          prompt: [
+            `Asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}`,
+            `Spécifications : ${asset.specs || "aucune"}`,
+            `Palette de la fiche (variable palette) : ${paletteOf(asset).join(", ") || "aucune : lis la bible"}`,
+            `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ""}${spec.figurine ? ", MODE FIGURINE : construis-le en pièces accrochées aux os, le corps de Tripo n'est qu'un calque" : ""}.`,
+            reference
+              ? `Image de référence : ${reference}`
+              : "Pas d'image de référence : suis la fiche et la bible.",
+            sheet.length
+              ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}`
+              : "",
+            remarks.length
+              ? `Le validateur a refusé la passe précédente ; corrige ceci :\n${remarks.map((r) => `- ${r}`).join("\n")}`
+              : "",
+            journal.length
+              ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}`
+              : "",
+            lost
+              ? "Ton pas précédent n'a pas abouti (trop long) : fais un pas plus petit et ne relis que les photos utiles."
+              : "",
+            `Photos actuelles (à regarder avec Read) : ${shots.photos.map((p) => basename(p)).join(", ")}`,
+            `Mesures actuelles : ${JSON.stringify(shots.mesures).slice(0, 3000)}`,
+            `Pas ${step} sur ${steps}.`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          jsonSchema: WORKSHOP_STEP_SCHEMA,
+          readDir: dir,
+          // Son propre modèle, réglable à part (ADR-52) : Fable par défaut.
+          role: "artisan",
+          meta: { project, agent: "art_director" },
+        }));
+      } catch (err) {
+        // Un pas perdu ne perd pas la scène, enregistrée après chaque code. Au second échec de suite, on exporte ce qui est
+        // fait et le validateur juge.
+        const why = (err as Error).message.slice(0, 120);
+        if (++lost >= 2)
+          return `Interrompu au pas ${step} (${why}) ; la scène est exportée telle quelle.`;
+        journal.push(`Pas ${step} : sans réponse (${why}).`);
+        continue;
+      }
+      lost = 0;
+      const s = data as {
+        note: string;
+        code: string | null;
+        photos: boolean;
+        fini: boolean;
+        summary: string;
+      };
       progress.note = String(s.note ?? "").slice(0, 400) || null;
       let line = `Pas ${step} : ${String(s.note ?? "").slice(0, 400)}`;
       if (s.code?.trim()) {
@@ -1174,7 +1897,12 @@ export class ArtService {
     renders: string[],
     done: { dims: number[]; tris: number; animations: string[] },
     spec: Model3DSpec,
-  ): Promise<{ ok: boolean; forme_ok: boolean; summary: string; points: string[] }> {
+  ): Promise<{
+    ok: boolean;
+    forme_ok: boolean;
+    summary: string;
+    points: string[];
+  }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(a.id);
     this.#validating.set(project, busy);
@@ -1183,10 +1911,16 @@ export class ArtService {
         systemPrompt: MODEL_VALIDATOR_SYSTEM,
         prompt: [
           `Modèle 3D de l'asset ${a.id} « ${a.name} » (${a.type}). Usage : ${a.usage}. Spécifications : ${a.specs || "aucune"}.`,
-          source ? `Image validée qui a servi de modèle : ${source}` : "Objet simple, modélisé directement dans Blender d'après la fiche (pas d'image de départ).",
-          planche.length ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}` : "",
+          source
+            ? `Image validée qui a servi de modèle : ${source}`
+            : "Objet simple, modélisé directement dans Blender d'après la fiche (pas d'image de départ).",
+          planche.length
+            ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}`
+            : "",
           `Photos (face, trois-quarts, profil, dos, poses d'animation, vue de jeu) : ${renders.join(", ")}`,
-          a.model3d?.figurine ? "Figurine : des pièces nettes accrochées aux os, voulues ainsi (pas de texture)." : "",
+          a.model3d?.figurine
+            ? "Figurine : des pièces nettes accrochées aux os, voulues ainsi (pas de texture)."
+            : "",
           `Mesures : ${done.dims.map((d) => `${d} m`).join(" × ")} (demandé : ${spec.size} m pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
         ].join("\n"),
         jsonSchema: MODEL_SCHEMA,
@@ -1194,8 +1928,18 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const d = data as { ok: boolean; forme_ok?: boolean; summary: string; points: string[] };
-      return { ok: !!d.ok, forme_ok: d.forme_ok !== false, summary: String(d.summary ?? "").slice(0, 400), points: (d.points ?? []).slice(0, 8) };
+      const d = data as {
+        ok: boolean;
+        forme_ok?: boolean;
+        summary: string;
+        points: string[];
+      };
+      return {
+        ok: !!d.ok,
+        forme_ok: d.forme_ok !== false,
+        summary: String(d.summary ?? "").slice(0, 400),
+        points: (d.points ?? []).slice(0, 8),
+      };
     } finally {
       busy.delete(a.id);
     }
@@ -1207,20 +1951,38 @@ export class ArtService {
     asset: Asset,
     files: string[],
     prompt: string,
-  ): Promise<{ best: number; ok: boolean; usable: boolean; summary: string; points: string[]; prompt: string | null; edit: string | null }> {
+  ): Promise<{
+    best: number;
+    ok: boolean;
+    usable: boolean;
+    summary: string;
+    points: string[];
+    prompt: string | null;
+    edit: string | null;
+  }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(asset.id);
     this.#validating.set(project, busy);
     try {
       const { data } = await this.#orchestrator.structured({
-        systemPrompt: asset.model3d ? REFERENCE_VALIDATOR_SYSTEM : VALIDATOR_SYSTEM,
+        systemPrompt: asset.model3d
+          ? REFERENCE_VALIDATOR_SYSTEM
+          : VALIDATOR_SYSTEM,
         prompt: [
           `Le générateur local (Flux) a fait ${files.length} essais pour l'asset ${asset.id} « ${asset.name} » (${asset.type}). Regarde-les tous :`,
           ...files.map((f, k) => `${k + 1}. ${f}`),
-          asset.direction ? `Croquis choisi par le directeur créatif (la direction à suivre) : ${asset.direction.file}` : "",
-          asset.styleRef ? `Référence de style (l'asset doit en avoir l'air de famille) : ${asset.styleRef}` : "",
-          this.#kontext() ? "Flux Kontext est prêt : tu peux proposer une retouche (edit)." : "",
-          asset.model3d ? "Choisis le meilleur (best) comme modèle pour la 3D, puis juge sa forme seule." : "Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer dans le jeu.",
+          asset.direction
+            ? `Croquis choisi par le directeur créatif (la direction à suivre) : ${asset.direction.file}`
+            : "",
+          asset.styleRef
+            ? `Référence de style (l'asset doit en avoir l'air de famille) : ${asset.styleRef}`
+            : "",
+          this.#kontext()
+            ? "Flux Kontext est prêt : tu peux proposer une retouche (edit)."
+            : "",
+          asset.model3d
+            ? "Choisis le meilleur (best) comme modèle pour la 3D, puis juge sa forme seule."
+            : "Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer dans le jeu.",
           `Usage : ${asset.usage}`,
           `Spécifications : ${asset.specs || "aucune"}`,
           `Prompt utilisé (Flux) : ${prompt}`,
@@ -1232,7 +1994,15 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { best: number; ok: boolean; usable?: boolean; summary: string; points: string[]; prompt: string | null; edit?: string | null };
+      const v = data as {
+        best: number;
+        ok: boolean;
+        usable?: boolean;
+        summary: string;
+        points: string[];
+        prompt: string | null;
+        edit?: string | null;
+      };
       return {
         best: Number(v.best) || 1,
         ok: !!v.ok,
@@ -1264,27 +2034,65 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { ok: boolean; summary: string; points: string[]; prompt: string | null };
+      const v = data as {
+        ok: boolean;
+        summary: string;
+        points: string[];
+        prompt: string | null;
+      };
       // Le manifeste a pu bouger pendant le jugement : on relit avant d'écrire.
       const m = readManifest(gameRoot);
       const a = m.assets.find((x) => x.id === id);
       if (!a || a.renders.at(-1) !== file) return; // un rendu plus récent a été déposé : c'est lui qui compte
-      const verdict: Verdict = { ok: !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 8), prompt: v.prompt ?? null, file, by: "validator", at: this.#clock.now() };
+      const verdict: Verdict = {
+        ok: !!v.ok,
+        summary: String(v.summary ?? "").slice(0, 400),
+        points: (v.points ?? []).slice(0, 8),
+        prompt: v.prompt ?? null,
+        file,
+        by: "validator",
+        at: this.#clock.now(),
+      };
       a.verdict = verdict;
       const to3d = !!a.model3d;
       this.#setStatus(a, verdict.ok && !to3d ? "valide" : "production");
-      if (!verdict.ok && verdict.prompt) a.prompts = [verdict.prompt, ...a.prompts.filter((p) => p !== verdict.prompt)].slice(0, 6);
+      if (!verdict.ok && verdict.prompt)
+        a.prompts = [
+          verdict.prompt,
+          ...a.prompts.filter((p) => p !== verdict.prompt),
+        ].slice(0, 6);
       writeManifest(gameRoot, m);
-      await this.#commit(gameRoot, `art: ${id} ${verdict.ok ? (to3d ? "image validée" : "validé") : "à retoucher"} (validateur)`);
-      this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: verdict.ok ? "art.asset_validated" : "art.asset_rejected", subject: id, payload: { by: "validator" } });
+      await this.#commit(
+        gameRoot,
+        `art: ${id} ${verdict.ok ? (to3d ? "image validée" : "validé") : "à retoucher"} (validateur)`,
+      );
+      this.#journal.append({
+        project,
+        actor: {
+          kind: "agent",
+          role: "art_director",
+          run: this.#orchestrator.name,
+        },
+        type: verdict.ok ? "art.asset_validated" : "art.asset_rejected",
+        subject: id,
+        payload: { by: "validator" },
+      });
       this.#insert(
         project,
         "art",
         [
           `${IMAGE_MARK}${file}`,
-          verdict.ok ? `**${id} « ${a.name} » : conforme.** ${verdict.summary}` : `**${id} « ${a.name} » : à retoucher.** ${verdict.summary}`,
+          verdict.ok
+            ? `**${id} « ${a.name} » : conforme.** ${verdict.summary}`
+            : `**${id} « ${a.name} » : à retoucher.** ${verdict.summary}`,
           ...verdict.points.map((p) => `- ${p}`),
-          verdict.ok ? (to3d ? "Image validée : elle part à l'atelier 3D." : "Je le fais intégrer dans le jeu.") : verdict.prompt ? "Le prompt corrigé est en tête de sa fiche." : "",
+          verdict.ok
+            ? to3d
+              ? "Image validée : elle part à l'atelier 3D."
+              : "Je le fais intégrer dans le jeu."
+            : verdict.prompt
+              ? "Le prompt corrigé est en tête de sa fiche."
+              : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -1293,7 +2101,12 @@ export class ArtService {
       if (verdict.ok && to3d) this.#startModel(project, id);
       else if (verdict.ok) await this.#autoIntegrate(project, id, "system");
     } catch (err) {
-      this.#insert(project, "art", `Le validateur n'a pas pu juger ${file} : ${(err as Error).message.slice(0, 300)}. Vous pouvez trancher vous-même depuis la fiche.`, null);
+      this.#insert(
+        project,
+        "art",
+        `Le validateur n'a pas pu juger ${file} : ${(err as Error).message.slice(0, 300)}. Vous pouvez trancher vous-même depuis la fiche.`,
+        null,
+      );
     } finally {
       busy.delete(id);
     }
@@ -1326,16 +2139,41 @@ export class ArtService {
 
   async #commit(gameRoot: string, message: string): Promise<void> {
     try {
-      await this.#vcs.commitPaths(gameRoot, [ART_DIR.replace(/\\/g, "/")], message.slice(0, 200));
+      await this.#vcs.commitPaths(
+        gameRoot,
+        [ART_DIR.replace(/\\/g, "/")],
+        message.slice(0, 200),
+      );
     } catch {
       /* dépôt indisponible un instant : le prochain commit emportera les fichiers */
     }
   }
 
-  #insert(project: string, role: ArtMessage["role"], text: string, cost: number | null): ArtMessage {
-    const row = this.#db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM art_messages WHERE project = ?").get(project) as { next: number };
-    const m: ArtMessage = { id: randomUUID(), project, seq: row.next, role, text, at: this.#clock.now(), cost_usd: cost };
-    this.#db.prepare("INSERT INTO art_messages (id, project, seq, role, text, at, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)").run(m.id, project, m.seq, role, text, m.at, cost);
+  #insert(
+    project: string,
+    role: ArtMessage["role"],
+    text: string,
+    cost: number | null,
+  ): ArtMessage {
+    const row = this.#db
+      .prepare(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM art_messages WHERE project = ?",
+      )
+      .get(project) as { next: number };
+    const m: ArtMessage = {
+      id: randomUUID(),
+      project,
+      seq: row.next,
+      role,
+      text,
+      at: this.#clock.now(),
+      cost_usd: cost,
+    };
+    this.#db
+      .prepare(
+        "INSERT INTO art_messages (id, project, seq, role, text, at, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(m.id, project, m.seq, role, text, m.at, cost);
     return m;
   }
 
@@ -1345,9 +2183,19 @@ export class ArtService {
   }
 
   /** Une photo de travail de l'atelier Blender (hors du dépôt), pour suivre l'artisan depuis l'onglet Visuels. */
-  atelierFile(project: string, id: string, name: string): { path: string; mime: string } {
+  atelierFile(
+    project: string,
+    id: string,
+    name: string,
+  ): { path: string; mime: string } {
     this.#projects.get(project);
-    if (!/^A-\d{4,}$/.test(id) || !/^photo-\d+-(face|trois-quarts|profil|dos|vue-jeu|pose-[a-z0-9_-]{1,30})\.png$/.test(name)) throw new ArtError("Photo refusée");
+    if (
+      !/^A-\d{4,}$/.test(id) ||
+      !/^photo-\d+-(face|trois-quarts|profil|dos|vue-jeu|pose-[a-z0-9_-]{1,30})\.png$/.test(
+        name,
+      )
+    )
+      throw new ArtError("Photo refusée");
     const path = join(this.#model3d.atelier(`${project}-${id}`), name);
     if (!existsSync(path)) throw new ArtError("Photo introuvable");
     return { path, mime: "image/png" };
@@ -1367,28 +2215,42 @@ export class ArtService {
 /** Chemin relatif sûr, à l'intérieur de studio/art : ni absolu, ni « .. ». */
 export function safeRel(rel: string): boolean {
   if (!rel || rel.length > 300 || /^[a-z]:|^[\\/]/i.test(rel)) return false;
-  return rel.split(/[\\/]/).every((part) => part !== "" && part !== "." && part !== "..");
+  return rel
+    .split(/[\\/]/)
+    .every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
-export const sketchQuestion = (id: string, name: string) => `Quel croquis pour ${id} « ${name} » ?`;
-const SKETCH_ANSWER = /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
+export const sketchQuestion = (id: string, name: string) =>
+  `Quel croquis pour ${id} « ${name} » ?`;
+const SKETCH_ANSWER =
+  /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
 
 /** Un nouveau sujet dans le style de l'image de référence (Flux Kontext). */
-const styled = (prompt: string) => `Using exactly the same art style, rendering, palette and level of detail as this image, draw a new, different subject: ${prompt}`;
+const styled = (prompt: string) =>
+  `Using exactly the same art style, rendering, palette and level of detail as this image, draw a new, different subject: ${prompt}`;
 
 /**
  * « A-0002 » → l'image retenue de cet asset (verdict, sinon croquis choisi) ; « moodboard/x.png » → ce fichier s'il existe.
  * Un asset ne se prend pas lui-même pour référence.
  */
-function resolveRef(assets: Asset[], root: string, ref: string, self: string): string | null {
+function resolveRef(
+  assets: Asset[],
+  root: string,
+  ref: string,
+  self: string,
+): string | null {
   const id = /^A-\d{4,}$/i.exec(ref)?.[0]?.toUpperCase();
   if (id) {
     const a = id === self ? null : assets.find((x) => x.id === id);
     const file = a?.verdict?.ok ? a.verdict.file : (a?.direction?.file ?? null);
     return file && existsSync(join(root, file)) ? file : null;
   }
-  return safeRel(ref) && IMAGE_MIME[extname(ref).toLowerCase()] && existsSync(join(root, ref)) ? ref : null;
+  return safeRel(ref) &&
+    IMAGE_MIME[extname(ref).toLowerCase()] &&
+    existsSync(join(root, ref))
+    ? ref
+    : null;
 }
 
 /** Les vues de la planche, dans l'ordre de Tripo, et leur nom en clair. */
@@ -1402,11 +2264,17 @@ function imageExt(b: Buffer): string {
 
 /** Les couleurs de la fiche (codes hexadécimaux), que l'artisan 3D utilise pour repeindre. */
 export function paletteOf(asset: Pick<Asset, "specs" | "usage">): string[] {
-  return [...new Set(`${asset.specs} ${asset.usage}`.match(/#[0-9a-f]{6}\b/gi) ?? [])].map((c) => c.toUpperCase()).slice(0, 12);
+  return [
+    ...new Set(`${asset.specs} ${asset.usage}`.match(/#[0-9a-f]{6}\b/gi) ?? []),
+  ]
+    .map((c) => c.toUpperCase())
+    .slice(0, 12);
 }
 
 function renderArtHistory(history: ArtMessage[]): string {
-  const lines = history.map((m) => `<message de="${m.role === "human" ? "directeur créatif" : "toi (Directeur artistique)"}">\n${m.text.replaceAll(IMAGE_MARK, "Image : ")}\n</message>`);
+  const lines = history.map(
+    (m) =>
+      `<message de="${m.role === "human" ? "directeur créatif" : "toi (Directeur artistique)"}">\n${m.text.replaceAll(IMAGE_MARK, "Image : ")}\n</message>`,
+  );
   return `Discussion jusqu'ici (la dernière est celle à laquelle tu réponds) :\n\n${lines.join("\n\n")}\n\nRéponds au dernier message du directeur créatif. Si des images y sont citées, regarde-les d'abord (Read).`;
 }
-
