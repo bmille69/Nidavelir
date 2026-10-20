@@ -31,9 +31,9 @@ export interface OrchestratorPort {
     tools?: string[];
     /** « concept » : modèle dédié à la conception (plus puissant, appels rares). */
     tier?: "concept";
-    /** Dossier à lire, et « art » pour le modèle du Directeur artistique (validateur, ADR-43). */
+    /** Dossier à lire, et « art » pour le modèle du Directeur artistique (validateur, ADR-43), « artisan » pour l'artisan 3D (ADR-52). */
     readDir?: string;
-    role?: "art";
+    role?: "art" | "artisan";
   }): Promise<{
     data: unknown;
     costUsd: number | null;

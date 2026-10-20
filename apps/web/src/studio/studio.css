@@ -1291,3 +1291,18 @@
   .express-feed { max-height: 260px; }
   .express-improve { flex-direction: column; align-items: stretch; }
 }
+
+/* Avancement de la fabrication d'un visuel (ADR-52) */
+.art-progress { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.55rem 0.65rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); }
+.art-progress.live { border-color: var(--accent-soft); }
+.art-steps { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.art-steps li { counter-increment: step; font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.art-steps li::before { content: counter(step) ". "; }
+.art-steps li.done { color: var(--ok); border-color: var(--ok-bg); background: var(--ok-bg); }
+.art-steps li.done::before { content: "✓ "; }
+.art-steps li.here { color: var(--text); border-color: var(--border-strong); }
+.art-steps li.now { color: var(--accent-text); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.art-progress-body { display: flex; gap: 0.65rem; align-items: flex-start; }
+.art-progress-body p { margin: 0; }
+.art-progress-shot img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.art-progress-note { color: var(--text-2); font-style: italic; margin-top: 0.25rem !important; }

@@ -74,7 +74,7 @@ export type UsageSnapshot = {
   agents: Record<string, AgentUsage>;
 };
 export type AgentUsage = { today: { tokens: number; calls: number }; week: { tokens: number; calls: number; costUsd: number }; models: Record<string, number> };
-export type ModelRole = "concepteur" | "director" | "art_director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue";
+export type ModelRole = "concepteur" | "director" | "art_director" | "archivist" | "developer" | "developer_big" | "qa" | "archeologue" | "art_workshop";
 export type ExpressMode = "eclair" | "soigne";
 export type ExpressPhase = "idee" | "code" | "test" | "correction" | "finition" | "amelioration" | "pret";
 export type ExpressConcept = { title: string; pitch: string; dimension: "2d" | "3d"; genre: string; controls: string[]; loop: string; goal: string; style: string; features: string[]; juice: string[] };
@@ -113,7 +113,16 @@ export type Art3D = {
   blender: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
   tripo: { configured: boolean; month: string; credits: number; cap: number };
 };
-export type ArtGenerating = { asset: string; round: number; rounds: number; step: string };
+export type ArtStage = "croquis" | "image" | "planche" | "tripo" | "atelier" | "controle";
+export type ArtGenerating = {
+  asset: string;
+  round: number;
+  rounds: number;
+  step: string;
+  stage?: ArtStage;
+  note?: string | null;
+  preview?: { kind: "art" | "atelier"; file: string } | null;
+};
 export type ArtGenerator = {
   installed: boolean;
   installing: { step: string; progress: number } | null;
@@ -316,6 +325,7 @@ export const api = {
   artTripoKey: (key: string) => request<Art3D>("POST", "/art/tripo/key", { key }),
   artModel: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/model`, {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
+  artAtelierFile: (slug: string, id: string, name: string) => `/api/human/projects/${slug}/art/atelier/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
   reverseBrowse: () => request<{ path: string | null }>("POST", "/reverse/browse", {}),

@@ -1,4 +1,4 @@
-import { TRIPO_ANIMATIONS, type Model3DSpec } from "./model3d.ts";
+import { knownAnimation, MAX_ANIMATIONS, type Model3DSpec } from "./model3d.ts";
 
 /** Consignes du Directeur artistique et lecture de ses réponses (ADR-43). */
 
@@ -72,8 +72,10 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   simples (mur, caisse, étagère, borne, coffre, rocher stylisé) : pas d'image ni de Tripo, l'artisan le modélise
   directement dans Blender d'après la fiche ; la 3D part tout de suite. « taille » : plus grande dimension en mètres dans le jeu ;
   « triangles » : budget (quelques milliers pour un jeu web) ; « squelette » s'il doit être animé ; « animations » parmi :
-  idle, walk, run, jump, slash, shoot, hurt, fall, turn, dive, climb (bipèdes), quadruped:walk, hexapod:walk,
-  octopod:walk, serpentine:march, aquatic:march (5 au plus). Un objet rigide (navire, caisse, arme) n'a ni squelette ni animation.
+  idle, walk, run, jump, slash, shoot, hurt, fall, turn, dive, climb ; pour un personnage humanoïde, toute la bibliothèque
+  des bipèdes, mieux ajustée à son squelette (hit_to_body_01, hit_to_head, cast_a_spell, chop, front_kick_01,
+  victory_celebration, look_around, standing_relax, swagger, sit, wave_goodbye_01…) ; quadruped:walk, hexapod:walk,
+  octopod:walk, serpentine:march, aquatic:march (8 au plus ; pense au minimum du jeu : attente, marche, course, coup reçu, chute). Un objet rigide (navire, caisse, arme) n'a ni squelette ni animation.
 - [[MIDJOURNEY: A-0001 | moodboard/x.png, moodboard/y.png]] prompt 1
   ---
   prompt 2 [[/MIDJOURNEY]] : prompts prêts à copier pour cet asset, et les images de référence à joindre (facultatives).
@@ -180,8 +182,15 @@ export function parseArtDirectives(text: string): { text: string; directives: Ar
 export function parseModel3D(raw: string): Model3DSpec {
   const size = Number(/taille\s*[=:]?\s*([\d.,]+)/i.exec(raw)?.[1]?.replace(",", ".") ?? 1);
   const tris = Number(/triangles?\s*[=:]?\s*(\d+)/i.exec(raw)?.[1] ?? 8000);
-  const list = /animations?\s*[=:]?\s*([a-z:,\s]+)/i.exec(raw)?.[1] ?? "";
-  const animations = [...new Set(list.split(/[,\s]+/).map((a) => a.trim().toLowerCase().replace(/^preset:/, "")).filter((a) => TRIPO_ANIMATIONS.includes(a)))].slice(0, 5);
+  const list = /animations?\s*[=:]?\s*([a-z0-9_:,\s]+)/i.exec(raw)?.[1] ?? "";
+  const animations = [
+    ...new Set(
+      list
+        .split(/[,\s]+/)
+        .map((a) => a.trim().toLowerCase().replace(/^preset:/, "").replace(/^biped:/, ""))
+        .filter(knownAnimation),
+    ),
+  ].slice(0, MAX_ANIMATIONS);
   return {
     size: Number.isFinite(size) && size > 0 ? Math.min(size, 1000) : 1,
     tris: Number.isFinite(tris) ? Math.min(Math.max(tris, 500), 100_000) : 8000,

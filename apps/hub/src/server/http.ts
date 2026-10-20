@@ -231,6 +231,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.integrate(req.human!, slug, id);
     });
+    api.get("/projects/:slug/art/atelier/:id/:name", async (req, reply) => {
+      const { slug, id, name } = req.params as { slug: string; id: string; name: string };
+      const f = hub.art.atelierFile(slug, id, name);
+      return reply.type(f.mime).header("cache-control", "private, max-age=60").send(readFileSync(f.path));
+    });
     api.get("/projects/:slug/art/files/*", async (req, reply) => {
       const { slug, "*": rel } = req.params as { slug: string; "*": string };
       const f = hub.art.file(slug, decodeURIComponent(rel));

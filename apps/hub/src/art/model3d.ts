@@ -66,6 +66,26 @@ export interface Model3DPort {
 
 /** Les animations toutes prêtes de Tripo (noms courts, sans « preset: »). */
 export const TRIPO_ANIMATIONS = ["idle", "walk", "run", "dive", "climb", "jump", "slash", "shoot", "hurt", "fall", "turn", "quadruped:walk", "hexapod:walk", "octopod:walk", "serpentine:march", "aquatic:march"];
+/**
+ * La bibliothèque des bipèdes (ADR-52) : plus de 90 animations faites pour le squelette humanoïde v1.0, mieux ajustées
+ * que les animations génériques ; « preset:biped:<nom> ». D'après le nœud ComfyUI officiel de Tripo (v0.41.0).
+ */
+export const TRIPO_BIPED = [
+  "afraid", "agree", "angry_01", "angry_02", "angry_03", "basketball_shot", "bow", "box_01", "box_02", "box_03",
+  "cast_a_spell", "cheer", "chop", "clap", "climb", "complain_01", "complain_02", "cross_body_crunch", "crossover_dribble", "cry",
+  "dance_01", "dance_02", "dance_03", "dance_04", "dance_05", "dance_06", "defeat_02", "defeat_03", "depressed", "dig",
+  "dive", "dribble", "fall", "fire", "flee_01", "flee_02", "flip", "fold_arms", "football_catch", "football_save",
+  "football_pass", "freaky", "frightened", "front_kick_01", "front_kick_02", "frustrated_01", "frustrated_02", "golf", "greet_01", "greet_02",
+  "greet_03", "greet_04", "heart_pose", "hit_to_body_01", "hit_to_body_02", "hit_to_head", "hit_to_side", "hit_to_stomach", "hug", "hurt",
+  "idle", "jump_down", "jump", "jump_rope_01", "jump_rope_02", "laugh_01", "laugh_02", "lift_heavy", "look_around", "make_a_call_01",
+  "make_a_call_02", "pitch_baseball", "play_mobile_game", "play_video_game", "run_upstairs", "run", "scared_01", "scared_02", "scratch", "shoot",
+  "shovel", "sing_01", "sing_02", "sing_03", "sing_04", "sit", "slash", "sob", "standing_relax", "surf",
+  "swagger", "swim", "turn", "victory_celebration", "volleyball", "wait", "walk", "warm_up", "wave_goodbye_01", "wave_goodbye_02",
+];
+/** Animations au plus par modèle (une tâche Tripo chacune). */
+export const MAX_ANIMATIONS = 8;
+/** Une animation que Tripo sait poser : générique, à forme (« quadruped:walk ») ou de la bibliothèque des bipèdes. */
+export const knownAnimation = (a: string) => TRIPO_ANIMATIONS.includes(a) || TRIPO_BIPED.includes(a.replace(/^biped:/, ""));
 
 const TRIPO = "https://openapi.tripo3d.ai";
 const TRIPO_MODEL = process.env.STUDIO_TRIPO_MODEL ?? "v2.5-20250123";
@@ -278,7 +298,13 @@ export class RealModel3D implements Model3DPort {
         reused = true;
       } else {
         const token = await this.#upload(key, req.image, req.ext);
-        const shape = { face_limit: Math.max(1000, req.spec.tris), model_seed: req.seed, texture_seed: req.seed };
+        // Un modèle à squelette se déforme en bougeant : géométrie et texture détaillées (le meilleur rendu, ADR-52).
+        const shape = {
+          face_limit: Math.max(1000, req.spec.tris),
+          model_seed: req.seed,
+          texture_seed: req.seed,
+          ...(req.spec.rig ? { geometry_quality: "detailed", texture_quality: "detailed" } : {}),
+        };
         // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
         let made: TripoTask | null = null;
         if (req.views) {
@@ -325,7 +351,8 @@ export class RealModel3D implements Model3DPort {
       }
       const glb = await this.#fetchModel(last, req.step);
       this.#setPending(null);
-      return { glb, credits, extras, animations: names, rigType, views };
+      // Les noms montrés au jeu, sans le préfixe de la bibliothèque : « walk », pas « biped:walk ».
+      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, views };
     } catch (err) {
       // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
       if (reused) this.#setPending(null);
@@ -425,10 +452,10 @@ export class RealModel3D implements Model3DPort {
 }
 
 /**
- * Les animations demandées que ce squelette sait jouer. Le type de squelette est celui que Tripo reconnaît sur le
- * modèle, pas celui que la fiche espérait : une marche « à quatre pattes » demandée pour un modèle que Tripo voit à huit
- * pattes devient la marche à huit pattes, au lieu de disparaître. Un bipède ne prend que les animations sans préfixe.
- * Cinq au plus.
+ * Les animations demandées que ce squelette sait jouer (noms des préréglages Tripo, sans « preset: »). Le type de
+ * squelette est celui que Tripo reconnaît sur le modèle, pas celui que la fiche espérait : une marche « à quatre pattes »
+ * demandée pour un modèle que Tripo voit à huit pattes devient la marche à huit pattes, au lieu de disparaître. Un bipède
+ * prend la version de la bibliothèque des bipèdes quand elle existe (« biped:walk »), sinon l'animation générique.
  */
 export function rigAnimations(type: string, wanted: string[]): string[] {
   const out = new Set<string>();
@@ -437,12 +464,12 @@ export function rigAnimations(type: string, wanted: string[]): string[] {
   for (const w of wanted) {
     const move = w.includes(":") ? w.split(":")[1]! : w;
     let name: string | null;
-    if (type === "biped") name = move;
+    if (type === "biped") name = TRIPO_BIPED.includes(move) ? `biped:${move}` : TRIPO_ANIMATIONS.includes(move) ? move : null;
     else if (TRIPO_ANIMATIONS.includes(`${type}:${move}`)) name = `${type}:${move}`;
     else name = ["walk", "run", "march"].includes(move) ? (gait ?? null) : null;
-    if (name && TRIPO_ANIMATIONS.includes(name)) out.add(name);
+    if (name && knownAnimation(name)) out.add(name);
   }
-  return [...out].slice(0, 5);
+  return [...out].slice(0, MAX_ANIMATIONS);
 }
 
 /** Les adresses des quatre vues d'une tâche de planche (`front_view_url`…), complétées par `before` s'il en manque. */

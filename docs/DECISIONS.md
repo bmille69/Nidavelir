@@ -567,6 +567,13 @@ Mesures :
 - **Air de famille** : `| ref A-xxxx` (un asset retenu) ou `| ref moodboard/x.png` sur `[[CROQUIS]]` et `[[GENERER]]`. Les croquis et les essais sont alors dessinés dans le style de cette image (`styleRef` sur la fiche, citée au validateur). Sans Kontext, la référence est ignorée et la DA le sait.
 - **Non vérifié en vrai** : le graphe suit les nœuds de ComfyUI v0.41.0 (tous présents), mais Kontext n'est pas encore téléchargé : la première retouche réelle sert d'essai.
 
+### ADR-52 : l'artisan 3D sur son propre modèle, le meilleur rig et l'avancement visible
+**Statut** : **Validée** le 20/10/2026, à la demande du directeur créatif, pendant la première fabrication réelle du Titan avec le nouveau circuit.
+- **Modèle de l'artisan** : nouveau rôle `art_workshop`, Fable par défaut, réglable à part dans « Le studio en direct », sous le Directeur artistique (« Artisan 3D (Blender) »). La discussion et les validations gardent le réglage `art_director` (Opus aujourd'hui). L'orchestrateur prend `role: "artisan"` pour les pas de l'atelier. Leur consommation reste comptée sous le Directeur artistique.
+- **Rig et animations** : un humanoïde garde le squelette Tripo v1.0, fait pour lui. Ses animations viennent maintenant de la **bibliothèque des bipèdes** (`preset:biped:*`, plus de 90 mouvements faits pour ce squelette : coups reçus, chute, sort, victoire…), avec repli sur l'animation générique. Les autres formes gardent le squelette v2.5 et leur marche. Il y a **8 animations** au plus (5 avant). Les noms montrés au jeu restent courts (« walk »). Un modèle à squelette est demandé en géométrie et texture **détaillées**, car il se déforme en bougeant ; cela coûte quelques crédits de plus. La DA est invitée à prévoir au moins attente, marche, course, coup reçu et chute.
+- **Avancement visible** : chaque fiche en fabrication montre les étapes du circuit (croquis, image de référence, planche, modèle Tripo, atelier Blender, contrôle 3D, dans le jeu), l'étape en cours, la phrase en clair, ce que l'artisan dit faire à son pas, et la dernière image produite : croquis, essai, planche, photo de l'atelier ou rendu final. Les photos de l'atelier restent hors du dépôt et sont servies une à une (`/art/atelier/:id/:nom`, seulement les noms `photo-N-<vue>.png`). L'onglet se rafraîchit toutes les 2,5 s pendant une fabrication.
+- **Plus tard** : une photo du modèle en mouvement (une image prise au milieu de chaque animation) pour que le validateur juge aussi la déformation. Elle demande de modifier le script Blender de l'atelier, ce qui ne se fait pas pendant une fabrication.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

@@ -106,8 +106,11 @@ class FakeModel3D implements Model3DPort {
     this.prepares.push({ dir: req.dir, input: req.input && existsSync(req.input) ? readFileSync(req.input, "utf8") : null, palette: req.palette });
     return {};
   }
+  /** Appelé à chaque pas de l'artisan : un test peut y regarder l'avancement affiché. */
+  onCode: (() => void) | null = null;
   async runCode(req: { dir: string; code: string }) {
     this.codes.push(req.code);
+    this.onCode?.();
     return { ok: true, sortie: "fait", erreur: null };
   }
   async photos(req: { dir: string; prefix: string }) {
@@ -487,8 +490,21 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     // Passe 2 : l'artisan reprend avec la remarque ; conforme.
     fake.extractions.push(...(artisanSteps('lueur("#9BE000")', "Joints allumés en vert acide.") as never[]));
     fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle, lisible de loin.", points: [] } as never);
+    // Pendant l'atelier, l'onglet Visuels voit l'étape, ce que dit l'artisan et sa dernière photo.
+    const seen: unknown[] = [];
+    m3d.onCode = () => seen.push(structuredClone(art.state("bordee").busy.generating[0]));
     art.generateModel(sb.human(), "bordee", "A-0001");
     await art.idle();
+    expect(seen[0]).toMatchObject({
+      asset: "A-0001",
+      stage: "atelier",
+      step: "L'artisan 3D retouche dans Blender (pas 1 sur 12)",
+      note: "Le modèle regarde de côté et brille : je le tourne et le repeins.",
+      preview: { kind: "atelier", file: "photo-0-trois-quarts.png" },
+    });
+    expect(art.atelierFile("bordee", "A-0001", "photo-1-trois-quarts.png").path).toBe(join(m3d.atelier("bordee-A-0001"), "photo-1-trois-quarts.png"));
+    for (const bad of ["../scene.blend", "scene.blend", "fiche.json", "photo-1-trois-quarts.png/../../x.png"]) expect(() => art.atelierFile("bordee", "A-0001", bad), bad).toThrow(/refusée/);
+    expect(() => art.atelierFile("bordee", "../A-0001", "photo-1-face.png")).toThrow(/refusée/);
     expect(m3d.tripoCalls).toHaveLength(1);
     expect(m3d.tripoCalls[0]!.bytes).toBe(PNG.length);
     expect(m3d.prepares).toHaveLength(1);
@@ -681,6 +697,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(k["5"]).toMatchObject({ class_type: "FluxGuidance", inputs: { guidance: 2.5, conditioning: ["17", 0] } });
     expect(k["7"]!.inputs).toMatchObject({ model: ["1", 0], seed: 3, latent_image: ["12", 0], negative: ["6", 0] });
     expect(parseModel3D("taille 1,8 | triangles 9000 | animations walk, slash, preset:run, danse")).toEqual({ size: 1.8, tris: 9000, rig: true, animations: ["walk", "slash", "run"] });
+    expect(parseModel3D("taille 1,8 | animations idle, hit_to_body_01, preset:biped:cast_a_spell, quadruped:walk").animations).toEqual(["idle", "hit_to_body_01", "cast_a_spell", "quadruped:walk"]);
     expect(parseModel3D("taille 40 | triangles 50")).toEqual({ size: 40, tris: 500, rig: false, animations: [] });
     expect(parseModel3D("squelette")).toMatchObject({ rig: true, animations: [] });
     expect(parseModel3D("taille 1 | triangles 800 | simple")).toEqual({ size: 1, tris: 800, rig: false, animations: [], simple: true });

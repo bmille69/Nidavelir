@@ -20,14 +20,20 @@ export function AgentModel({ agent, snap }: { agent: AgentId; snap: StudioSnapsh
       </div>
     );
   }
-  // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41).
-  const settings = (agent === "developer" ? (["developer", "developer_big"] as const) : [agent])
+  // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41) ;
+  // le Directeur artistique aussi : la discussion et les validations, et l'artisan 3D dans Blender (ADR-52).
+  const settings = (agent === "developer" ? (["developer", "developer_big"] as const) : agent === "art_director" ? (["art_director", "art_workshop"] as const) : [agent])
     .map((role) => snap.models?.roles.find((r) => r.role === role))
     .filter((s): s is NonNullable<typeof s> => !!s);
   if (!settings.length) return null;
   const choices = snap.models.choices;
   const label = (id: string) => choices.find((c) => c.id === id)?.label ?? id;
-  const ROW_LABEL: Partial<Record<ModelRole, string>> = { developer: "Chantiers ordinaires", developer_big: "Gros chantiers" };
+  const ROW_LABEL: Partial<Record<ModelRole, string>> = {
+    developer: "Chantiers ordinaires",
+    developer_big: "Gros chantiers",
+    art_director: "Discussion et validations",
+    art_workshop: "Artisan 3D (Blender)",
+  };
   const use = snap.usage.agents?.[agent];
   const total = Object.values(snap.usage.agents ?? {}).reduce((n, a) => n + a.week.tokens, 0);
   const share = use && total ? Math.round((use.week.tokens / total) * 100) : 0;

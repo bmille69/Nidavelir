@@ -162,6 +162,8 @@ describe("modèles des agents (ADR-37)", () => {
       ["qa", "haiku", "haiku"],
       ["archeologue", "sonnet", "sonnet"],
       ["art_director", "sonnet", "sonnet"],
+      // L'artisan 3D a son propre réglage, Fable par défaut (ADR-52).
+      ["art_workshop", "fable", "fable"],
     ]);
     expect(snap.models.choices.map((c) => c.id)).toEqual(["fable", "opus", "sonnet", "haiku"]);
 

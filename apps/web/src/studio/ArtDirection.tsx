@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { navigate } from "../App.tsx";
-import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtState, type AssetStatus } from "../api.ts";
+import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
 import { Icon } from "./Icon.tsx";
 
@@ -348,6 +348,71 @@ function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (f
   );
 }
 
+/** Les étapes du circuit visuel (ADR-49, ADR-50, ADR-52), dans l'ordre, selon le genre d'asset. */
+type Step = { id: ArtStage | "jeu"; label: string };
+function stepsOf(a: ArtAsset): Step[] {
+  const jeu: Step = { id: "jeu", label: "Dans le jeu" };
+  if (a.model3d?.simple) return [{ id: "atelier", label: "Atelier Blender" }, { id: "controle", label: "Contrôle 3D" }, jeu];
+  const image: Step[] = [
+    ...(a.sketches?.length ? [{ id: "croquis" as const, label: "Croquis" }] : []),
+    { id: "image", label: a.model3d ? "Image de référence" : "Image" },
+  ];
+  if (!a.model3d) return [...image, jeu];
+  return [...image, { id: "planche", label: "Planche" }, { id: "tripo", label: "Modèle Tripo" }, { id: "atelier", label: "Atelier Blender" }, { id: "controle", label: "Contrôle 3D" }, jeu];
+}
+
+/** Où en est l'asset quand rien ne tourne : d'après sa fiche. */
+function restingStage(a: ArtAsset): Step["id"] | null {
+  if (a.status === "integration" || a.status === "integre") return "jeu";
+  if (a.model) return "controle";
+  if (a.sketches?.length && !a.direction) return "croquis";
+  if (a.verdict?.ok && a.model3d) return "tripo";
+  if (a.renders.length) return "image";
+  return null;
+}
+
+/**
+ * L'avancement de la fabrication (ADR-52) : les étapes du circuit, celle en cours, ce qui se passe en clair, ce que
+ * l'artisan 3D dit faire, et la dernière image produite. Rafraîchi toutes les quelques secondes pendant la fabrication.
+ */
+function ArtProgress({ slug, asset: a, generating: g, validating }: { slug: string; asset: ArtAsset; generating: ArtGenerating | null; validating: boolean }) {
+  const steps = stepsOf(a);
+  const current = g?.stage ?? restingStage(a);
+  const at = steps.findIndex((s) => s.id === current);
+  const done = a.status === "integre";
+  if (!g && (at < 0 || a.status === "propose")) return null;
+  const preview = g?.preview ? (g.preview.kind === "atelier" ? api.artAtelierFile(slug, a.id, g.preview.file) : api.artFile(slug, g.preview.file)) : null;
+  return (
+    <div className={`art-progress${g ? " live" : ""}`}>
+      <ol className="art-steps">
+        {steps.map((s, k) => (
+          <li key={s.id} className={done || k < at ? "done" : k === at ? (g ? "now" : "here") : ""}>
+            {s.label}
+          </li>
+        ))}
+      </ol>
+      {g && (
+        <div className="art-progress-body">
+          {preview && (
+            <a href={preview} target="_blank" rel="noreferrer" className="art-progress-shot">
+              <img src={preview} alt="Dernière image produite" />
+            </a>
+          )}
+          <div>
+            <p className="live-text small">
+              <span className="live-dot" /> {g.step}…
+            </p>
+            {g.rounds > 1 && <p className="muted small">Tour {g.round} sur {g.rounds}</p>}
+            {g.note && <p className="small art-progress-note">« {g.note} »</p>}
+          </div>
+        </div>
+      )}
+      {!g && validating && <p className="live-text small"><span className="live-dot" /> Le validateur regarde…</p>}
+      {!g && !validating && current === "croquis" && <p className="muted small">En attente de votre choix de croquis.</p>}
+    </div>
+  );
+}
+
 /** Flux Kontext (ADR-51) : retouches par consigne et air de famille, installé sur votre clic. */
 function KontextCard({ kontext: k, act }: { kontext: ArtGenerator["kontext"] | undefined; act: (fn: () => Promise<unknown>) => Promise<void> }) {
   return (
@@ -495,11 +560,7 @@ function AssetCard({
           {a.model3d.animations.length ? `, animations ${a.model3d.animations.join(", ")}` : a.model3d.rig ? ", avec squelette" : ""}
         </p>
       )}
-      {generating && (
-        <p className="live-text small">
-          <span className="live-dot" /> {generating.step}…
-        </p>
-      )}
+      <ArtProgress slug={slug} asset={a} generating={generating} validating={validating} />
 
       {sketches && (
         <div className="art-sketches">

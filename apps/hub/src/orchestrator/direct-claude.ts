@@ -1,7 +1,7 @@
 import type { ClaudeCli } from "../llm/claude-cli.ts";
 import { OrchestratorError, type CallMeta, type OrchestratorPort } from "./port.ts";
 
-type Models = { chat: string; structured: string; concept?: string; archeologue?: string; art?: string };
+type Models = { chat: string; structured: string; concept?: string; archeologue?: string; art?: string; artisan?: string };
 
 /** Directeur porté par Claude Code CLI, sans outils (ADR-10). */
 export class DirectClaudeOrchestrator implements OrchestratorPort {
@@ -30,13 +30,20 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
     return { text: r.text.trim(), costUsd: r.costUsd };
   }
 
-  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta; tools?: string[]; tier?: "concept"; readDir?: string; role?: "art" }) {
+  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta; tools?: string[]; tier?: "concept"; readDir?: string; role?: "art" | "artisan" }) {
     const models = this.#pick();
     const r = await this.#cli.call({
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
       jsonSchema: input.jsonSchema,
-      model: input.role === "art" ? (models.art ?? models.chat) : input.tier === "concept" ? (models.concept ?? models.structured) : models.structured,
+      model:
+        input.role === "artisan"
+          ? (models.artisan ?? models.art ?? models.chat)
+          : input.role === "art"
+            ? (models.art ?? models.chat)
+            : input.tier === "concept"
+              ? (models.concept ?? models.structured)
+              : models.structured,
       timeoutMs: input.tools?.length || input.readDir ? 480_000 : 240_000,
       tag: input.meta,
       tools: input.tools,

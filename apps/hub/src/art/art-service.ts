@@ -55,7 +55,20 @@ export type ArtState = {
   /** L'atelier 3D : Blender et Tripo (ADR-47). */
   workshop3d: Model3DState;
 };
-export type Generating = { asset: string; round: number; rounds: number; step: string };
+/**
+ * Où en est la fabrication d'un asset (ADR-52), pour l'onglet Visuels : l'étape du circuit, ce qui se passe en clair, ce
+ * que l'artisan 3D dit faire, et la dernière image produite (`studio/art` ou une photo de l'atelier Blender).
+ */
+export type Generating = {
+  asset: string;
+  round: number;
+  rounds: number;
+  step: string;
+  stage?: Stage;
+  note?: string | null;
+  preview?: { kind: "art" | "atelier"; file: string } | null;
+};
+export type Stage = "croquis" | "image" | "planche" | "tripo" | "atelier" | "controle";
 
 /** Essais par tour et tours au plus : le générateur réessaie seul avec le prompt corrigé du validateur (deux tours, ADR-49). */
 const VARIANTS = 3;
@@ -667,11 +680,13 @@ export class ArtService {
       const style = this.#styleOf(root, asset);
       const files: string[] = [];
       for (const [k, o] of options.entries()) {
+        progress.stage = "croquis";
         progress.step = `Croquis ${k + 1} sur ${options.length}${style ? " (dans le style de la référence)" : ""}`;
         const png = await this.#imagegen.generate({ prompt: style ? styled(o.prompt) : o.prompt, width, height, seed: randomInt(2 ** 31), ...(style ? { edit: { images: [style] } } : {}) });
         const file = this.#free(root, "production", `${id.toLowerCase()}-croquis-${k + 1}`, ".png");
         writeAtomic(join(root, file), png);
         files.push(file);
+        progress.preview = { kind: "art", file };
       }
       const m = readManifest(gameRoot);
       asset = m.assets.find((a) => a.id === id);
@@ -768,11 +783,13 @@ export class ArtService {
               : style
                 ? { prompt: styled(prompt), edit: { images: [style] } }
                 : { prompt };
+          progress.stage = "image";
           progress.step = fix ? `Retouche ${v} sur ${VARIANTS} du meilleur essai` : direction ? `Variante ${v} sur ${VARIANTS} du croquis choisi` : `Essai ${v} sur ${VARIANTS}`;
           const png = await this.#imagegen.generate({ width, height, seed: randomInt(2 ** 31), ...req });
           const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, ".png");
           writeAtomic(join(root, file), png);
           files.push(file);
+          progress.preview = { kind: "art", file };
         }
         let m = readManifest(gameRoot);
         asset = m.assets.find((a) => a.id === id);
@@ -905,8 +922,12 @@ export class ArtService {
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
           spec,
           seed: randomInt(2 ** 31),
-          step: (s) => (progress.step = s),
+          step: (s) => {
+            progress.stage = /planche/i.test(s) ? "planche" : "tripo";
+            progress.step = s;
+          },
           views: (views, round) => {
+            progress.stage = "planche";
             progress.step = round === 1 ? "Le validateur regarde la planche" : "Le validateur regarde la planche retouchée";
             return this.#reviewViews(project, asset, source, views, round, planche);
           },
@@ -924,6 +945,7 @@ export class ArtService {
       }
       const move = (a: string) => a.split(":").pop();
       const missingAnimations = spec.animations.filter((w) => !animations.some((a) => move(a) === move(w) || (move(w) === "walk" && move(a) === "march")));
+      progress.stage = "atelier";
       progress.step = "Blender prépare la scène de l'atelier";
       await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
       // Ce que l'artisan lit : la fiche, la bible et l'image de référence, copiées dans son dossier.
@@ -941,6 +963,8 @@ export class ArtService {
       for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
         progress.round = pass;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
+        progress.stage = "controle";
+        progress.note = null;
         progress.step = "Blender exporte le modèle aux mesures du jeu";
         const file = this.#free(root, "models", `${id.toLowerCase()}-3d`, ".glb");
         const prefix = file.slice("models/".length, -".glb".length);
@@ -956,6 +980,7 @@ export class ArtService {
         await this.#commit(gameRoot, `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`);
 
         progress.step = "Le validateur regarde le modèle sous tous les angles";
+        progress.preview = { kind: "art", file: renders[1] ?? renders[0]! };
         const v = await this.#judgeModel(project, a, source, planche, renders, done, spec);
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
@@ -1021,6 +1046,8 @@ export class ArtService {
       return file;
     });
     saved.splice(0, saved.length, ...files);
+    const progress = this.#generating.get(project)?.get(asset.id);
+    if (progress) progress.preview = { kind: "art", file: files[0]! };
     await this.#commit(gameRoot, `art: planche de ${asset.id}${round > 1 ? " retouchée" : ""}`);
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(asset.id);
@@ -1066,10 +1093,17 @@ export class ArtService {
   async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating): Promise<string> {
     const journal: string[] = [];
     const spec = asset.model3d!;
+    progress.stage = "atelier";
     progress.step = "L'artisan 3D regarde le modèle";
     let shots = await this.#model3d.photos({ dir, prefix: "photo-0" });
+    // La capture montrée dans l'onglet Visuels : la photo de trois-quarts la plus récente.
+    const show = () => {
+      const p = shots.photos.find((f) => /trois-quarts/.test(f)) ?? shots.photos[0];
+      if (p) progress.preview = { kind: "atelier", file: basename(p) };
+    };
+    show();
     for (let step = 1; step <= WORKSHOP_STEPS; step++) {
-      progress.step = `L'artisan 3D retouche dans Blender (pas ${step})`;
+      progress.step = `L'artisan 3D retouche dans Blender (pas ${step} sur ${WORKSHOP_STEPS})`;
       const { data } = await this.#orchestrator.structured({
         systemPrompt: WORKSHOP_SYSTEM,
         prompt: [
@@ -1089,10 +1123,12 @@ export class ArtService {
           .join("\n\n"),
         jsonSchema: WORKSHOP_STEP_SCHEMA,
         readDir: dir,
-        role: "art",
+        // Son propre modèle, réglable à part (ADR-52) : Fable par défaut.
+        role: "artisan",
         meta: { project, agent: "art_director" },
       });
       const s = data as { note: string; code: string | null; photos: boolean; fini: boolean; summary: string };
+      progress.note = String(s.note ?? "").slice(0, 400) || null;
       let line = `Pas ${step} : ${String(s.note ?? "").slice(0, 400)}`;
       if (s.code?.trim()) {
         const r = await this.#model3d.runCode({ dir, code: s.code });
@@ -1100,7 +1136,10 @@ export class ArtService {
       }
       journal.push(line);
       if (s.fini) return String(s.summary || s.note || "").slice(0, 400);
-      if (s.code?.trim() || s.photos) shots = await this.#model3d.photos({ dir, prefix: `photo-${step}` });
+      if (s.code?.trim() || s.photos) {
+        shots = await this.#model3d.photos({ dir, prefix: `photo-${step}` });
+        show();
+      }
     }
     return `Arrêté au bout de ${WORKSHOP_STEPS} pas.`;
   }
@@ -1281,6 +1320,15 @@ export class ArtService {
   #track(p: Promise<unknown>): void {
     this.#background.add(p);
     void p.finally(() => this.#background.delete(p));
+  }
+
+  /** Une photo de travail de l'atelier Blender (hors du dépôt), pour suivre l'artisan depuis l'onglet Visuels. */
+  atelierFile(project: string, id: string, name: string): { path: string; mime: string } {
+    this.#projects.get(project);
+    if (!/^A-\d{4,}$/.test(id) || !/^photo-\d+-(face|trois-quarts|profil|dos|vue-jeu)\.png$/.test(name)) throw new ArtError("Photo refusée");
+    const path = join(this.#model3d.atelier(`${project}-${id}`), name);
+    if (!existsSync(path)) throw new ArtError("Photo introuvable");
+    return { path, mime: "image/png" };
   }
 
   /** Un fichier de studio/art à servir (images seulement, jamais en dehors du dossier). */

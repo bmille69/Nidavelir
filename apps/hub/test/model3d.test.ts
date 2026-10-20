@@ -73,7 +73,10 @@ describe("Tripo (atelier 3D)", () => {
     vi.stubGlobal("fetch", t.fetch);
     const { r } = await run(new RealModel3D(dir), ["walk", "slash"]);
     expect(t.calls.find((c) => c.path === "/v3/animations/rig")!.body).toMatchObject({ model: "v1.0-20240301", rig_type: "biped" });
-    expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:walk", "preset:slash"]);
+    // La bibliothèque des bipèdes, faite pour ce squelette ; un modèle à squelette est demandé en qualité détaillée.
+    expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:biped:walk", "preset:biped:slash"]);
+    expect(t.calls.find((c) => c.path === "/v3/generation/image-to-model")!.body).toMatchObject({ geometry_quality: "detailed", texture_quality: "detailed" });
+    expect(r!.animations).toEqual(["walk", "slash"]);
     expect(r!.extras).toHaveLength(1);
     expect(r!.credits).toBe(50);
   });
@@ -132,7 +135,18 @@ describe("Tripo (atelier 3D)", () => {
 
   it("les animations que le squelette sait jouer", () => {
     expect(rigAnimations("quadruped", ["walk", "quadruped:walk", "slash"])).toEqual(["quadruped:walk"]);
-    expect(rigAnimations("biped", ["walk", "quadruped:walk", "slash"])).toEqual(["walk", "slash"]);
+    expect(rigAnimations("biped", ["walk", "quadruped:walk", "slash"])).toEqual(["biped:walk", "biped:slash"]);
+    // Toute la bibliothèque des bipèdes, jusqu'à huit animations ; une animation inconnue est écartée.
+    expect(rigAnimations("biped", ["idle", "walk", "run", "hit_to_body_01", "biped:fall", "cast_a_spell", "victory_celebration", "look_around", "sit", "moonwalk"])).toEqual([
+      "biped:idle",
+      "biped:walk",
+      "biped:run",
+      "biped:hit_to_body_01",
+      "biped:fall",
+      "biped:cast_a_spell",
+      "biped:victory_celebration",
+      "biped:look_around",
+    ]);
     expect(rigAnimations("serpentine", ["march"])).toEqual(["serpentine:march"]);
     // Le Grouillot (18/10/2026) : une marche à quatre pattes demandée, un modèle que Tripo voit à huit pattes.
     expect(rigAnimations("octopod", ["quadruped:walk"])).toEqual(["octopod:walk"]);
