@@ -601,6 +601,8 @@ export class ArtService {
     const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80));
     const model = asset.model;
     const placed = this.#dependents(project, id).filter((t) => t.status === "merged");
+    // Une fiche en pixels (jeu vu de haut) : les mesures du modèle sont en pixels du jeu, pas en mètres.
+    const unit = /1 unité = 1 px|px/.test(asset.specs) ? "px" : "m";
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
@@ -608,7 +610,7 @@ export class ArtService {
         ? "- C'est une version retouchée d'un modèle déjà branché : remplace l'ancien fichier par celui-ci (mêmes mesures, même squelette, mêmes animations), sans rien changer d'autre au branchement."
         : "",
       model
-        ? `- Modèle 3D glTF binaire (.glb) : axe Y vers le haut, 1 unité = 1 mètre, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} m`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
+        ? `- Modèle 3D glTF binaire (.glb) : axe Y vers le haut, ${unit === "px" ? "1 unité = 1 px du jeu, comme le disent ses spécifications" : "1 unité = 1 mètre"}, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} ${unit}`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
         : "",
       `- Usage : ${asset.usage}`,
       asset.specs ? `- Spécifications : ${asset.specs}` : "",
