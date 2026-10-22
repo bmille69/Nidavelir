@@ -136,8 +136,10 @@ describe("Concepteur", () => {
       ["A-0001", "Texture de roche stratifiée", "propose"],
       ["A-0002", "Arbre de la forêt", "propose"],
     ]);
-    expect(art.messages[0]!.text).toMatch(/Demande transmise par le Concepteur, conception « Refonte de la carte »[\s\S]*studio\/conceptions\/refonte-de-la-carte\.md[\s\S]*A-0001 « Texture de roche stratifiée »/);
+    expect(art.messages[0]!.text).toMatch(/Demande transmise par le Concepteur, conception « Refonte de la carte »[\s\S]*copié dans ton dossier : conceptions\/refonte-de-la-carte\.md[\s\S]*A-0001 « Texture de roche stratifiée »/);
     expect(art.messages.at(-1)!.role).toBe("art");
+    // Le DA ne lit que studio/art : le dossier y est copié.
+    expect(readFileSync(join(root, "studio", "art", "conceptions", "refonte-de-la-carte.md"), "utf8")).toMatch(/Chats du Néant/);
 
     // Les chantiers : celui qui en dépend sait quel visuel arrivera et pose un provisoire ; l'autre n'en parle pas.
     const tasks = sb.hub.tasks.list("destiny");

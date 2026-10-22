@@ -665,6 +665,7 @@ Mesures :
 - Constat : un redémarrage mettait le chantier en cours en échec et vidait la file : 20 chantiers redevenaient des brouillons à relancer un par un. Les travaux du DA en cours (croquis, fabrication, planches, duels) étaient perdus en silence, et une conception « en réflexion » restait bloquée.
 - **La file est gardée** et repart d'elle-même quand le hub est prêt (fin de l'ADR-31 « file vidée »). Un chantier d'atelier coupé en plein travail est annulé et **repart de zéro sous un nouveau numéro, en tête de file**. Seule une intégration de visuel (ADR-60) passe devant lui. Sa discussion le dit (« ↻ … »). Les chantiers hors atelier gardent l'ancien comportement : ils passent en échec.
 - **Le DA note ses travaux longs** (table `art_jobs`) pendant qu'ils durent. Au démarrage, croquis, fabrications, planches et duels repartent, et un message resté sans réponse en reçoit une. La 3D ne repart pas seule, parce que Tripo se paie : le DA le dit, et « Fabriquer la 3D » la reprend.
+- Constaté au passage : le DA ne lit que `studio/art/`, il n'avait donc pas pu ouvrir le dossier de conception transmis (ADR-59). Le dossier y est désormais copié (`studio/art/conceptions/`).
 - **Une conception coupée** vous revient avec un mot : « renvoyez votre dernier message ». Elle ne repart pas seule, car une transmission coupée en route ne doit pas créer les chantiers deux fois.
 
 ---

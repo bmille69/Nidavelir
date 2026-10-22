@@ -399,11 +399,20 @@ export class ArtService {
       ids[v.cle] = a.id;
     }
     writeManifest(gameRoot, m);
+    // Le DA ne lit que studio/art : le dossier de conception y est copié (incident du 22/10, ADR-61).
+    const source = join(gameRoot, input.dossier);
+    const dossier = existsSync(source) ? `conceptions/${basename(source)}` : null;
+    if (dossier) {
+      mkdirSync(join(artRoot(gameRoot), "conceptions"), { recursive: true });
+      copyFileSync(source, join(artRoot(gameRoot), dossier));
+    }
     await this.#commit(gameRoot, `art: ${Object.keys(ids).length} visuel(s) demandés par la conception « ${input.conception} »`.slice(0, 200));
     const list = input.visuels.map((v) => `- ${ids[v.cle]} « ${v.nom} » (${v.type}) : ${v.usage}${v.specs ? ` — ${v.specs}` : ""}`).join("\n");
     const text = [
       `(Demande transmise par le Concepteur, conception « ${input.conception} »)`,
-      `Le dossier de conception est dans le dépôt du jeu : ${input.dossier} (lis-le : piliers, périmètre, étapes). Les chantiers de développement partent de leur côté avec des visuels provisoires ; chacun de ces visuels entrera dans le jeu par son propre chantier d'intégration une fois validé.`,
+      dossier
+        ? `Le dossier de conception est copié dans ton dossier : ${dossier} (lis-le : piliers, périmètre, étapes). Les chantiers`
+        : `Pas de dossier de conception lisible. Les chantiers de développement partent de leur côté avec des visuels provisoires ; chacun de ces visuels entrera dans le jeu par son propre chantier d'intégration une fois validé.`,
       `Fiches créées pour toi (modifie-les avec [[ASSET]] et leur id, regroupe ou écarte ce qui n'a pas lieu d'être) :\n${list}`,
       "Commence par cadrer avec moi ce qui doit l'être (direction, questions illustrées), dans l'ordre où le jeu en a besoin.",
     ].join("\n\n");
