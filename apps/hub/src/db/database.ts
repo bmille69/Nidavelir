@@ -371,6 +371,33 @@ const MIGRATIONS: string[] = [
     started_at TEXT NOT NULL
   );
   `,
+  `
+  -- ADR-65 : le studio de modding, des mods pour les jeux du commerce que vous possédez.
+  CREATE TABLE mods (
+    id TEXT PRIMARY KEY,
+    recipe TEXT NOT NULL,
+    appid TEXT NOT NULL,
+    game TEXT NOT NULL,
+    game_dir TEXT NOT NULL,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    idea TEXT NOT NULL,
+    status TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    root TEXT NOT NULL,
+    plan_json TEXT,
+    report_json TEXT,
+    game_build TEXT,
+    installed_json TEXT,
+    played_json TEXT,
+    error TEXT,
+    version INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    events_json TEXT NOT NULL DEFAULT '[]'
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

@@ -27,6 +27,7 @@ import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
 import { ArtError } from "../art/art-service.ts";
 import { ExpressError } from "../express/express-service.ts";
+import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
 
 export const SESSION_COOKIE = "studio_session";
@@ -63,6 +64,9 @@ const Body = {
   }),
   expressCreate: z.object({ idea: z.string().min(3).max(4000), mode: z.enum(["eclair", "soigne"]) }),
   expressImprove: z.object({ request: z.string().min(3).max(2000) }),
+  modCreate: z.object({ appid: z.string().regex(/^d{1,10}$/), idea: z.string().min(3).max(4000) }),
+  modText: z.object({ text: z.string().max(4000).default("") }),
+  modApp: z.object({ appid: z.string().regex(/^d{1,10}$/) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({
@@ -121,6 +125,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   // « Transmets » au Concepteur peut créer un nouveau jeu dans la racine des jeux (ADR-34).
   hub.conceptions.gamesRoot = options.gamesRoot;
   hub.express.gamesRoot = options.gamesRoot;
+  hub.mods.gamesRoot = options.gamesRoot;
   const fixedHosts = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
   // Les hôtes Tailscale (« mon-pc.tail1234.ts.net ») s'ajoutent quand le hub y est publié (ADR-30).
   const allowed = { has: (h: string) => fixedHosts.has(h) || hub.extraHosts.has(h) };
@@ -182,6 +187,33 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio/monitor", async () => studioMonitor(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
+    // ── Studio de modding (ADR-65) ──
+    api.get("/mods/games", async () => hub.mods.games());
+    api.post("/mods/loader/install", async (req) => (hub.mods.installLoader(req.human!, Body.modApp.parse(req.body).appid), { ok: true }));
+    api.post("/mods/loader/remove", async (req) => (await hub.mods.removeLoader(req.human!, Body.modApp.parse(req.body).appid), { ok: true }));
+    api.post("/mods/typemap", async (req) => (hub.mods.buildTypemap(req.human!, Body.modApp.parse(req.body).appid), { ok: true }));
+    api.get("/mods", async () => ({ mods: hub.mods.list().map((m) => ({ ...m, events: [] })), running: hub.mods.running()?.id ?? null }));
+    api.post("/mods", async (req) => {
+      const body = Body.modCreate.parse(req.body);
+      return hub.mods.create(req.human!, body.appid, body.idea);
+    });
+    api.get("/mods/:id", async (req) => hub.mods.get((req.params as { id: string }).id));
+    api.post("/mods/:id/reply", async (req) => hub.mods.reply(req.human!, (req.params as { id: string }).id, Body.modText.parse(req.body).text));
+    api.post("/mods/:id/go", async (req) => hub.mods.go(req.human!, (req.params as { id: string }).id));
+    api.post("/mods/:id/install", async (req) => hub.mods.installMod(req.human!, (req.params as { id: string }).id));
+    api.post("/mods/:id/uninstall", async (req) => hub.mods.uninstallMod(req.human!, (req.params as { id: string }).id));
+    api.post("/mods/:id/played", async (req) => hub.mods.played(req.human!, (req.params as { id: string }).id, Body.modText.parse(req.body).text));
+    api.post("/mods/:id/improve", async (req) => hub.mods.improve(req.human!, (req.params as { id: string }).id, Body.modText.parse(req.body).text));
+    api.post("/mods/:id/rebuild", async (req) => hub.mods.rebuild(req.human!, (req.params as { id: string }).id));
+    api.post("/mods/:id/cancel", async (req) => {
+      hub.mods.cancel((req.params as { id: string }).id);
+      return { ok: true };
+    });
+    api.post("/mods/:id/hide", async (req) => {
+      hub.mods.hide(req.human!, (req.params as { id: string }).id);
+      return { ok: true };
+    });
+
     // ── Jeu express (ADR-44) ──
     api.get("/express", async () => ({ games: hub.express.list().map((g) => ({ ...g, events: [] })), running: hub.express.running()?.id ?? null }));
     api.post("/express", async (req) => {
@@ -683,6 +715,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const body = Body.agentTool.parse(req.body);
         try {
           if (hub.express.owns(run)) return hub.express.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
+          if (hub.mods.owns(run)) return hub.mods.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
           return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
         } catch (err) {
           return reply.code(403).send({ decision: "deny", reason: (err as Error).message });
@@ -693,6 +726,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const body = Body.agentTool.parse(req.body);
         try {
           if (hub.express.owns(run)) return await hub.express.agentPermission(run, token(req), body.tool_name, body.tool_input);
+          if (hub.mods.owns(run)) return await hub.mods.agentPermission(run, token(req), body.tool_name, body.tool_input);
           return await hub.tasks.agentPermission(run, token(req), body.tool_name, body.tool_input);
         } catch (err) {
           return reply.code(403).send({ behavior: "deny", message: (err as Error).message });
@@ -705,7 +739,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

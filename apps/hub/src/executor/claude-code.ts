@@ -196,7 +196,7 @@ const RESULT_GRACE_MS = 60_000;
  * lui-même : ses aperçus (« Essayer »).
  */
 export function killStragglers(cwd: string, hubPid = process.pid): void {
-  if (process.platform !== "win32" || !/[\\/]worktrees[\\/]/i.test(cwd)) return;
+  if (process.platform !== "win32" || !/[\\/](worktrees|mods)[\\/]/i.test(cwd)) return;
   const path = cwd.replace(/'/g, "''");
   const script = [
     "$all = Get-CimInstance Win32_Process",

@@ -24,6 +24,9 @@ import { RealModel3D, type Model3DPort } from "./art/model3d.ts";
 import type { WebRefsPort } from "./art/web-refs.ts";
 import { readManifest } from "./art/manifest.ts";
 import { ExpressService } from "./express/express-service.ts";
+import { ModService } from "./mods/mod-service.ts";
+import type { SteamGame } from "./mods/steam.ts";
+import { RealToolchain, type ToolchainPort } from "./mods/toolchain.ts";
 import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
 import { PreviewService } from "./executor/preview.ts";
@@ -73,6 +76,9 @@ export type HubOptions = {
   webRefs?: WebRefsPort;
   /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
   expressChecker?: ExpressChecker;
+  /** Studio de modding (ADR-65) : l'outillage (.NET, chargeur de mods) et les jeux Steam ; des faux dans les tests. */
+  modToolchain?: ToolchainPort;
+  steamGames?: () => SteamGame[];
 };
 
 export type Hub = {
@@ -94,6 +100,7 @@ export type Hub = {
   reverse: ReverseService;
   art: ArtService;
   express: ExpressService;
+  mods: ModService;
   autopilot: Autopilot | null;
   previews: PreviewService;
   quality: QualityService;
@@ -308,6 +315,26 @@ export function createHub(options: HubOptions): Hub {
         ? { title: "⚡ Jeu express prêt", body: `${g.title} : à vous de jouer`, url: `#/express/${g.id}`, tag: `express-${g.id}` }
         : { title: "Jeu express interrompu", body: g.error ?? g.title, url: `#/express/${g.id}`, tag: `express-${g.id}` },
     );
+  // Le studio de modding (ADR-65) : des mods pour vos jeux du commerce, une recette par jeu.
+  const mods = new ModService({
+    db,
+    clock,
+    journal,
+    orchestrator,
+    executor: options.executor ?? noExecutor,
+    vcs,
+    toolchain: options.modToolchain ?? new RealToolchain(dataDir),
+    dataDir,
+    agentBaseUrl: options.agentBaseUrl ?? (() => "http://127.0.0.1:0/api/agent/runs"),
+    steam: options.steamGames,
+  });
+  mods.usage = usage;
+  mods.onFinished = (m) =>
+    notifications.notify(
+      m.status === "ready"
+        ? { title: "🧩 Mod prêt", body: `${m.title} (${m.game}) : à installer et essayer`, url: `#/mods/${m.id}`, tag: `mod-${m.id}` }
+        : { title: "Mod interrompu", body: m.error ?? m.title, url: `#/mods/${m.id}`, tag: `mod-${m.id}` },
+    );
   const extraHosts = new Set<string>();
   const remote = options.remotePort ? new RemoteService({ port: options.remotePort, run: options.tailscaleRunner, onHost: (h) => extraHosts.add(h.toLowerCase()) }) : null;
   let closed = false;
@@ -330,6 +357,7 @@ export function createHub(options: HubOptions): Hub {
     reverse,
     art,
     express,
+    mods,
     autopilot,
     previews,
     quality,

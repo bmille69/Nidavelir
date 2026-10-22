@@ -52,6 +52,15 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
   }
   const express = hub.express.running();
   if (express) acts.developer.push({ project: "", text: `Jeu express : ${express.title}`, href: `#/express/${express.id}`, since: express.started_at });
+  // Le studio de modding (ADR-65) : le mod en travail, et ce qui attend votre clic.
+  for (const m of hub.mods.list()) {
+    const href = `#/mods/${m.id}`;
+    if (m.status === "running") acts.developer.push({ project: "", text: `Mod pour ${m.game} : ${m.title}`, href, since: m.updated_at });
+    else if (m.status === "planning") acts.concepteur.push({ project: "", text: `Plan du mod « ${m.title} »`, href, since: m.updated_at });
+    else if (m.status === "waiting") acts.you.push({ project: "", text: `Mod « ${m.title} » (${m.game}) : le plan attend votre accord`, href });
+    else if (m.status === "ready" && !m.installed) acts.you.push({ project: "", text: `Mod « ${m.title} » prêt : à installer et essayer`, href });
+    else if (m.installed && m.outdated) acts.you.push({ project: "", text: `${m.game} a été mis à jour : le mod « ${m.title} » est à reconstruire`, href });
+  }
   for (const a of hub.art.activity()) {
     acts.art_director.push({ project: a.project, text: a.kind === "reply" ? "Vous répond (références, bible…)" : a.kind === "generate" ? `Fabrique ${a.asset} (générateur local)` : `Juge le rendu de ${a.asset}`, href: `#/p/${a.project}/art` });
     busy.add(a.project);
