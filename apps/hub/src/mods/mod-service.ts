@@ -96,6 +96,8 @@ export class ModService {
   #active: Active | null = null;
   gamesRoot: string | null = null;
   usage: UsageService | null = null;
+  /** Où chercher les sauvegardes du jeu (%APPDATA%…) : un environnement vide dans les tests, pour ne jamais lire vos vraies parties. */
+  saveEnv: NodeJS.ProcessEnv = process.env;
   /** Prévenu quand un mod est prêt ou a échoué (notification sur le téléphone). */
   onFinished: ((m: Mod) => void) | null = null;
 
@@ -518,7 +520,7 @@ export class ModService {
     const marker = join(this.#dataDir, "mods", r.id, "sauvegardes.json");
     if (!existsSync(marker)) {
       const dest = join(this.#dataDir, "mods", r.id, "sauvegardes", this.#clock.now().replace(/[:.]/g, "-"));
-      const saved = backupSaves(r, dest);
+      const saved = backupSaves(r, dest, this.saveEnv);
       mkdirSync(join(this.#dataDir, "mods", r.id), { recursive: true });
       writeFileSync(marker, JSON.stringify({ at: this.#clock.now(), dest: saved }, null, 2));
       this.#event(m.id, "info", saved ? `Vos sauvegardes du jeu sont copiées à l'abri (${saved}).` : "Aucune sauvegarde du jeu trouvée à copier.");

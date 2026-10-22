@@ -100,6 +100,7 @@ function setup(opts: { protected?: boolean } = {}) {
   });
   sb.hub = hub;
   hub.mods.gamesRoot = join(sb.dir, "games");
+  hub.mods.saveEnv = { APPDATA: join(sb.dir, "AppData") };
   return { sb, hub, orchestrator, executor, steam, toolchain };
 }
 

@@ -705,6 +705,32 @@ Mesures :
   - la jauge des 5 h.
 - Les jetons sont comptés à la fin de chaque appel : un chantier long n'apparaît dans le mini-graphique qu'une fois fini.
 
+### ADR-65 : le studio de modding (jeux du commerce, une recette par jeu)
+**Statut** : Retenue le 22/10/2026 (« un studio de modding complet, pour créer des mods de la manière la plus simple possible » ; jeux du commerce ; premier jeu : Vampire Survivors).
+- **Principe** :
+  - Vous décrivez un mod en français. Le Concepteur de mods en fait un plan clair (changements, réglages, risques), que vous validez ou faites revoir.
+  - « Fabriquer » : le développeur (Claude Code, Sonnet) écrit le mod **dans son propre dossier** (`<jeux>/mods/<recette>/<NomDuMod>`, en git) et le construit. Le hub reconstruit lui-même ; en cas d'échec, jusqu'à deux corrections.
+  - « Installer » : le hub copie la DLL dans le dossier des mods du jeu (chemin vérifié, rien n'est écrasé, empreintes notées). Vos sauvegardes sont copiées à l'abri la première fois.
+  - « J'ai joué » : le hub lit le journal du chargeur. Une erreur du mod lance une correction, puis une réinstallation.
+  - « Désinstaller » retire exactement ce qui a été posé.
+- **Recettes** (`mods/recipes.ts`) : une par jeu. Chacune décrit les marques du jeu, le chargeur (version épinglée, page officielle), le dossier des mods, le journal, les sauvegardes, la commande de construction permise, les fichiers verrouillés, le gabarit, la consigne de l'agent et les avertissements.
+  - Première recette : **Vampire Survivors** (Unity IL2CPP, sans support officiel). Elle utilise **MelonLoader v0.7.3**, C# .NET 6 et Harmony.
+- **Outillage, sur votre clic** :
+  1. MelonLoader extrait dans le jeu. L'archive est vérifiée : aucun chemin ne sort du jeu, aucun fichier du jeu n'est remplacé. La liste des fichiers posés est gardée, et le chargeur se retire d'un clic.
+  2. Le premier lancement du jeu, que vous faites, génère les assemblies.
+  3. La **carte des types** (`mods/typemap`, un petit outil .NET 9 sans paquet NuGet) liste les noms des types, méthodes, champs et propriétés. Seulement des noms, jamais de code décompilé : c'est là que l'agent cherche où brancher ses patchs.
+- **Garde-fous de l'agent** :
+  - Mêmes règles que les chantiers (`PolicyEngine`, écriture seulement dans le dossier du mod, carte en lecture seule).
+  - Le `.csproj`, les `.props`/`.targets`/`Directory.Build.*`/`nuget.config` sont **verrouillés** : la construction les exécuterait.
+  - Seule la commande exacte `dotnet build -c Release` est permise. Toute autre commande « hors plan » est refusée (là où Express la laisse passer).
+  - Le dossier du jeu n'est jamais écrit par l'agent.
+- **Jeux refusés** : avec anti-triche (`detectGame`). Pour un jeu avec du jeu en ligne, l'avertissement « mods pour le solo » s'affiche. Rien n'est publié.
+- **Version** : le `buildid` Steam est noté à la construction. Si Steam met le jeu à jour, le mod est signalé « à reconstruire », et l'installation est refusée tant qu'il ne l'est pas.
+- **Jeux Steam** (`mods/steam.ts`) : `libraryfolders.vdf` et les `appmanifest_*.acf` de chaque bibliothèque. Constaté : 36 jeux sur 4 bibliothèques ; VS dans `E:games`, reconnu, sans protection.
+- **Reste à faire** :
+  - les sprites dessinés par le générateur (étape 6 du plan) ;
+  - l'essai réel sur votre VS : installer MelonLoader, premier lancement, carte, premier mod.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

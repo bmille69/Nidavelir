@@ -64,9 +64,9 @@ const Body = {
   }),
   expressCreate: z.object({ idea: z.string().min(3).max(4000), mode: z.enum(["eclair", "soigne"]) }),
   expressImprove: z.object({ request: z.string().min(3).max(2000) }),
-  modCreate: z.object({ appid: z.string().regex(/^d{1,10}$/), idea: z.string().min(3).max(4000) }),
+  modCreate: z.object({ appid: z.string().regex(/^\d{1,10}$/), idea: z.string().min(3).max(4000) }),
   modText: z.object({ text: z.string().max(4000).default("") }),
-  modApp: z.object({ appid: z.string().regex(/^d{1,10}$/) }),
+  modApp: z.object({ appid: z.string().regex(/^\d{1,10}$/) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
   analyze: z.object({ path: z.string().min(1) }),
   importProject: z.object({

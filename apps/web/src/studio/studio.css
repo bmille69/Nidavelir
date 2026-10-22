@@ -1406,3 +1406,41 @@ button.secondary.art-aime { color: var(--ok); border-color: var(--ok); backgroun
   .project-monitor { padding: 0 0.6rem 0.4rem; }
   .mon-tile { flex: 1 1 45%; border-left: none; border-top: 1px solid var(--border); }
 }
+
+/* Le studio de modding (ADR-65). */
+.mod-games { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.8rem; }
+.mod-game { display: inline-flex; align-items: center; gap: 0.6rem; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: none; padding: 0.6rem 0.9rem; border-radius: var(--radius); }
+.mod-game span { display: flex; flex-direction: column; min-width: 0; }
+.mod-game small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.mod-game.on { border-color: var(--accent); box-shadow: 0 0 14px rgba(0, 229, 255, 0.2); }
+.mod-game-card { display: flex; flex-direction: column; gap: 0.7rem; }
+.mod-game-card h2 { margin: 0; }
+.mod-warning { margin: 0; color: var(--warn); }
+.mod-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.5rem; }
+.mod-steps li { display: flex; gap: 0.55rem; padding: 0.6rem 0.7rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(0, 0, 0, 0.2); color: var(--muted); }
+.mod-steps li p { margin: 0.15rem 0 0.4rem; }
+.mod-steps li b { color: var(--text); }
+.mod-steps .dot { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-size: 0.75rem; border: 1px solid currentColor; flex: none; }
+.mod-steps li.done { border-color: rgba(74, 222, 128, 0.4); }
+.mod-steps li.done .dot { color: var(--ok); }
+.mod-steps li.now { border-color: var(--accent); }
+.mod-steps li.now .dot { color: var(--accent); }
+.mod-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.6rem; }
+.mod-tile { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.8rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.mod-status.st-ready, .mod-status.st-installed { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
+.mod-status.st-waiting { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.mod-status.st-running, .mod-status.st-planning { color: var(--accent); border-color: var(--accent); }
+.mod-status.st-failed { color: var(--error); border-color: var(--error); }
+.mod-others { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.mod-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 1rem; align-items: start; }
+.mod-main { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+.mod-main .panel-card p { margin: 0 0 0.4rem; }
+.mod-main .panel-card ul { margin: 0 0 0.4rem; padding-left: 1.1rem; }
+.mod-questions { padding: 0.5rem 0.7rem; border-radius: var(--radius-sm); border-left: 3px solid var(--warn); background: rgba(0, 0, 0, 0.2); }
+.mod-log { font-size: 0.75rem; white-space: pre-wrap; margin: 0; padding: 0.5rem; border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.3); max-height: 180px; overflow: auto; }
+.mod-actions { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: flex-end; }
+.mod-feed { max-height: 70vh; }
+@media (max-width: 860px) {
+  .mod-layout { grid-template-columns: minmax(0, 1fr); }
+  .mod-game small { max-width: 220px; }
+}

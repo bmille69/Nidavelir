@@ -11,6 +11,47 @@ export type TaskRow = Task & {
   restarted_from?: string | null;
   visuals?: { id: string; name: string; status: AssetStatus; launched: boolean }[];
 };
+/** Le studio de modding (ADR-65). */
+export type ModToolchain = {
+  dotnet: { installed: boolean; version: string | null };
+  loader: { installed: boolean; version: string | null; generated: boolean; installing: boolean; error: string | null };
+  typemap: { ready: boolean; types: number | null; building: boolean; error: string | null };
+};
+export type ModGame = {
+  appid: string;
+  name: string;
+  dir: string;
+  buildid: string;
+  recipe: { id: string; name: string; warnings: string[]; loader: { name: string; version: string; size: string; firstRun: string } } | null;
+  protection: string | null;
+  toolchain: ModToolchain | null;
+};
+export type ModPlan = { title: string; summary: string; kind: "regles" | "confort" | "apparence"; changes: string[]; settings: { name: string; default: string; description: string }[]; questions: string[]; risks: string[] };
+export type ModStatus = "planning" | "waiting" | "running" | "ready" | "failed" | "cancelled";
+export type Mod = {
+  id: string;
+  recipe: string;
+  appid: string;
+  game: string;
+  game_dir: string;
+  name: string;
+  title: string;
+  idea: string;
+  status: ModStatus;
+  phase: string;
+  root: string;
+  plan: ModPlan | null;
+  report: { summary: string; how_to_test: string; settings: string[]; known_issues: string[] } | null;
+  game_build: string | null;
+  outdated: boolean;
+  installed: { files: { path: string; sha256: string }[]; at: string; build: string } | null;
+  played: { found: boolean; loaded: boolean; lines: string[]; errors: string[]; gameVersion: string | null; at: string } | null;
+  error: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  events: { seq: number; at: string; kind: "phase" | "tool" | "text" | "info" | "error"; text: string }[];
+};
 /** Le moniteur du studio (ADR-64). */
 export type Monitor = {
   at: string;
@@ -340,6 +381,22 @@ export const api = {
   projects: () => request<Project[]>("GET", "/projects"),
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   monitor: () => request<Monitor>("GET", "/studio/monitor"),
+  modGames: () => request<ModGame[]>("GET", "/mods/games"),
+  modLoaderInstall: (appid: string) => request<{ ok: true }>("POST", "/mods/loader/install", { appid }),
+  modLoaderRemove: (appid: string) => request<{ ok: true }>("POST", "/mods/loader/remove", { appid }),
+  modTypemap: (appid: string) => request<{ ok: true }>("POST", "/mods/typemap", { appid }),
+  mods: () => request<{ mods: Mod[]; running: string | null }>("GET", "/mods"),
+  modCreate: (appid: string, idea: string) => request<Mod>("POST", "/mods", { appid, idea }),
+  modGet: (id: string) => request<Mod>("GET", `/mods/${id}`),
+  modReply: (id: string, text: string) => request<Mod>("POST", `/mods/${id}/reply`, { text }),
+  modGo: (id: string) => request<Mod>("POST", `/mods/${id}/go`, {}),
+  modInstall: (id: string) => request<Mod>("POST", `/mods/${id}/install`, {}),
+  modUninstall: (id: string) => request<Mod>("POST", `/mods/${id}/uninstall`, {}),
+  modPlayed: (id: string, text: string) => request<Mod>("POST", `/mods/${id}/played`, { text }),
+  modImprove: (id: string, text: string) => request<Mod>("POST", `/mods/${id}/improve`, { text }),
+  modRebuild: (id: string) => request<Mod>("POST", `/mods/${id}/rebuild`, {}),
+  modCancel: (id: string) => request<{ ok: true }>("POST", `/mods/${id}/cancel`, {}),
+  modHide: (id: string) => request<{ ok: true }>("POST", `/mods/${id}/hide`, {}),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
   express: () => request<{ games: ExpressGame[]; running: string | null }>("GET", "/express"),

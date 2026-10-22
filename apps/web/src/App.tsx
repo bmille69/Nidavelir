@@ -10,6 +10,7 @@ import { Home } from "./studio/Home.tsx";
 import { StudioLive } from "./studio/Live.tsx";
 import { Icon, type IconName } from "./studio/Icon.tsx";
 import { ForYou } from "./studio/ForYou.tsx";
+import { ModsHome, ModView } from "./studio/Mods.tsx";
 import { useStudio } from "./studio/context.tsx";
 import { QualityView } from "./studio/Quality.tsx";
 import { SkillsView } from "./studio/Skills.tsx";
@@ -26,6 +27,8 @@ export type Route =
   | { page: "dissections" }
   | { page: "express" }
   | { page: "expressGame"; id: string }
+  | { page: "mods" }
+  | { page: "mod"; id: string }
   | { page: "dissection"; id: string }
   | { page: "conceive"; project?: string; thread?: string }
   | { page: "conception"; id: string }
@@ -39,6 +42,7 @@ function parse(hash: string): Route {
   if (parts[0] === "competences") return { page: "skills" };
   if (parts[0] === "telephone") return { page: "phone" };
   if (parts[0] === "express") return parts[1] ? { page: "expressGame", id: parts[1] } : { page: "express" };
+  if (parts[0] === "mods") return parts[1] ? { page: "mod", id: parts[1] } : { page: "mods" };
   if (parts[0] === "demontage") return parts[1] ? { page: "dissection", id: parts[1] } : { page: "dissections" };
   if (parts[0] === "concevoir") return { page: "conceive" };
   if (parts[0] === "c" && parts[1]) return { page: "conception", id: parts[1] };
@@ -61,6 +65,8 @@ export function href(route: Route): string {
   if (route.page === "phone") return "#/telephone";
   if (route.page === "express") return "#/express";
   if (route.page === "expressGame") return `#/express/${route.id}`;
+  if (route.page === "mods") return "#/mods";
+  if (route.page === "mod") return `#/mods/${route.id}`;
   if (route.page === "dissections") return "#/demontage";
   if (route.page === "dissection") return `#/demontage/${route.id}`;
   if (route.page === "conceive") return route.project ? `#/p/${encodeURIComponent(route.project)}/concevoir${route.thread ? `/${route.thread}` : ""}` : "#/concevoir";
@@ -158,6 +164,8 @@ export function App() {
           {route.page === "phone" && <PhoneView session={session} />}
           {route.page === "express" && <ExpressHome />}
           {route.page === "expressGame" && <ExpressView key={route.id} id={route.id} />}
+          {route.page === "mods" && <ModsHome />}
+          {route.page === "mod" && <ModView key={route.id} id={route.id} />}
           {route.page === "dissections" && <DissectionHome />}
           {route.page === "dissection" && <DissectionView key={route.id} id={route.id} />}
           {route.page === "conceive" && <ConceptionStart project={route.project} thread={route.thread} />}
