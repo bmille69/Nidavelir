@@ -62,6 +62,18 @@ function Toolchain({ game, onChange }: { game: ModGame; onChange: () => void }) 
         </li>
       ))}
       {error && <li className="error small">{error}</li>}
+      {t.loader.installed && (
+        <li className="mod-remove">
+          <button
+            className="link small"
+            onClick={() => {
+              if (window.confirm(`Retirer ${r.loader.name} de ${game.name} ? Vos mods installés sont retirés aussi ; le jeu redevient exactement comme avant.`)) void act(() => api.modLoaderRemove(game.appid));
+            }}
+          >
+            Retirer {r.loader.name} du jeu
+          </button>
+        </li>
+      )}
     </ol>
   );
 }

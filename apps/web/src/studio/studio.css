@@ -1450,3 +1450,4 @@ button.secondary.art-aime { color: var(--ok); border-color: var(--ok); backgroun
 .mod-sprite-img img { width: 112px; height: 112px; image-rendering: pixelated; object-fit: contain; }
 .mod-sprite .row { display: flex; gap: 0.35rem; }
 .mod-sprite input { flex: 1; min-width: 0; font-size: 0.78rem; }
+.mod-steps li.mod-remove { grid-column: 1 / -1; border: none; background: none; padding: 0; }
