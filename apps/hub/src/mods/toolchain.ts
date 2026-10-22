@@ -30,6 +30,9 @@ export interface ToolchainPort {
   build(r: GameRecipe, modDir: string): Promise<RunResult>;
 }
 
+/** Le tar de Windows (bsdtar), qui ouvre les .zip ; celui de Git Bash (GNU tar) ne le sait pas. */
+const TAR = process.platform === "win32" && existsSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")) ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+
 const run = (cmd: string, args: string[], cwd: string, timeoutMs = 10 * 60_000): Promise<RunResult> =>
   new Promise((resolve) => {
     execFile(cmd, args, { cwd, windowsHide: true, timeout: timeoutMs, maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -108,7 +111,7 @@ export class RealToolchain implements ToolchainPort {
         await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(zip));
       }
       // La liste des fichiers d'abord : on sait exactement quoi retirer, et rien ne sort du dossier du jeu.
-      const list = await run("tar", ["-tf", zip], dl);
+      const list = await run(TAR, ["-tf", zip], dl);
       if (list.code !== 0) throw new Error(`Archive illisible : ${list.out.slice(-300)}`);
       const entries = list.out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       for (const e of entries) {
@@ -117,7 +120,7 @@ export class RealToolchain implements ToolchainPort {
       }
       const existing = entries.filter((e) => !e.endsWith("/") && existsSync(join(gameDir, e)));
       if (existing.some((e) => !/^MelonLoader[\\/]/i.test(e) && !/^(version|dobby|winhttp)\.dll$/i.test(e))) throw new Error(`Des fichiers du jeu seraient remplacés (${existing.slice(0, 3).join(", ")}) : installation arrêtée`);
-      const x = await run("tar", ["-xf", zip, "-C", gameDir], dl);
+      const x = await run(TAR, ["-xf", zip, "-C", gameDir], dl);
       if (x.code !== 0) throw new Error(`Extraction impossible : ${x.out.slice(-300)}`);
       mkdirSync(join(gameDir, r.modsDir), { recursive: true });
       const files = entries.filter((e) => !e.endsWith("/"));
@@ -135,8 +138,14 @@ export class RealToolchain implements ToolchainPort {
     const meta = this.#loaderMeta(r);
     if (!meta) throw new Error(`${r.loader.name} n'a pas été installé par le studio`);
     for (const f of meta.files) rmSync(join(gameDir, f), { force: true });
-    // Le dossier du chargeur entier (ce qu'il a généré au premier lancement), jamais rien d'autre.
+    // Le dossier du chargeur entier (ce qu'il a généré au premier lancement), et ses dossiers à lui : UserData (ses
+    // réglages et ceux des mods) ; Mods, Plugins et UserLibs seulement s'ils sont vides. Jamais rien d'autre.
     rmSync(join(gameDir, "MelonLoader"), { recursive: true, force: true });
+    rmSync(join(gameDir, "UserData"), { recursive: true, force: true });
+    for (const d of ["Mods", "Plugins", "UserLibs"]) {
+      const p = join(gameDir, d);
+      if (existsSync(p) && readdirSync(p).length === 0) rmSync(p, { recursive: true, force: true });
+    }
     rmSync(join(this.#recipeDir(r), "loader.json"), { force: true });
   }
 
