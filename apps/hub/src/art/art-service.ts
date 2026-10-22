@@ -602,7 +602,7 @@ export class ArtService {
     const model = asset.model;
     const placed = this.#dependents(project, id).filter((t) => t.status === "merged");
     // Une fiche en pixels (jeu vu de haut) : les mesures du modèle sont en pixels du jeu, pas en mètres.
-    const unit = /1 unité = 1 px|px/.test(asset.specs) ? "px" : "m";
+    const unit = /\bpx\b/.test(asset.specs) ? "px" : "m";
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
