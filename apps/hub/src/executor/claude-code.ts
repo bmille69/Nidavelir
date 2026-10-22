@@ -190,18 +190,20 @@ export function describeTool(name: string, input: Record<string, unknown>): stri
 const RESULT_GRACE_MS = 60_000;
 
 /**
- * Les processus orphelins (leur parent n'existe plus) dont la ligne de commande désigne la copie de travail du
- * chantier (dossier propre au hub, sous .data/worktrees), avec leurs descendants : une fois Claude Code fermé, ils
- * gardent des ports et des fichiers ouverts. Les aperçus du hub (« Essayer ») ont le hub pour parent : épargnés.
+ * Les processus dont la ligne de commande désigne la copie de travail du chantier (dossier propre au hub, sous
+ * .data/worktrees), avec leurs descendants : une fois Claude Code fermé, ils gardent des ports et des fichiers ouverts
+ * (souvent lancés par un « cmd » intermédiaire encore vivant, T-0059). Seuls sont épargnés ceux qui descendent du hub
+ * lui-même : ses aperçus (« Essayer »).
  */
-export function killStragglers(cwd: string): void {
+export function killStragglers(cwd: string, hubPid = process.pid): void {
   if (process.platform !== "win32" || !/[\\/]worktrees[\\/]/i.test(cwd)) return;
   const path = cwd.replace(/'/g, "''");
   const script = [
     "$all = Get-CimInstance Win32_Process",
-    "$alive = @{}; foreach ($p in $all) { $alive[[int]$p.ProcessId] = $true }",
-    `$all | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${path}') -and -not $alive[[int]$_.ParentProcessId] } | ForEach-Object { taskkill /PID $_.ProcessId /T /F | Out-Null }`,
-  ].join("; ");
+    "$parent = @{}; foreach ($p in $all) { $parent[[int]$p.ProcessId] = [int]$p.ParentProcessId }",
+    `function FromHub($id) { for ($n = 0; $n -lt 40 -and $parent.ContainsKey($id); $n++) { $id = $parent[$id]; if ($id -eq ${hubPid}) { return $true } }; return $false }`,
+    `$all | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains('${path}') -and -not (FromHub ([int]$_.ProcessId)) } | ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>&1 | Out-Null }`,
+  ].join("\n");
   execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true }, () => {});
 }
 
