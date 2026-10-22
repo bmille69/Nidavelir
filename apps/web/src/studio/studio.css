@@ -1203,6 +1203,7 @@
 .art-status { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; color: var(--muted); }
 .art-status.st-a_valider, .art-status.st-valide { color: var(--c-art); }
 .art-status.st-integre { color: var(--ok); }
+.art-asset.st-ecarte { opacity: 0.6; }
 .art-render img { width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.3); display: block; }
 .art-verdict { padding: 0.5rem 0.7rem; border-radius: var(--radius-sm); border-left: 3px solid var(--warn); background: rgba(0, 0, 0, 0.22); }
 .art-verdict.ok { border-left-color: var(--ok); }

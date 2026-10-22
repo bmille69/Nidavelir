@@ -274,6 +274,10 @@ export function createHub(options: HubOptions): Hub {
   conceptions.art = art;
   // Un visuel validé attend que son chantier ait posé sa place dans le jeu (ADR-60).
   art.tasks = tasks;
+  // La file des visuels attend, comme celle des chantiers, quand la jauge d'abonnement est presque pleine (ADR-62).
+  art.paused = () => tasks.limitPaused();
+  // Un atelier 3D réglé sous Fable reçoit Fable en renfort pour une dernière passe (ADR-62).
+  art.workshopModel = () => models.get("art_workshop");
   conceptions.artState = (project) => {
     const assets = readManifest(projects.get(project).root).assets;
     return assets.length ? assets.slice(-40).map((a) => `- ${a.id} ${a.name} (${a.type}) : ${a.status}`).join("\n") : null;

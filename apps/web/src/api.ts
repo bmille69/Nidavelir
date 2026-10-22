@@ -101,9 +101,9 @@ export type ExpressGame = {
   updated_at: string;
   events: ExpressEvent[];
 };
-export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
+export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre" | "ecarte";
 export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
-export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; model3d?: ArtModelSpec | null; model?: ArtModel | null; ingame?: ArtInGame | null; waitsFor?: string | null; sketches?: ArtSketch[] | null; direction?: ArtSketch | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
+export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; model3d?: ArtModelSpec | null; model?: ArtModel | null; ingame?: ArtInGame | null; waitsFor?: string | null; launchedAt?: string | null; sketches?: ArtSketch[] | null; direction?: ArtSketch | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
 export type ArtModelSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
 export type ArtSketch = { file: string; label: string; prompt: string };
@@ -137,6 +137,8 @@ export type ArtState = {
   messages: ArtMessage[];
   direction: ArtDirectionData;
   busy: { replying: boolean; validating: string[]; generating: ArtGenerating[]; exploring?: string[] };
+  /** La file des visuels (ADR-62), dans l'ordre où les chantiers les attendent. */
+  queue?: { id: string; need: { id: string; title: string } | null }[];
   generator: ArtGenerator;
   workshop3d: Art3D;
 };
@@ -358,6 +360,8 @@ export const api = {
   artInstallBlender: () => request<Art3D>("POST", "/art/blender/install", {}),
   artTripoKey: (key: string) => request<Art3D>("POST", "/art/tripo/key", { key }),
   artModel: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/model`, {}),
+  artLaunch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/launch`, {}),
+  artAside: (slug: string, id: string, aside: boolean) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/aside`, { aside }),
   artRetouch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/retouch`, {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
   artAtelierFile: (slug: string, id: string, name: string) => `/api/human/projects/${slug}/art/atelier/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,

@@ -396,6 +396,75 @@ describe("Directeur artistique (ADR-43)", () => {
     expect(texts.some((t) => /La 3D de A-0001 a été interrompue[\s\S]*Fabriquer la 3D/.test(t))).toBe(true);
     expect(texts.slice(-2)[0]).toMatch(/chitine sombre/);
     expect(sb.hub.db.prepare("SELECT COUNT(*) AS n FROM art_jobs").get()).toEqual({ n: 0 });
+    await Promise.all([sb.hub.tasks.idle(), sb.hub.conversations.idle()]);
+  }, 30_000);
+
+  it("la file des visuels : un à la fois, dans l'ordre des chantiers ; « Lancer » passe devant ; mis de côté, personne n'y touche (ADR-62)", async () => {
+    const { sb, fake, repo, art } = await setup();
+    sb.hub.projects.setAutonomy(sb.human(), "bordee", "workshop");
+    // Trois fiches, avec une question en suspens : la file attend votre réponse.
+    fake.replies.push(
+      '[[ASSET]] {"name": "Kit village", "type": "décor", "usage": "îlots", "specs": ""} [[/ASSET]]\n[[ASSET]] {"name": "Rochers", "type": "décor", "usage": "carrière", "specs": ""} [[/ASSET]]\n[[ASSET]] {"name": "Gardien chasseur", "type": "personnage", "usage": "classe agile", "specs": ""} [[/ASSET]]\n[[CHOIX: Quelle lumière ?]] Dorée | Nuit [[/CHOIX]]',
+    );
+    art.send(sb.human(), "bordee", "La carte");
+    await art.idle();
+    // Deux chantiers en file attendent des visuels : la carrière (A-0002) passe avant le village (A-0001).
+    const thread = sb.hub.conversations.createThread("bordee", "Carte").id;
+    const needing = (title: string, id: string, name: string, at: string) => {
+      const t = sb.hub.tasks.createFromConversation("bordee", { title, goal: `Objectif : ${title}.\n\n${PENDING_VISUALS} :\n- ${id} « ${name} » (décor) : x` }, thread);
+      sb.hub.db.prepare("UPDATE tasks SET data_json = json_set(data_json, '$.queued_at', ?) WHERE id = ?").run(at, t.id);
+      return t;
+    };
+    needing("Village", "A-0001", "Kit village", "2026-10-22T10:00:02.000Z");
+    const quarry = needing("Carrière", "A-0002", "Rochers", "2026-10-22T10:00:01.000Z");
+    expect(art.state("bordee").queue).toEqual([
+      { id: "A-0002", need: { id: quarry.id, title: "Carrière" } },
+      { id: "A-0001", need: expect.objectContaining({ title: "Village" }) },
+      { id: "A-0003", need: null },
+    ]);
+    expect(art.state("bordee").messages.filter((m) => m.text.startsWith("(File des visuels)"))).toHaveLength(0);
+
+    // A-0003 mis de côté : il sort de la file, la DA le sait, et ses balises ne le relancent pas.
+    expect((await art.setAside(sb.human(), "bordee", "A-0003", true)).status).toBe("ecarte");
+    expect(log(repo)).toMatch(/art: A-0003 mis de côté/);
+
+    // Votre réponse : la DA répond, puis la file lui confie la fiche attendue en premier, et une seule.
+    fake.replies.push("Dorée, noté.", '[[ASSET]] {"id": "A-0003", "status": "production"} [[/ASSET]] Je prépare les rochers.');
+    art.send(sb.human(), "bordee", "Quelle lumière ? → Dorée");
+    await art.idle();
+    let st = art.state("bordee");
+    const launched = st.messages.filter((m) => m.text.startsWith("(File des visuels)"));
+    expect(launched).toHaveLength(1);
+    expect(launched[0]!.text).toMatch(new RegExp(`Occupe-toi maintenant de A-0002 « Rochers »[\\s\\S]*Le chantier ${quarry.id} « Carrière » l'attend`));
+    expect(fake.calls.at(-1)!.systemPrompt).toMatch(/<file_des_visuels>[\s\S]*Prochaines dans la file : A-0001[\s\S]*Mis de côté par l'utilisateur[\s\S]*A-0003 « Gardien chasseur »/);
+    expect(st.assets.find((a) => a.id === "A-0003")!.status).toBe("ecarte");
+    expect(st.queue.map((q) => q.id)).toEqual(["A-0001"]);
+
+    // « Lancer » fait passer A-0001 sans attendre ; remis en file, A-0003 y revient à la fin.
+    fake.replies.push("Je m'occupe du village.");
+    art.launch(sb.human(), "bordee", "A-0001");
+    await art.idle();
+    st = art.state("bordee");
+    expect(st.messages.some((m) => m.text.startsWith("(Lancement demandé par l'utilisateur) Occupe-toi maintenant de A-0001"))).toBe(true);
+    expect(() => art.launch(sb.human(), "bordee", "A-0001")).toThrow(/déjà confié/);
+    await art.setAside(sb.human(), "bordee", "A-0003", false);
+    expect(art.state("bordee").queue.map((q) => q.id)).toEqual(["A-0003"]);
+    // Rien ne part tant que les visuels confiés ne sont pas validés.
+    expect(art.state("bordee").messages.filter((m) => /Occupe-toi maintenant de A-0003/.test(m.text))).toHaveLength(0);
+  }, 30_000);
+
+  it("la file des visuels attend quand la jauge d'abonnement est presque pleine (ADR-62)", async () => {
+    const { sb, fake, art } = await setup();
+    art.paused = () => true;
+    fake.replies.push('[[ASSET]] {"name": "Rochers", "type": "décor", "usage": "carrière", "specs": ""} [[/ASSET]]');
+    art.send(sb.human(), "bordee", "Des rochers");
+    await art.idle();
+    expect(art.state("bordee").messages.filter((m) => m.text.startsWith("(File des visuels)"))).toHaveLength(0);
+    art.paused = () => false;
+    fake.replies.push("Je m'en occupe.");
+    art.onTaskStatus({ id: "T-0001", project: "bordee", title: "x", goal: "x", status: "merged" } as Task);
+    await art.idle();
+    expect(art.state("bordee").messages.filter((m) => m.text.startsWith("(File des visuels) Occupe-toi maintenant de A-0001"))).toHaveLength(1);
   }, 30_000);
 
   it("une réponse en échec reste visible et se relance en renvoyant un message", async () => {
@@ -844,6 +913,29 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     const step = fake.calls.find((c) => /ARTISAN 3D/.test(c.systemPrompt))!;
     expect(step.prompt).toMatch(/objet SIMPLE : la scène est vide[\s\S]*Pas d'image de référence/);
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model3d: { simple: true }, model: { source: null, workshop: "Caisse en bois biseautée." } });
+  }, 30_000);
+
+  it("atelier 3D sous Opus : si la finition résiste deux passes, Fable vient en renfort pour une dernière (ADR-62)", async () => {
+    const { sb, fake, art } = await setupLocal();
+    art.installBlender(sb.human());
+    art.workshopModel = () => "opus";
+    const roles: (string | undefined)[] = [];
+    const structured = fake.structured.bind(fake);
+    fake.structured = async (input) => {
+      if (/ARTISAN 3D/.test(input.systemPrompt)) roles.push((input as { role?: string }).role);
+      return structured(input);
+    };
+    const resists = { ok: false, forme_ok: true, mineur: false, summary: "Béton trop clair.", points: ["Baisser la teinte"] };
+    fake.extractions.push(...(artisanSteps() as never[]), resists as never, ...(artisanSteps() as never[]), resists as never, ...(artisanSteps() as never[]), { ok: true, forme_ok: true, summary: "Conforme.", points: [] } as never);
+    fake.replies.push('[[ASSET]] {"name": "Muret", "type": "décor", "usage": "bord de rampe", "specs": "1 unité = 1 px, hauteur 48 px"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 48 | triangles 500 | simple]]');
+    art.send(sb.human(), "bordee", "Un muret");
+    await art.idle();
+    expect([...new Set(roles)]).toEqual(["artisan", "artisan_renfort"]);
+    expect(roles.filter((r) => r === "artisan_renfort")).toHaveLength(2);
+    const texts = art.state("bordee").messages.map((m) => m.text);
+    expect(texts.some((t) => /passe 2 sur 3\)[\s\S]*Fable, le modèle le plus fin, reprend la scène en renfort/.test(t))).toBe(true);
+    expect(texts.some((t) => /conforme\*\* \(passe 3\)[\s\S]*px × /.test(t))).toBe(true);
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
   }, 30_000);
 
   it("dans le jeu : le hub photographie la scène vitrine de l'asset", async () => {

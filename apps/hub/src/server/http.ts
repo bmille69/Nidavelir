@@ -52,6 +52,7 @@ const Body = {
   artMessage: z.object({ text: z.string().min(1).max(20_000) }),
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
+  artAside: z.object({ aside: z.boolean() }),
   tripoKey: z.object({ key: z.string().min(8).max(200) }),
   artReact: z.object({
     verdicts: z.record(z.string().max(300), z.enum(["aime", "evite"]).nullable()).refine((v) => Object.keys(v).length <= 100),
@@ -237,6 +238,15 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.post("/projects/:slug/art/assets/:id/retouch", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.retouchModel(req.human!, slug, id);
+    });
+    // La file des visuels (ADR-62) : lancer un visuel avant son tour, le mettre de côté ou l'y remettre.
+    api.post("/projects/:slug/art/assets/:id/launch", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.launch(req.human!, slug, id);
+    });
+    api.post("/projects/:slug/art/assets/:id/aside", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.setAside(req.human!, slug, id, Body.artAside.parse(req.body).aside);
     });
     api.post("/projects/:slug/art/assets/:id/integrate", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };

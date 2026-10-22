@@ -30,22 +30,24 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
     return { text: r.text.trim(), costUsd: r.costUsd };
   }
 
-  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta; tools?: string[]; tier?: "concept"; readDir?: string; role?: "art" | "artisan" }) {
+  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; meta?: CallMeta; tools?: string[]; tier?: "concept"; readDir?: string; role?: "art" | "artisan" | "artisan_renfort" }) {
     const models = this.#pick();
     const r = await this.#cli.call({
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
       jsonSchema: input.jsonSchema,
       model:
-        input.role === "artisan"
-          ? (models.artisan ?? models.art ?? models.chat)
+        input.role === "artisan_renfort"
+          ? "fable"
+          : input.role === "artisan"
+            ? (models.artisan ?? models.art ?? models.chat)
           : input.role === "art"
             ? (models.art ?? models.chat)
             : input.tier === "concept"
               ? (models.concept ?? models.structured)
               : models.structured,
       // L'artisan 3D regarde des photos et écrit du Python à chaque pas : plus lent qu'un validateur.
-      timeoutMs: input.role === "artisan" ? 900_000 : input.tools?.length || input.readDir ? 480_000 : 240_000,
+      timeoutMs: input.role === "artisan" || input.role === "artisan_renfort" ? 900_000 : input.tools?.length || input.readDir ? 480_000 : 240_000,
       tag: input.meta,
       tools: input.tools,
       readDir: input.readDir,

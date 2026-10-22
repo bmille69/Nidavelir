@@ -7,8 +7,9 @@ import type { Model3DSpec } from "./model3d.ts";
  * Directeur artistique et le développeur : ce qu'il faut produire, où se trouve le fichier validé, où le brancher.
  */
 
-export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
-export const ASSET_STATUSES: AssetStatus[] = ["propose", "production", "a_valider", "valide", "integration", "integre"];
+/** « ecarte » : mis de côté par vous (ADR-62), personne n'y touche tant que vous ne le remettez pas en file. */
+export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre" | "ecarte";
+export const ASSET_STATUSES: AssetStatus[] = ["propose", "production", "a_valider", "valide", "integration", "integre", "ecarte"];
 
 export type Verdict = {
   ok: boolean;
@@ -49,6 +50,8 @@ export type Asset = {
   ingame?: InGame | null;
   /** Validé, mais son intégration attend que ce chantier ait posé sa place dans le jeu (ADR-60). */
   waitsFor?: string | null;
+  /** Confié au Directeur artistique par la file des visuels ou par « Lancer » (ADR-62) : il est en cours tant qu'il n'est pas validé. */
+  launchedAt?: string | null;
   /** Croquis du cadrage (ADR-49) : plusieurs directions, dont le directeur créatif choisit une. */
   sketches?: Sketch[] | null;
   /** Référence de style (Flux Kontext, ADR-51) : l'image dans le style de laquelle cet asset est dessiné. */

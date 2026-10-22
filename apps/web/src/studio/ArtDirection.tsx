@@ -19,8 +19,9 @@ const STATUS: Record<AssetStatus, string> = {
   valide: "Validé",
   integration: "Intégration demandée",
   integre: "Dans le jeu",
+  ecarte: "Mis de côté",
 };
-const ORDER: AssetStatus[] = ["a_valider", "production", "propose", "valide", "integration", "integre"];
+const ORDER: AssetStatus[] = ["a_valider", "production", "propose", "valide", "integration", "integre", "ecarte"];
 
 type Tab = "direction" | "assets" | "moodboard";
 
@@ -246,11 +247,13 @@ export function ArtDirection({ slug }: { slug: string }) {
             <GeneratorCard generator={state.generator} act={act} />
             {state.assets.some((a) => a.model3d) && <Workshop3DCard workshop={state.workshop3d} act={act} />}
             {state.assets.length === 0 && <p className="muted small">Aucun visuel pour l'instant. Le Directeur artistique en propose dès que la direction est posée.</p>}
-            {ORDER.flatMap((s) => state.assets.filter((a) => a.status === s)).map((a) => (
+            {ORDER.flatMap((s) => state.assets.filter((a) => a.status === s).sort((x, y) => queueRank(state.queue, x) - queueRank(state.queue, y))).map((a) => (
               <AssetCard
                 key={a.id}
                 slug={slug}
                 asset={a}
+                queued={state.queue?.findIndex((q) => q.id === a.id) ?? -1}
+                need={state.queue?.find((q) => q.id === a.id)?.need ?? null}
                 validating={state.busy.validating.includes(a.id)}
                 generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
                 local={state.generator.installed}
@@ -532,9 +535,17 @@ function Workshop3DCard({ workshop: w, act }: { workshop: Art3D; act: (fn: () =>
   );
 }
 
+/** Les visuels proposés dans l'ordre de la file (ADR-62) ; ceux déjà confiés au Directeur artistique d'abord. */
+function queueRank(queue: ArtState["queue"], a: ArtAsset): number {
+  const k = queue?.findIndex((q) => q.id === a.id) ?? -1;
+  return k < 0 ? (a.launchedAt ? -1 : 1000) : k;
+}
+
 function AssetCard({
   slug,
   asset: a,
+  queued,
+  need,
   validating,
   generating,
   local,
@@ -544,6 +555,8 @@ function AssetCard({
 }: {
   slug: string;
   asset: ArtAsset;
+  queued: number;
+  need: { id: string; title: string } | null;
   validating: boolean;
   generating: ArtGenerating | null;
   local: boolean;
@@ -571,7 +584,7 @@ function AssetCard({
         <span className="muted small">{a.id}</span>
         <strong className="grow">{a.name}</strong>
         <span className={`pill art-status st-${a.status}`}>
-          {generating ? `Fabrication, tour ${generating.round}/${generating.rounds}` : validating && a.status === "a_valider" ? "Le validateur regarde…" : sketches ? "Croquis à choisir" : STATUS[a.status]}
+          {generating ? `Fabrication, tour ${generating.round}/${generating.rounds}` : validating && a.status === "a_valider" ? "Le validateur regarde…" : sketches ? "Croquis à choisir" : a.status === "propose" && a.launchedAt ? "Confié" : STATUS[a.status]}
         </span>
       </header>
       <p className="small">
@@ -716,7 +729,31 @@ function AssetCard({
         </details>
       )}
 
+      {a.status === "propose" && a.launchedAt && !generating && <p className="small muted">Confié au Directeur artistique : il y travaille (suivez la discussion).</p>}
+      {a.status === "propose" && queued >= 0 && (
+        <p className="small muted">
+          Dans la file des visuels : {queued === 0 ? "le prochain" : `n° ${queued + 1}`}
+          {need ? ` · attendu par le chantier ${need.id} « ${need.title} »` : ""}. Il partira tout seul à son tour.
+        </p>
+      )}
+      {a.status === "ecarte" && <p className="small muted">Mis de côté : personne n'y touche tant que vous ne le remettez pas dans la file.</p>}
+
       <div className="art-actions">
+        {a.status === "propose" && !a.launchedAt && (
+          <button className="small" onClick={() => void act(() => api.artLaunch(slug, a.id))}>
+            <Icon name="play" size={14} /> Lancer maintenant
+          </button>
+        )}
+        {["propose", "production", "a_valider"].includes(a.status) && !generating && !validating && (
+          <button className="secondary small" title="Personne n'y touche, il sort de la file ; vous pourrez l'y remettre" onClick={() => void act(() => api.artAside(slug, a.id, true))}>
+            Mettre de côté
+          </button>
+        )}
+        {a.status === "ecarte" && (
+          <button className="secondary small" onClick={() => void act(() => api.artAside(slug, a.id, false))}>
+            Remettre dans la file
+          </button>
+        )}
         {local && a.prompts.length > 0 && !generating && ["propose", "production", "a_valider", "valide"].includes(a.status) && (
           <button className="small" disabled={validating} onClick={() => void act(() => api.artGenerate(slug, a.id))}>
             <Icon name="sparkle" size={14} /> {last ? "Regénérer" : "Générer"}

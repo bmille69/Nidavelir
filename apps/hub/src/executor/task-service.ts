@@ -521,6 +521,11 @@ export class TaskService {
     }
   }
 
+  /** La jauge d'abonnement est presque pleine : rien de nouveau ne démarre (chantiers, file des visuels). */
+  limitPaused(): boolean {
+    return !!this.#limitWait();
+  }
+
   /** Une jauge d'abonnement presque pleine : délai jusqu'à sa remise à zéro (plus une minute), sinon null. */
   #limitWait(): { ms: number; until: string; window: string } | null {
     const limits = this.usage?.snapshot().limits;

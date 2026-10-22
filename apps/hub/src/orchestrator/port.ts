@@ -33,7 +33,7 @@ export interface OrchestratorPort {
     tier?: "concept";
     /** Dossier à lire, et « art » pour le modèle du Directeur artistique (validateur, ADR-43), « artisan » pour l'artisan 3D (ADR-52). */
     readDir?: string;
-    role?: "art" | "artisan";
+    role?: "art" | "artisan" | "artisan_renfort";
   }): Promise<{
     data: unknown;
     costUsd: number | null;

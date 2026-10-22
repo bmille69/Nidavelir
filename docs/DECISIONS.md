@@ -668,6 +668,18 @@ Mesures :
 - Constaté au passage : le DA ne lit que `studio/art/`, il n'avait donc pas pu ouvrir le dossier de conception transmis (ADR-59). Le dossier y est désormais copié (`studio/art/conceptions/`).
 - **Une conception coupée** vous revient avec un mot : « renvoyez votre dernier message ». Elle ne repart pas seule, car une transmission coupée en route ne doit pas créer les chantiers deux fois.
 
+### ADR-62 : la file des visuels, la mise de côté, et Fable en renfort de l'atelier 3D
+**Statut** : Retenue le 22/10/2026 (« s'assurer de ne pas perdre en qualité avec Opus sur la 3D ; un bouton pour retirer les visuels en attente, aujourd'hui je ne veux pas qu'on s'occupe de A-0003 et A-0004 ; comment je lance les chantiers visuels, et qu'ils s'intègrent au workflow du directeur »).
+- **Qualité 3D** : l'atelier passe sous Opus (choix du 22/10), et le validateur ne change pas : c'est toujours lui qui juge chaque passe. Si la finition résiste aux deux passes, une **troisième passe se fait avec Fable en renfort**, sans repayer Tripo. Ce renfort n'existe que si l'atelier n'est pas déjà réglé sur Fable. Le journal note le modèle de chaque passe (`art.model_validated` / `art.model_rejected`, champ `model`), ce qui permet de comparer. Premier constat réel : le kit A-0006, refusé deux fois sous Fable, a été validé à la deuxième passe d'une retouche sous Opus.
+- **La file des visuels**, construite comme celle des chantiers :
+  - Les fiches proposées sont rangées dans l'ordre où les chantiers en file les attendent ; celles qu'aucun chantier n'attend viennent à la fin.
+  - Le hub en confie **une à la fois** au Directeur artistique, par le message « (File des visuels) Occupe-toi maintenant de A-xxxx… ». Il la mène jusqu'à la validation.
+  - La file avance seulement quand rien n'est en cours : ni fabrication, ni jugement, ni réponse, ni question en attente de la vôtre, ni visuel confié qui attend votre avis. Elle attend aussi quand la jauge d'abonnement est presque pleine, comme les chantiers.
+  - **« Lancer maintenant »** confie tout de suite une fiche, avant son tour.
+  - La fiche affiche sa place dans la file et le chantier qui l'attend. La DA voit la file dans son contexte, et ne lance pas d'elle-même la fabrication des fiches suivantes.
+- **« Mettre de côté »** : un visuel pas encore validé prend le statut `ecarte` (« Mis de côté »). Il sort de la file. La DA sait qu'elle ne doit pas y toucher, et ni ses balises ni la fabrication ne le relancent. **« Remettre dans la file »** le rend « proposé ».
+- Au passage : les mesures d'une fiche en pixels sont dites en pixels au validateur 3D et dans la discussion, plus en mètres.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

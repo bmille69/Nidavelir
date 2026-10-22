@@ -49,6 +49,7 @@ export class ArtError extends Error {
 
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
 export type MoodImage = { file: string; note: string | null };
+export type QueuedVisual = { id: string; need: { id: string; title: string } | null };
 export type ArtState = {
   bible: string | null;
   assets: Asset[];
@@ -61,6 +62,8 @@ export type ArtState = {
    * `exploring` : planches, duels et vignettes en cours, en clair (ADR-58).
    */
   busy: { replying: boolean; validating: string[]; generating: Generating[]; exploring: string[] };
+  /** La file des visuels (ADR-62) : les fiches proposées dans l'ordre où les chantiers les attendent. */
+  queue: QueuedVisual[];
   /** Le générateur d'images local (ADR-46). */
   generator: GenState;
   /** L'atelier 3D : Blender et Tripo (ADR-47). */
@@ -133,6 +136,10 @@ export class ArtService {
   readonly #exploring = new Map<string, Map<string, string>>();
   /** Les chantiers du projet, pour savoir quand un visuel validé a sa place dans le jeu (ADR-60). */
   tasks: { list(project: string): Task[] } | null = null;
+  /** La jauge d'abonnement est presque pleine : la file des visuels n'avance pas (ADR-62). */
+  paused: (() => boolean) | null = null;
+  /** Le modèle réglé pour l'atelier 3D : sous Fable, Fable vient en renfort pour une dernière passe (ADR-62). */
+  workshopModel: (() => string) | null = null;
 
   constructor(deps: {
     db: Db;
@@ -187,6 +194,7 @@ export class ArtService {
       moodboard,
       messages: this.messages(project),
       direction: readDirection(this.#projects.get(project).root),
+      queue: this.visualQueue(project),
       busy: {
         replying: this.#replying.has(project),
         validating: [...(this.#validating.get(project) ?? [])],
@@ -601,8 +609,7 @@ export class ArtService {
     const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80));
     const model = asset.model;
     const placed = this.#dependents(project, id).filter((t) => t.status === "merged");
-    // Une fiche en pixels (jeu vu de haut) : les mesures du modèle sont en pixels du jeu, pas en mètres.
-    const unit = /\bpx\b/.test(asset.specs) ? "px" : "m";
+    const unit = unitOf(asset);
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
@@ -632,6 +639,8 @@ export class ArtService {
   /** Un chantier fusionné dont le titre ou la consigne cite un asset en cours d'intégration : il est intégré. */
   onTaskStatus(task: Task): void {
     if (OVER.includes(task.status)) this.#track(this.#release(task.project));
+    // Un chantier qui bouge change l'ordre de la file des visuels, ou la jauge a pu redescendre.
+    this.#track(Promise.resolve().then(() => this.#advance(task.project)));
     if (task.status !== "merged") return;
     // Un chantier qui pose un provisoire cite les visuels attendus sans les brancher (ADR-60) : seul son titre compte.
     const ids = new Set(`${task.title} ${task.goal.includes(PENDING_VISUALS) ? "" : task.goal}`.match(/A-\d{4,}/g) ?? []);
@@ -742,6 +751,130 @@ export class ArtService {
 
   // ── Tours du Directeur artistique ──
 
+  // ── La file des visuels (ADR-62) ──
+
+  /** Ce que la DA doit savoir de la file : un visuel à la fois, et ceux que l'utilisateur a mis de côté. */
+  #queueContext(gameRoot: string, project: string): string {
+    const assets = readManifest(gameRoot).assets;
+    const aside = assets.filter((a) => a.status === "ecarte");
+    const queue = this.visualQueue(project);
+    return [
+      "<file_des_visuels>",
+      "Le hub te confie les fiches une par une, dans l'ordre où les chantiers en ont besoin (messages « (File des visuels) » ou « (Lancement demandé…) »). Mène celle confiée jusqu'à la validation ; tu peux compléter les fiches suivantes ([[ASSET]]) mais ne lance pas leur fabrication avant leur tour.",
+      queue.length ? `Prochaines dans la file : ${queue.slice(0, 8).map((q) => `${q.id}${q.need ? ` (attendue par ${q.need.id})` : ""}`).join(", ")}.` : "",
+      aside.length ? `Mis de côté par l'utilisateur, n'y touche pas et ne les propose pas : ${aside.map((a) => `${a.id} « ${a.name} »`).join(", ")}.` : "",
+      "</file_des_visuels>",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  #aside(project: string, id: string): boolean {
+    return readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.status === "ecarte";
+  }
+
+  /**
+   * Les fiches proposées pas encore confiées au Directeur artistique, dans l'ordre où les chantiers les attendent : celle
+   * du premier chantier de la file d'abord ; celles qu'aucun chantier n'attend à la fin.
+   */
+  visualQueue(project: string): QueuedVisual[] {
+    let assets: Asset[];
+    try {
+      assets = readManifest(this.#projects.get(project).root).assets;
+    } catch {
+      return [];
+    }
+    const rank = (t: Task) => (t.status === "draft" ? (t.queued_at ? 1 : 2) : 0);
+    const tasks = (this.tasks?.list(project) ?? [])
+      .filter((t) => !OVER.includes(t.status) && t.goal.includes(PENDING_VISUALS))
+      .sort((a, b) => rank(a) - rank(b) || (a.queued_at ?? "").localeCompare(b.queued_at ?? "") || a.id.localeCompare(b.id));
+    const queue = assets
+      .filter((a) => a.status === "propose" && !a.launchedAt)
+      .map((a) => {
+        const cited = new RegExp(`\\n- ${a.id} «`);
+        const at = tasks.findIndex((t) => cited.test(t.goal));
+        return { id: a.id, need: at < 0 ? null : { id: tasks[at]!.id, title: tasks[at]!.title }, at: at < 0 ? Infinity : at };
+      });
+    return queue.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)).map(({ id, need }) => ({ id, need }));
+  }
+
+  /**
+   * Un visuel à la fois, comme les chantiers : la file avance quand rien n'est en cours (fabrication, jugement, réponse,
+   * ou un visuel confié qui attend votre avis) et que la jauge d'abonnement le permet.
+   */
+  #advance(project: string): void {
+    if (this.paused?.()) return;
+    if (this.#replying.has(project) || this.#generating.get(project)?.size || this.#validating.get(project)?.size) return;
+    let gameRoot: string;
+    try {
+      gameRoot = this.#projects.get(project).root;
+    } catch {
+      return;
+    }
+    // Un message sans réponse, ou une question du DA qui attend la vôtre : on ne lui parle pas d'autre chose.
+    const last = this.messages(project).at(-1);
+    if (last?.role === "human" || (last?.role === "art" && last.text.includes(CHOICE_MARK))) return;
+    const m = readManifest(gameRoot);
+    if (m.assets.some((a) => a.status === "production" || a.status === "a_valider" || (a.status === "propose" && a.launchedAt))) return;
+    const next = this.visualQueue(project)[0];
+    if (next) this.#launch(project, next.id, "system", next.need);
+  }
+
+  /** Confier un visuel au Directeur artistique : il le mène jusqu'à la validation. Synchrone jusqu'au message, pour ne jamais le confier deux fois. */
+  #launch(project: string, id: string, by: "human" | "system", need: QueuedVisual["need"]): Asset {
+    const gameRoot = this.#projects.get(project).root;
+    const m = readManifest(gameRoot);
+    const asset = m.assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    asset.launchedAt = this.#clock.now();
+    writeManifest(gameRoot, m);
+    const text = [
+      `(${by === "human" ? "Lancement demandé par l'utilisateur" : "File des visuels"}) Occupe-toi maintenant de ${id} « ${asset.name} » (${asset.type}) : ${asset.usage}`,
+      need ? `Le chantier ${need.id} « ${need.title} » l'attend : il pose un provisoire en attendant.` : "",
+      "Mène-le jusqu'à la validation : cadrage si la bible ne suffit pas (une question à la fois, illustrée), puis fabrication ([[CROQUIS]], [[GENERER]] ou [[MODELE3D]]). Les autres fiches attendent leur tour dans la file.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    this.#insert(project, "human", text, null);
+    this.#journal.append({ project, actor: by === "human" ? { kind: "human" } : { kind: "system" }, type: "art.launched", subject: id, payload: { need: need?.id ?? null } });
+    this.#track(this.#commit(gameRoot, `art: ${id} confié au Directeur artistique (${by === "human" ? "lancé" : "file des visuels"})`));
+    this.#turn(project);
+    return asset;
+  }
+
+  /** « ▶ Lancer » : ce visuel passe tout de suite, avant son tour dans la file. */
+  launch(session: HumanSession, project: string, id: string): Asset {
+    assertHumanSession(session);
+    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    if (asset.status !== "propose") throw new ArtError("Seul un visuel proposé peut être lancé");
+    if (asset.launchedAt) throw new ArtError("Il est déjà confié au Directeur artistique");
+    return this.#launch(project, id, "human", this.visualQueue(project).find((q) => q.id === id)?.need ?? null);
+  }
+
+  /** Mettre un visuel de côté (personne n'y touche, il sort de la file) ou l'y remettre. */
+  async setAside(session: HumanSession, project: string, id: string, aside: boolean): Promise<Asset> {
+    assertHumanSession(session);
+    const gameRoot = this.#projects.get(project).root;
+    const m = readManifest(gameRoot);
+    const asset = m.assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    if (aside) {
+      if (!["propose", "production", "a_valider"].includes(asset.status)) throw new ArtError("Seul un visuel pas encore validé peut être mis de côté");
+      if (this.#generating.get(project)?.has(id) || this.#validating.get(project)?.has(id)) throw new ArtError("Il est en pleine fabrication : attendez la fin, puis mettez-le de côté");
+      this.#setStatus(asset, "ecarte");
+    } else {
+      if (asset.status !== "ecarte") throw new ArtError("Ce visuel n'est pas mis de côté");
+      this.#setStatus(asset, "propose");
+    }
+    asset.launchedAt = null;
+    writeManifest(gameRoot, m);
+    await this.#commit(gameRoot, `art: ${id} ${aside ? "mis de côté" : "remis dans la file des visuels"}`);
+    this.#journal.append({ project, actor: { kind: "human" }, type: aside ? "art.set_aside" : "art.restored", subject: id, payload: {} });
+    this.#advance(project);
+    return asset;
+  }
+
   // ── Redémarrage du hub (ADR-61) ──
 
   /** Un travail long noté en base le temps qu'il dure : s'il est encore là au démarrage, le hub s'est arrêté pendant. */
@@ -751,7 +884,10 @@ export class ArtService {
   }
 
   #jobEnd(key: string): void {
+    const project = (this.#db.prepare("SELECT project FROM art_jobs WHERE key = ?").get(key) as { project: string } | undefined)?.project;
     this.#db.prepare("DELETE FROM art_jobs WHERE key = ?").run(key);
+    // Un travail fini libère peut-être la file des visuels (après la suite : validation, intégration).
+    if (project) this.#track(new Promise((r) => setTimeout(r, 0)).then(() => this.#advance(project)));
   }
 
   /**
@@ -775,7 +911,10 @@ export class ArtService {
         /* projet retiré entre-temps */
       }
     }
-    for (const project of this.#projects.list()) this.#turn(project.slug);
+    for (const project of this.#projects.list()) {
+      this.#turn(project.slug);
+      this.#track(Promise.resolve().then(() => this.#advance(project.slug)));
+    }
     // Après la réponse en attente, sinon ce mot passerait pour elle.
     for (const m of models) {
       const after = (this.#queue.get(m.project) ?? Promise.resolve()).catch(() => {});
@@ -845,6 +984,7 @@ export class ArtService {
       this.#insert(project, "art", `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null);
     } finally {
       this.#replying.delete(project);
+      this.#track(Promise.resolve().then(() => this.#advance(project)));
     }
   }
 
@@ -876,6 +1016,7 @@ export class ArtService {
         ? "La bible existe (bible.md) : relis-la avant de proposer."
         : "Il n'y a pas encore de bible : si l'utilisateur n'a rien demandé d'autre, propose de poser la direction ensemble (conception visuelle, étapes 1 à 4).",
       directionContext(readDirection(p.root), { bible: existsSync(join(artRoot(p.root), "bible.md")), generator: this.#imagegen.state().installed }),
+      this.#queueContext(p.root, project),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -900,7 +1041,7 @@ export class ArtService {
       if (existing) {
         for (const k of ["name", "type", "usage", "specs"] as const) if (str(k)) existing[k] = str(k);
         const status = str("status") as AssetStatus;
-        if (status === "production" || status === "propose") this.#setStatus(existing, status);
+        if ((status === "production" || status === "propose") && existing.status !== "ecarte") this.#setStatus(existing, status);
         existing.updated_at = now;
         done.push(`${existing.id} modifié`);
       } else if (str("name")) {
@@ -978,6 +1119,7 @@ export class ArtService {
 
   /** Une image par direction proposée, sans validateur : c'est vous qui choisissez. */
   #startSketches(project: string, id: string): void {
+    if (this.#aside(project, id)) return;
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: 1, step: "Croquis en attente de la carte graphique" });
@@ -1232,6 +1374,7 @@ export class ArtService {
   // ── Générateur local (ADR-46, ADR-49) ──
 
   #startProduce(project: string, id: string): void {
+    if (this.#aside(project, id)) return;
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: ROUNDS, step: "En attente de la carte graphique" });
@@ -1375,6 +1518,7 @@ export class ArtService {
   }
 
   #startModel(project: string, id: string, retouch = false): void {
+    if (this.#aside(project, id)) return;
     const simple = !!readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.model3d?.simple;
     const missing = this.#missing3d(simple || retouch);
     if (missing) {
@@ -1508,9 +1652,14 @@ export class ArtService {
       // Les dernières remarques du validateur suivent la scène gardée (finition reprise, ou animations changées).
       const base = previous ?? (onlyAnimations ? kept : null);
       let remarks: string[] = base?.verdict ? (base.verdict.points.length ? base.verdict.points : [base.verdict.summary]) : [];
-      for (let pass = 1; pass <= MODEL_ROUNDS; pass++) {
+      // Un atelier réglé sous Fable reçoit Fable en renfort pour une passe de plus si la finition résiste (ADR-62).
+      const workshopModel = this.workshopModel?.() ?? "fable";
+      const last = MODEL_ROUNDS + (workshopModel !== "fable" ? 1 : 0);
+      progress.rounds = last;
+      for (let pass = 1; pass <= last; pass++) {
         progress.round = pass;
-        const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress);
+        const renfort = pass > MODEL_ROUNDS;
+        const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress, renfort);
         progress.stage = "controle";
         progress.note = null;
         progress.step = "Blender exporte le modèle aux mesures du jeu";
@@ -1544,15 +1693,15 @@ export class ArtService {
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
         // De petites retouches qui résistent à la dernière passe n'empêchent pas un modèle jouable d'entrer dans le jeu (ADR-55).
-        const ok = v.ok || (v.mineur && pass === MODEL_ROUNDS);
+        const ok = v.ok || (v.mineur && pass >= MODEL_ROUNDS);
         a.model.verdict = { ok, summary: v.summary, points: v.points, prompt: null, file, by: "validator", at: this.#clock.now() };
         this.#setStatus(a, ok ? "valide" : "production");
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} ${ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
-        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits } });
+        this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass, credits, model: renfort ? "fable" : workshopModel } });
         // Une animation au sens faux ne se corrige pas dans Blender : on s'arrête et on dit laquelle remplacer.
         const swap = !!motion?.remplacements.length;
-        const retry = !ok && v.forme_ok && !swap && pass < MODEL_ROUNDS;
+        const retry = !ok && v.forme_ok && !swap && pass < last;
         this.#insert(
           project,
           "art",
@@ -1563,10 +1712,10 @@ export class ArtService {
               ? `**${id} « ${a.name} » en 3D : conforme** (passe ${pass}). ${v.summary}`
               : ok
                 ? `**${id} « ${a.name} » en 3D : jouable** (passe ${pass}), quelques retouches mineures restent. ${v.summary}`
-                : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${MODEL_ROUNDS}). ${v.summary}`,
+                : `**${id} « ${a.name} » en 3D : pas encore** (passe ${pass} sur ${last}${renfort ? ", renfort Fable" : ""}). ${v.summary}`,
             ...v.points.map((p) => `- ${p}`),
             workshop ? `Dans Blender : ${workshop}` : "",
-            `${done.dims.map((d) => `${d} m`).join(" × ")}, ${done.tris} triangles${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}${credits && pass === 1 ? ` · ${credits} crédits Tripo` : ""}.`,
+            `${done.dims.map((d) => `${d} ${unitOf(a)}`).join(" × ")}, ${done.tris} triangles${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}${credits && pass === 1 ? ` · ${credits} crédits Tripo` : ""}.`,
             pass === 1 && missingAnimations.length
               ? `Tripo a reconnu ce modèle comme « ${rigType ?? "inconnu"} » : ${missingAnimations.join(", ")} n'existe pas pour cette forme, donc absente du modèle.`
               : "",
@@ -1576,7 +1725,9 @@ export class ArtService {
             ok
               ? "Je le fais intégrer dans le jeu."
               : retry
-                ? "La forme est bonne : l'artisan reprend la finition avec ces remarques, sans repayer Tripo."
+                ? pass + 1 > MODEL_ROUNDS
+                  ? "La finition résiste : Fable, le modèle le plus fin, reprend la scène en renfort pour une dernière passe, sans repayer Tripo."
+                  : "La forme est bonne : l'artisan reprend la finition avec ces remarques, sans repayer Tripo."
                 : swap
                   ? "Le reste attend la bonne animation : dites-le au Directeur artistique (ci-dessus), et le modèle sera refait pour 10 crédits Tripo par animation."
                   : v.forme_ok
@@ -1662,7 +1813,7 @@ export class ArtService {
   }
 
   /** L'artisan 3D, pas à pas : il regarde, écrit un peu de Python, le hub l'exécute et lui rend sortie, mesures et photos. */
-  async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating): Promise<string> {
+  async #artisan(project: string, asset: Asset, dir: string, reference: string | null, sheet: string[], remarks: string[], progress: Generating, renfort = false): Promise<string> {
     const journal: string[] = [];
     const spec = asset.model3d!;
     const steps = spec.simple ? WORKSHOP_STEPS : TRIPO_STEPS;
@@ -1701,7 +1852,7 @@ export class ArtService {
           jsonSchema: WORKSHOP_STEP_SCHEMA,
           readDir: dir,
           // Son propre modèle, réglable à part (ADR-52) : Fable par défaut.
-          role: "artisan",
+          role: renfort ? "artisan_renfort" : "artisan",
           meta: { project, agent: "art_director" },
         }));
       } catch (err) {
@@ -1788,7 +1939,7 @@ export class ArtService {
           source ? `Image validée qui a servi de modèle : ${source}` : "Objet simple, modélisé directement dans Blender d'après la fiche (pas d'image de départ).",
           planche.length ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}` : "",
           `Photos (face, trois-quarts, profil, dos, poses d'animation, vue de jeu) : ${renders.join(", ")}`,
-          `Mesures : ${done.dims.map((d) => `${d} m`).join(" × ")} (demandé : ${spec.size} m pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
+          `Mesures : ${done.dims.map((d) => `${d} ${unitOf(a)}`).join(" × ")} (demandé : ${spec.size} ${unitOf(a)} pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
         ].join("\n"),
         jsonSchema: MODEL_SCHEMA,
         readDir: artRoot(this.#projects.get(project).root),
@@ -1972,6 +2123,9 @@ export function safeRel(rel: string): boolean {
 }
 
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
+/** Une fiche en pixels (jeu vu de haut) : les mesures du modèle sont en pixels du jeu, pas en mètres. */
+const unitOf = (a: { specs: string }) => (/\bpx\b/.test(a.specs) ? "px" : "m");
+
 export const sketchQuestion = (id: string, name: string) => `Quel croquis pour ${id} « ${name} » ?`;
 const SKETCH_ANSWER = /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
 /** La question d'un duel de styles, et la réponse de l'interface (ADR-58). */

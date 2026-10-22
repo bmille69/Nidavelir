@@ -148,9 +148,12 @@ describe("direction artistique", () => {
     await phone.screenshot({ path: join(shots, "art-3-telephone.png") });
     await phone.locator(".pane-switch button", { hasText: "Visuels" }).click();
     await expect(phone.locator(".pane-switch button.on").textContent()).resolves.toMatch(/Visuels/);
-    await phone.locator(".art-asset", { hasText: "Icône de poudre" }).waitFor();
+    await phone.locator(".art-asset", { hasText: "Icône de poudre" }).first().waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "art-4-telephone-visuels.png") });
+    // La file des visuels sur une fiche proposée (ADR-62).
+    await phone.locator(".art-asset.st-propose").first().scrollIntoViewIfNeeded();
+    await phone.screenshot({ path: join(shots, "art-6-telephone-file.png") });
     await phone.close();
     expect(errors).toEqual([]);
   });
