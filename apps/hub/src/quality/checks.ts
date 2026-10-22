@@ -135,6 +135,14 @@ export class RealChecker implements CheckerPort {
     const scripts = readScripts(cwd);
     if (!scripts?.test) return { status: "none", detail: "pas de script « test »" };
     if (!existsSync(join(cwd, "node_modules"))) return { status: "none", detail: "dépendances absentes (node_modules)" };
+    const first = await this.#npmTest(cwd);
+    // Incident T-0086 (22/10) : node_modules est partagé entre les copies ; deux lancements de tests en même temps se
+    // disputent le cache de vitest (ENOTEMPTY). Ce n'est pas un défaut du jeu : on relance une fois.
+    if (first.status === "fail" && /ENOTEMPTY|EBUSY/.test(first.detail)) return this.#npmTest(cwd);
+    return first;
+  }
+
+  #npmTest(cwd: string): Promise<CheckOutcome> {
     return new Promise((resolve) => {
       // Commande fixe, sans argument venu de l'extérieur.
       const child = spawn("npm test", {
