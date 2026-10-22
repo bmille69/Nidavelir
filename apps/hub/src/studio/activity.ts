@@ -115,8 +115,10 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
     }
     for (const t of tasks) {
       if (t.status === "plan_review") you(p.slug, `Valider le plan : ${t.title}`, `#/p/${p.slug}/tasks/${t.id}`);
-      if (t.status === "review") you(p.slug, `Relire le résultat : ${t.title}`, `#/p/${p.slug}/tasks/${t.id}`);
+      if (t.status === "review")
+        you(p.slug, t.origin ? `${t.id} « ${t.title} » attend votre mot (« fusionne », à corriger…)` : `Relire le résultat : ${t.title}`, t.origin ? `#/p/${p.slug}/t/${t.origin.thread}` : `#/p/${p.slug}/tasks/${t.id}`);
     }
+    for (const w of hub.art.waiting(p.slug)) you(p.slug, w.text, w.href);
     const proposals = hub.vision.list(p.slug, { type: "proposal", status: "submitted" }).length;
     if (proposals) you(p.slug, `${proposals} proposition(s) à arbitrer`, `#/p/${p.slug}/decisions`, proposals);
   }

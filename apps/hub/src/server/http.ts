@@ -18,6 +18,8 @@ import { defaultDocNature } from "../projects/bootstrap.ts";
 import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
 import { studioSnapshot } from "../studio/activity.ts";
+import { PENDING_VISUALS, readManifest, type Asset } from "../art/manifest.ts";
+import { studioMonitor } from "../studio/monitor.ts";
 import { MODEL_CHOICES, MODEL_ROLES, type ModelId } from "../usage/model-service.ts";
 import { openInEdge, PreviewError, type Preview } from "../executor/preview.ts";
 import { QualityError } from "../quality/quality-service.ts";
@@ -176,6 +178,8 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     // ── Projets et import ──
     api.get("/projects", async () => hub.projects.list());
     api.get("/studio", async () => studioSnapshot(hub));
+    // Le moniteur (ADR-64) : files, machine, consommation de la dernière heure.
+    api.get("/studio/monitor", async () => studioMonitor(hub));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
     // ── Jeu express (ADR-44) ──
@@ -435,8 +439,34 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/projects/:slug/tasks", async (req) => {
       const { slug } = req.params as { slug: string };
       const pending = hub.tasks.escalations(slug, { status: "pending" });
+      // La chaîne de production (ADR-64) : rang réel dans la file, chantier repris après un redémarrage, visuels attendus.
+      const queue = hub.tasks.queued(slug).map((t) => t.id);
+      const restarted = new Map(
+        hub.journal
+          .list({ project: slug, limit: 2000, latest: true })
+          .filter((e) => e.type === "task.restarted" && e.subject)
+          .map((e) => [e.subject!, String((e.payload as { interrupted?: string }).interrupted ?? "")]),
+      );
+      let assets: Asset[] = [];
+      try {
+        assets = readManifest(hub.projects.get(slug).root).assets;
+      } catch {
+        /* pas de manifeste */
+      }
+      const visual = (id: string) => {
+        const a = assets.find((x) => x.id === id);
+        return a ? { id, name: a.name, status: a.status, launched: !!a.launchedAt } : null;
+      };
+      const visualsOf = (t: { title: string; goal: string }) => {
+        const own = /^A-\d{4,}/.exec(t.title)?.[0];
+        const ids = own ? [own] : t.goal.includes(PENDING_VISUALS) ? [...t.goal.matchAll(/\n- (A-\d{4,}) «/g)].map((m) => m[1]!) : [];
+        return ids.map(visual).filter((v) => v !== null);
+      };
       return hub.tasks.list(slug).map((t) => ({
         ...t,
+        queue_rank: queue.indexOf(t.id) >= 0 ? queue.indexOf(t.id) + 1 : null,
+        restarted_from: restarted.get(t.id) || null,
+        visuals: visualsOf(t),
         rating: hub.quality.rating(slug, t.id),
         pending_escalations: pending.filter((e) => e.task === t.id).length,
         cost_usd: hub.tasks.runs(slug, t.id).reduce((n, r) => n + (r.cost_usd ?? 0), 0),

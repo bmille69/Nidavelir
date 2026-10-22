@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ago, describeEvent } from "./agents.ts";
 import { useNow, useStudio } from "./context.tsx";
 import { OrgChart } from "./OrgChart.tsx";
+import { MonitorBar } from "./Monitor.tsx";
 
 /**
  * Le studio en direct : la salle de contrôle. L'équipe sur son organigramme animé
@@ -45,6 +46,7 @@ export function StudioLive() {
             <Stat value={snap.projects.reduce((n, p) => n + p.decisions, 0)} label="décision(s) validée(s)" />
           </div>
         </header>
+        <MonitorBar />
 
         <section className="panel-card team stage">
           <div className="section-head">

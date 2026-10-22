@@ -751,6 +751,29 @@ export class ArtService {
 
   // ── Tours du Directeur artistique ──
 
+  /** Ce qui attend votre avis chez le Directeur artistique (« À vous de jouer », ADR-64). */
+  waiting(project: string): { text: string; href: string }[] {
+    const href = `#/p/${project}/art`;
+    const out: { text: string; href: string }[] = [];
+    const last = this.messages(project).at(-1);
+    if (last?.role === "art" && last.text.includes(CHOICE_MARK) && !this.#replying.has(project)) out.push({ text: "Le Directeur artistique attend votre réponse à sa question", href });
+    let assets: Asset[] = [];
+    try {
+      assets = readManifest(this.#projects.get(project).root).assets;
+    } catch {
+      return out;
+    }
+    const busy = (id: string) => !!this.#generating.get(project)?.has(id) || !!this.#validating.get(project)?.has(id);
+    for (const a of assets) {
+      if (busy(a.id)) continue;
+      if (a.sketches?.length && !a.direction && a.sketches.every((s) => s.file)) out.push({ text: `${a.id} « ${a.name} » : choisissez un croquis`, href });
+      else if (a.status === "production" && a.model?.verdict && !a.model.verdict.ok) out.push({ text: `${a.id} « ${a.name} » : la 3D attend votre décision`, href });
+      else if (a.status === "production" && !a.model && a.verdict && !a.verdict.ok) out.push({ text: `${a.id} « ${a.name} » : l'image attend votre décision`, href });
+      else if (a.status === "a_valider") out.push({ text: `${a.id} « ${a.name} » : rendu à valider`, href });
+    }
+    return out;
+  }
+
   // ── La file des visuels (ADR-62) ──
 
   /** Ce que la DA doit savoir de la file : un visuel à la fois, et ceux que l'utilisateur a mis de côté. */

@@ -526,6 +526,12 @@ export class TaskService {
     return !!this.#limitWait();
   }
 
+  /** La jauge qui arrête la file, et jusqu'à quand (moniteur, ADR-64). */
+  limitInfo(): { until: string; window: string } | null {
+    const w = this.#limitWait();
+    return w ? { until: w.until, window: w.window } : null;
+  }
+
   /** Une jauge d'abonnement presque pleine : délai jusqu'à sa remise à zéro (plus une minute), sinon null. */
   #limitWait(): { ms: number; until: string; window: string } | null {
     const limits = this.usage?.snapshot().limits;

@@ -9,6 +9,7 @@ import { Sidebar, Logo } from "./studio/Sidebar.tsx";
 import { Home } from "./studio/Home.tsx";
 import { StudioLive } from "./studio/Live.tsx";
 import { Icon, type IconName } from "./studio/Icon.tsx";
+import { ForYou } from "./studio/ForYou.tsx";
 import { useStudio } from "./studio/context.tsx";
 import { QualityView } from "./studio/Quality.tsx";
 import { SkillsView } from "./studio/Skills.tsx";
@@ -145,6 +146,7 @@ export function App() {
           </a>
           <LiveBadge />
         </header>
+        <ForYou floating />
         <Sidebar route={route} session={session} onClose={() => setMenu(false)} />
         <div className="menu-backdrop" onClick={() => setMenu(false)} />
         <div className="main">
@@ -175,6 +177,7 @@ function LiveBadge() {
   const snap = useStudio();
   const working = snap?.agents.filter((a) => a.id !== "you" && a.state !== "idle").length ?? 0;
   const forYou = snap?.agents.find((a) => a.id === "you")?.activities.length ?? 0;
+  if (forYou) return <ForYou />;
   return (
     <a href={forYou ? "#/" : "#/direct"} className={`live-badge ${working ? "on" : ""} ${forYou ? "warn" : ""}`}>
       {forYou ? (

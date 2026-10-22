@@ -98,6 +98,32 @@ export class UsageService {
     return this.snapshot();
   }
 
+  /** La dernière heure, par tranches de 5 minutes (ADR-64) : jetons et équivalent en dollars, comptés à la fin de chaque appel. */
+  recent(): { buckets: { at: string; tokens: number; costUsd: number }[]; last15: { tokens: number; costUsd: number; calls: number }; hour: { tokens: number; costUsd: number; calls: number } } {
+    const now = Date.parse(this.#clock.now());
+    const rows = this.#db
+      .prepare("SELECT at, input_tokens + output_tokens + cache_read_tokens + cache_write_tokens AS tokens, cost_usd FROM usage_log WHERE at >= ?")
+      .all(new Date(now - 3_600_000).toISOString()) as { at: string; tokens: number; cost_usd: number | null }[];
+    const buckets = Array.from({ length: 12 }, (_, k) => ({ at: new Date(now - (12 - k) * 300_000).toISOString(), tokens: 0, costUsd: 0 }));
+    const last15 = { tokens: 0, costUsd: 0, calls: 0 };
+    const hour = { tokens: 0, costUsd: 0, calls: 0 };
+    for (const r of rows) {
+      const age = now - Date.parse(r.at);
+      const b = buckets[Math.min(11, Math.max(0, 11 - Math.floor(age / 300_000)))]!;
+      b.tokens += Number(r.tokens);
+      b.costUsd += r.cost_usd ?? 0;
+      hour.tokens += Number(r.tokens);
+      hour.costUsd += r.cost_usd ?? 0;
+      hour.calls++;
+      if (age <= 900_000) {
+        last15.tokens += Number(r.tokens);
+        last15.costUsd += r.cost_usd ?? 0;
+        last15.calls++;
+      }
+    }
+    return { buckets, last15, hour };
+  }
+
   snapshot(): UsageSnapshot {
     const now = Date.parse(this.#clock.now());
     const dayStart = new Date(now);

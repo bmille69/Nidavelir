@@ -5,8 +5,19 @@ import { RatingBox } from "./Rating.tsx";
 import { StatusBadge } from "../pages/TasksView.tsx";
 import { ago } from "./agents.ts";
 import { useNow } from "./context.tsx";
+import { MonitorBar } from "./Monitor.tsx";
 
 const ACTIVE = new Set(["draft", "planning", "plan_review", "approved", "running", "review", "changes_requested"]);
+
+/** L'état d'un visuel attendu par un chantier, en clair (ADR-64). */
+function visualLabel(v: NonNullable<TaskRow["visuals"]>[number]): string {
+  if (v.status === "integre") return "dans le jeu";
+  if (v.status === "integration") return "en intégration";
+  if (v.status === "valide") return "validé";
+  if (v.status === "ecarte") return "mis de côté";
+  if (v.status === "production" || v.status === "a_valider" || v.launched) return "chez le DA";
+  return "provisoire";
+}
 
 /** Panneau de droite en mode atelier : les chantiers en cours et ce qu'il reste à faire de votre côté. */
 export function WorkshopPanel({ slug }: { slug: string }) {
@@ -21,9 +32,11 @@ export function WorkshopPanel({ slug }: { slug: string }) {
   }, [load]);
 
   // En cours d'abord (le plus récent en haut), puis les chantiers prêts à lancer, dans l'ordre prévu.
+  // La file dans son vrai ordre (ADR-64) : une intégration de visuel passe devant, les brouillons à la fin.
+  const rank = (t: TaskRow) => (t.status !== "draft" ? 0 : t.queue_rank ? t.queue_rank : 10_000);
   const active = tasks
     .filter((t) => ACTIVE.has(t.status))
-    .sort((a, b) => (a.status === "draft") !== (b.status === "draft") ? (a.status === "draft" ? 1 : -1) : a.status === "draft" ? (a.id > b.id ? 1 : -1) : b.updated_at > a.updated_at ? 1 : -1);
+    .sort((a, b) => rank(a) - rank(b) || (a.status !== "draft" ? (b.updated_at > a.updated_at ? 1 : -1) : a.id > b.id ? 1 : -1));
   const done = tasks.filter((t) => t.status === "merged").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1)).slice(0, 5);
   const action = (t: TaskRow) =>
     t.pending_escalations > 0
@@ -44,6 +57,7 @@ export function WorkshopPanel({ slug }: { slug: string }) {
         <h2 className="grow">Chantiers</h2>
         <TryButton slug={slug} label="▶ Lancer le jeu" small />
       </div>
+      <MonitorBar slug={slug} />
       {error && <p className="error small">{error}</p>}
       {active.length === 0 && <p className="muted small">Aucun chantier en cours. Quand une proposition du directeur vous va, dites « go ».</p>}
       <ul className="workshop-list">
@@ -54,6 +68,22 @@ export function WorkshopPanel({ slug }: { slug: string }) {
               <a href={`#/p/${slug}/tasks/${t.id}`}>
                 <span className="muted small">{t.id}</span>
                 <strong>{t.title}</strong>
+                {(t.queue_rank || t.restarted_from) && (
+                  <span className="muted small">
+                    {t.queue_rank ? `n° ${t.queue_rank} dans la file` : ""}
+                    {t.queue_rank && t.restarted_from ? " · " : ""}
+                    {t.restarted_from ? `repris après un redémarrage (ancien ${t.restarted_from})` : ""}
+                  </span>
+                )}
+                {t.visuals && t.visuals.length > 0 && (
+                  <span className="task-visuals">
+                    {t.visuals.map((v) => (
+                      <span key={v.id} className={`visual-chip vs-${v.status}${v.launched ? " launched" : ""}`} title={`${v.id} « ${v.name} » : ${visualLabel(v)}`}>
+                        {v.id} · {visualLabel(v)}
+                      </span>
+                    ))}
+                  </span>
+                )}
                 <span className="row">
                   <StatusBadge status={t.status} queued={!!t.queued_at} />
                   <span className="muted small">{ago(t.updated_at, now)}</span>

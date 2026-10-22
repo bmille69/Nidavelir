@@ -689,6 +689,22 @@ Mesures :
   - L'export le transmet au validateur. Faces à l'envers ou débris : le modèle n'est pas « ok », mais « forme_ok », donc réparable dans Blender. Des arêtes ouvertes seules sont sans gravité pour un jeu.
   - Vérifié sur Blender 4.5.14 : 2 faces retournées et un débris détectés, puis réparés.
 
+### ADR-64 : « À vous de jouer », la chaîne de production et le moniteur
+**Statut** : Retenue le 22/10/2026 (« 2-3 upgrades visuelles » ; « un petit monitoring de qui tourne, ressources du PC, consommation en live »).
+- **« À vous de jouer »** : une cloche « n à vous » (en bas à droite sur PC, dans la barre du haut sur téléphone) ouvre la liste de tout ce qui attend votre action, tous projets confondus. Chaque ligne mène au bon endroit. Elle comprend désormais :
+  - un chantier qui attend votre mot (le lien ouvre sa discussion) ;
+  - une question du Directeur artistique sans réponse ;
+  - un croquis à choisir ;
+  - une 3D ou une image à trancher, et un rendu à valider (`ArtService.waiting`).
+- **La chaîne de production** (panneau « Chantiers ») : la file s'affiche dans son vrai ordre (l'intégration de visuel passe devant), avec « n° k dans la file ». Un chantier repris après un redémarrage porte la mention « ancien T-xxxx ». Sous chaque chantier, les visuels qu'il attend ont une étiquette d'état : provisoire, chez le DA, validé, en intégration, dans le jeu, mis de côté.
+- **Le moniteur** (en tête des chantiers et dans « En direct », `GET /studio/monitor`, interrogé toutes les 5 s) :
+  - la file : en cours, en attente de votre mot, ou « ⏸ en pause, jauge à n %, repart seule à HH:MM » ;
+  - qui travaille ;
+  - processeur et mémoire ; carte graphique (via nvidia-smi : charge et mémoire) ;
+  - les jetons des 15 dernières minutes, avec un mini-graphique de la dernière heure par tranches de 5 min ;
+  - la jauge des 5 h.
+- Les jetons sont comptés à la fin de chaque appel : un chantier long n'apparaît dans le mini-graphique qu'une fois fini.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

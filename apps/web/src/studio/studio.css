@@ -1361,3 +1361,42 @@ button.secondary.art-aime { color: var(--ok); border-color: var(--ok); backgroun
   .art-choice-visual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .art-board-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* « À vous de jouer » (ADR-64) : la cloche du PC en haut à droite, celle du téléphone dans sa barre. */
+.for-you { position: relative; }
+.for-you.floating { position: fixed; bottom: 18px; right: 18px; z-index: 40; }
+.for-you.floating .for-you-pop { top: auto; bottom: calc(100% + 8px); }
+.for-you.floating .for-you-btn { font-size: 0.85rem; padding: 0.55rem 1rem; }
+.for-you-btn { cursor: pointer; font: inherit; font-size: 0.76rem; font-weight: 700; }
+.for-you-backdrop { position: fixed; inset: 0; z-index: 41; }
+.for-you-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 42; width: min(380px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; padding: 0.8rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-solid); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); }
+.for-you-pop h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.for-you-pop ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.for-you-pop a { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+.for-you-pop a:hover { border-color: var(--warn); }
+@media (max-width: 860px) {
+  .for-you.floating { display: none; }
+  .mobile-bar .for-you { margin-left: auto; }
+}
+
+/* La chaîne de production et le moniteur (ADR-64). */
+.task-visuals { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.visual-chip { font-size: 0.68rem; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px dashed var(--border); color: var(--muted); white-space: nowrap; }
+.visual-chip.launched, .visual-chip.vs-production, .visual-chip.vs-a_valider { border-style: solid; color: var(--c-art); border-color: color-mix(in srgb, var(--c-art) 50%, transparent); }
+.visual-chip.vs-valide, .visual-chip.vs-integration { border-style: solid; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.visual-chip.vs-integre { border-style: solid; color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.visual-chip.vs-ecarte { opacity: 0.55; text-decoration: line-through; }
+.monitor { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.6rem; }
+.mon-queue { font-size: 0.82rem; padding: 0.5rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(255, 255, 255, 0.03); }
+.mon-queue.paused { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.mon-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.4rem; }
+.mon-tile { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.45rem 0.55rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(255, 255, 255, 0.025); min-width: 0; }
+.mon-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.mon-value { font-size: 0.8rem; font-weight: 650; overflow-wrap: anywhere; }
+.mon-meter { display: block; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.mon-meter > span { display: block; height: 100%; background: var(--ok); transition: width 0.6s ease; }
+.mon-meter > span.warm { background: var(--warn); }
+.mon-meter > span.hot { background: var(--danger, #f43f5e); }
+.mon-spark { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+.mon-spark > span { flex: 1; background: var(--c-art); border-radius: 1px; opacity: 0.85; }
+.mon-spark > span.empty { background: rgba(255, 255, 255, 0.1); }

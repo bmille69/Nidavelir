@@ -2,7 +2,22 @@ import type { Escalation, ItemFrontmatter, Message, Plan, Run, Task, Thread, Ver
 
 export type { ItemFrontmatter as Item, Message, Thread, Task, Plan, Escalation };
 export type Rating = { rating: "up" | "down"; note: string | null; at: string };
-export type TaskRow = Task & { pending_escalations: number; cost_usd: number; rating: Rating | null };
+/** queue_rank, restarted_from et visuals : la chaîne de production (ADR-64). */
+export type TaskRow = Task & {
+  pending_escalations: number;
+  cost_usd: number;
+  rating: Rating | null;
+  queue_rank?: number | null;
+  restarted_from?: string | null;
+  visuals?: { id: string; name: string; status: AssetStatus; launched: boolean }[];
+};
+/** Le moniteur du studio (ADR-64). */
+export type Monitor = {
+  at: string;
+  queues: { project: string; name: string; running: { id: string; title: string; status: string } | null; next: { id: string; title: string } | null; queued: number; paused: { until: string; window: string } | null }[];
+  machine: { cpu: number | null; ram: { used: number; total: number }; gpu: { name: string; load: number; memUsed: number; memTotal: number } | null };
+  tokens: { buckets: { at: string; tokens: number; costUsd: number }[]; last15: { tokens: number; costUsd: number; calls: number }; hour: { tokens: number; costUsd: number; calls: number } };
+};
 export type QualityStats = {
   launched: number;
   merged: number;
@@ -324,6 +339,7 @@ export const api = {
   },
   projects: () => request<Project[]>("GET", "/projects"),
   studio: () => request<StudioSnapshot>("GET", "/studio"),
+  monitor: () => request<Monitor>("GET", "/studio/monitor"),
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
   express: () => request<{ games: ExpressGame[]; running: string | null }>("GET", "/express"),
