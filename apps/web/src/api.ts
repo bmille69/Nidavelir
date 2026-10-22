@@ -135,9 +135,20 @@ export type ArtState = {
   assets: ArtAsset[];
   moodboard: { file: string; note: string | null }[];
   messages: ArtMessage[];
-  busy: { replying: boolean; validating: string[]; generating: ArtGenerating[] };
+  direction: ArtDirectionData;
+  busy: { replying: boolean; validating: string[]; generating: ArtGenerating[]; exploring?: string[] };
   generator: ArtGenerator;
   workshop3d: Art3D;
+};
+/** La direction visuelle (ADR-58) : studio/art/direction.json. */
+export type ArtTaste = "aime" | "evite";
+export type ArtReference = { file: string; board: string; theme: string; source: string; title: string; why: string; verdict: ArtTaste | null; at: string };
+export type ArtDirectionData = {
+  choices: { question: string; answer: string; image: string | null; at: string }[];
+  boards: { id: string; theme: string; at: string; failed: { url: string; reason: string }[] }[];
+  references: ArtReference[];
+  duels: { id: string; subject: string; options: { label: string; prompt: string; file: string }[]; chosen: number | null; at: string }[];
+  style: { duel: string; label: string; prompt: string; file: string; at: string } | null;
 };
 export type GameScan = {
   path: string;
@@ -337,6 +348,8 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? (res.status === 413 ? "Image trop lourde (15 Mo au plus)" : `Erreur ${res.status}`));
     return data as { file: string };
   },
+  artReact: (slug: string, body: { verdicts: Record<string, ArtTaste | null>; comment?: string; tell?: boolean }) =>
+    request<ArtDirectionData>("POST", `/projects/${slug}/art/references`, body),
   artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
   artGenerate: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/generate`, {}),
   artInstallGenerator: () => request<ArtGenerator>("POST", "/art/generator/install", {}),

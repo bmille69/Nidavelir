@@ -21,6 +21,7 @@ import { ReverseService } from "./reverse/reverse-service.ts";
 import { ArtService } from "./art/art-service.ts";
 import { ComfyImageGen, type ImageGenPort } from "./art/imagegen.ts";
 import { RealModel3D, type Model3DPort } from "./art/model3d.ts";
+import type { WebRefsPort } from "./art/web-refs.ts";
 import { ExpressService } from "./express/express-service.ts";
 import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
@@ -67,6 +68,8 @@ export type HubOptions = {
   imagegen?: ImageGenPort;
   /** Atelier 3D du Directeur artistique : Tripo et Blender (ADR-47). Défaut : les vrais, sur votre clic et votre clé. */
   model3d?: Model3DPort;
+  /** Téléchargement des références web du Directeur artistique (ADR-58). Défaut : le vrai, adresses publiques seulement. */
+  webRefs?: WebRefsPort;
   /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
   expressChecker?: ExpressChecker;
 };
@@ -256,6 +259,7 @@ export function createHub(options: HubOptions): Hub {
     conversations,
     imagegen,
     model3d: options.model3d ?? new RealModel3D(dataDir),
+    webRefs: options.webRefs,
     // La capture prise par les vérifications avant la fusion sert à juger le visuel dans le jeu (ADR-48).
     screenshot: (project, task) => checks?.screenshotPath(project, task) ?? null,
     // La scène vitrine du jeu, photographiée sur le jeu lui-même après la fusion (ADR-49).

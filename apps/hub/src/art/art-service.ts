@@ -12,10 +12,14 @@ import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
+import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
+import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
 import { rigAnimations, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
+  BOARD_MARK,
   CHOICE_MARK,
+  VISUAL_SEP,
   DONE_MARK,
   IMAGE_MARK,
   INGAME_SCHEMA,
@@ -50,8 +54,13 @@ export type ArtState = {
   assets: Asset[];
   moodboard: MoodImage[];
   messages: ArtMessage[];
-  /** Le Directeur artistique est en train de répondre, le validateur de juger, le générateur de fabriquer. */
-  busy: { replying: boolean; validating: string[]; generating: Generating[] };
+  /** La direction visuelle : choix tranchés, références et avis, duels, style retenu (ADR-58). */
+  direction: Direction;
+  /**
+   * Le Directeur artistique est en train de répondre, le validateur de juger, le générateur de fabriquer ;
+   * `exploring` : planches, duels et vignettes en cours, en clair (ADR-58).
+   */
+  busy: { replying: boolean; validating: string[]; generating: Generating[]; exploring: string[] };
   /** Le générateur d'images local (ADR-46). */
   generator: GenState;
   /** L'atelier 3D : Blender et Tripo (ADR-47). */
@@ -117,6 +126,9 @@ export class ArtService {
   /** Les modèles déjà branchés dans le jeu dont une version retouchée part en intégration (ADR-55) : « project/id ». */
   readonly #replacing = new Set<string>();
   readonly #vitrine: (project: string, id: string, file: string) => Promise<string | null>;
+  readonly #webRefs: WebRefsPort;
+  /** Planches, duels et vignettes en cours, par projet : clé → ce qui se passe, en clair (ADR-58). */
+  readonly #exploring = new Map<string, Map<string, string>>();
 
   constructor(deps: {
     db: Db;
@@ -132,6 +144,8 @@ export class ArtService {
     screenshot?: (project: string, task: string) => string | null;
     /** Une capture de la scène vitrine du jeu (« ?vitrine=A-0001 ») dans `file`, ou null si elle n'a pas pu être prise (ADR-49). */
     vitrine?: (project: string, id: string, file: string) => Promise<string | null>;
+    /** Téléchargement des références trouvées sur le web (ADR-58). */
+    webRefs?: WebRefsPort;
   }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
@@ -144,6 +158,7 @@ export class ArtService {
     this.#model3d = deps.model3d;
     this.#screenshot = deps.screenshot ?? (() => null);
     this.#vitrine = deps.vitrine ?? (async () => null);
+    this.#webRefs = deps.webRefs ?? new RealWebRefs();
   }
 
   #root(project: string): string {
@@ -151,6 +166,7 @@ export class ArtService {
   }
 
   state(project: string): ArtState {
+    this.#backfill(project);
     const root = this.#root(project);
     const bibleFile = join(root, "bible.md");
     const notes = this.#notes(root);
@@ -166,7 +182,13 @@ export class ArtService {
       assets: readManifest(this.#projects.get(project).root).assets,
       moodboard,
       messages: this.messages(project),
-      busy: { replying: this.#replying.has(project), validating: [...(this.#validating.get(project) ?? [])], generating: [...(this.#generating.get(project)?.values() ?? [])] },
+      direction: readDirection(this.#projects.get(project).root),
+      busy: {
+        replying: this.#replying.has(project),
+        validating: [...(this.#validating.get(project) ?? [])],
+        generating: [...(this.#generating.get(project)?.values() ?? [])],
+        exploring: [...(this.#exploring.get(project)?.values() ?? [])],
+      },
       generator: this.#imagegen.state(),
       workshop3d: this.#model3d.state(),
     };
@@ -180,6 +202,7 @@ export class ArtService {
   activity(): { project: string; kind: "reply" | "validate" | "generate"; asset?: string }[] {
     return [
       ...[...this.#replying].map((project) => ({ project, kind: "reply" as const })),
+      ...[...this.#exploring].filter(([project, jobs]) => jobs.size && !this.#replying.has(project)).map(([project]) => ({ project, kind: "reply" as const })),
       ...[...this.#validating].flatMap(([project, ids]) => [...ids].map((asset) => ({ project, kind: "validate" as const, asset }))),
       ...[...this.#generating].flatMap(([project, gens]) => [...gens.keys()].map((asset) => ({ project, kind: "generate" as const, asset }))),
     ];
@@ -268,13 +291,115 @@ export class ArtService {
     if (!body) throw new ArtError("Message vide");
     if (body.length > 20_000) throw new ArtError("Message trop long");
     this.#projects.get(project);
+    // Les réponses aux questions de goût sont gardées dans la direction, avec l'image de l'option (ADR-58).
+    this.#backfill(project);
+    const choices = this.#answers(project, body);
     const human = this.#insert(project, "human", body, null);
     this.#journal.append({ project, actor: { kind: "human" }, type: "art.message", subject: human.id, payload: {} });
     // Un croquis choisi d'un clic : la fabrication part tout de suite, sans tour du Directeur artistique (ADR-49).
     const pick = SKETCH_ANSWER.exec(body);
-    if (pick) this.#track(this.#chooseSketch(project, pick[1]!, Number(pick[2])));
-    else this.#turn(project);
+    const style = STYLE_ANSWER.exec(body);
+    if (pick) this.#track(this.#chooseSketch(project, pick[1]!, Number(pick[2]), choices));
+    // Un style choisi au duel : il devient le style du jeu, puis le Directeur artistique met la bible à jour.
+    else if (style) this.#track(this.#chooseStyle(project, style[1]!, Number(style[2]), choices).then(() => this.#turn(project)));
+    else {
+      if (choices) this.#track(choices);
+      this.#turn(project);
+    }
     return human;
+  }
+
+  /**
+   * Les choix faits avant la direction visuelle (ADR-58) : la première fois, direction.json est rempli depuis l'historique
+   * de la discussion (questions posées, réponses données), pour que rien de ce qui a été tranché ne soit perdu.
+   */
+  #backfill(project: string): void {
+    const gameRoot = this.#projects.get(project).root;
+    if (existsSync(join(artRoot(gameRoot), "direction.json"))) return;
+    const history = this.messages(project);
+    if (!history.length) return;
+    const d = readDirection(gameRoot);
+    const asked = new Map<string, string[]>();
+    for (const m of history) {
+      for (const line of m.text.split("\n")) {
+        if (m.role === "art" && line.startsWith(CHOICE_MARK)) {
+          const [q, ...options] = line.slice(CHOICE_MARK.length).split(" || ");
+          asked.set(q!.trim(), options);
+          continue;
+        }
+        const a = m.role === "human" ? /^(.+?\?)\s*→\s*(.+)$/.exec(line.trim()) : null;
+        if (!a || !asked.has(a[1]!.trim()) || /^je te laisse choisir$/i.test(a[2]!.trim())) continue;
+        const answer = a[2]!.replace(/§[A-Z]+§/g, "").trim();
+        const image = asked.get(a[1]!.trim())!.find((o) => o.split(VISUAL_SEP)[0]!.trim() === answer)?.split(VISUAL_SEP)[1]?.trim() ?? null;
+        recordChoice(d, { question: a[1]!.trim(), answer, image: image && safeRel(image) ? image : null, at: m.at });
+      }
+    }
+    writeDirection(gameRoot, d);
+  }
+
+  /**
+   * « question → réponse » des lignes de votre message, reconnues dans les dernières questions du Directeur
+   * artistique : enregistrées dans direction.json (l'image de l'option avec). « Je te laisse choisir » n'est pas un choix.
+   */
+  #answers(project: string, body: string): Promise<void> | null {
+    const asked = new Map<string, string[]>();
+    for (const m of this.messages(project).filter((x) => x.role === "art").slice(-6))
+      for (const line of m.text.split("\n").filter((l) => l.startsWith(CHOICE_MARK))) {
+        const [q, ...options] = line.slice(CHOICE_MARK.length).split(" || ");
+        asked.set(q!.trim(), options);
+      }
+    const found = body
+      .split("\n")
+      .map((l) => /^(.+?\?)\s*→\s*(.+)$/.exec(l.trim()))
+      .filter((m): m is RegExpExecArray => !!m && asked.has(m[1]!.trim()) && !/^je te laisse choisir$/i.test(m[2]!.trim()));
+    if (!found.length) return null;
+    const gameRoot = this.#projects.get(project).root;
+    const d = readDirection(gameRoot);
+    const now = this.#clock.now();
+    for (const m of found) {
+      const answer = m[2]!.trim();
+      const option = asked.get(m[1]!.trim())!.find((o) => o.split(VISUAL_SEP)[0]!.trim() === answer);
+      const image = option?.split(VISUAL_SEP)[1]?.trim() ?? null;
+      recordChoice(d, { question: m[1]!.trim(), answer, image: image && safeRel(image) ? image : null, at: now });
+    }
+    writeDirection(gameRoot, d);
+    return this.#commit(gameRoot, `art: ${found.length} choix de goût gardé(s)`);
+  }
+
+  /**
+   * Votre avis sur les références (ADR-58) : « aime », « evite », ou null pour le retirer. `tell` : le Directeur
+   * artistique le reçoit en message et en tient compte tout de suite ; sinon il le lira à son prochain tour.
+   */
+  async react(session: HumanSession, project: string, input: { verdicts: Record<string, Taste | null>; comment?: string; tell?: boolean }): Promise<Direction> {
+    assertHumanSession(session);
+    const gameRoot = this.#projects.get(project).root;
+    const d = readDirection(gameRoot);
+    const changed: { title: string; verdict: Taste | null }[] = [];
+    for (const [file, verdict] of Object.entries(input.verdicts)) {
+      const r = d.references.find((x) => x.file === file);
+      if (!r || (verdict !== null && verdict !== "aime" && verdict !== "evite")) continue;
+      r.verdict = verdict;
+      changed.push({ title: r.title || r.file, verdict });
+    }
+    const comment = input.comment?.trim().slice(0, 4000) ?? "";
+    if (!changed.length && !comment) throw new ArtError("Donnez votre avis sur au moins une image");
+    writeDirection(gameRoot, d);
+    await this.#commit(gameRoot, `art: avis sur ${changed.length} référence(s)`);
+    this.#journal.append({ project, actor: { kind: "human" }, type: "art.references_judged", subject: null, payload: { count: changed.length } });
+    if (input.tell === false) return d;
+    const list = (v: Taste) => changed.filter((c) => c.verdict === v).map((c) => `« ${c.title} »`);
+    const text = [
+      "Mon avis sur les références :",
+      list("aime").length ? `- J'aime : ${list("aime").join(", ")}` : "",
+      list("evite").length ? `- À éviter : ${list("evite").join(", ")}` : "",
+      comment,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const human = this.#insert(project, "human", text, null);
+    this.#journal.append({ project, actor: { kind: "human" }, type: "art.message", subject: human.id, payload: {} });
+    this.#turn(project);
+    return d;
   }
 
   /**
@@ -533,7 +658,10 @@ export class ArtService {
         timeoutMs: 15 * 60_000,
         meta: { project, agent: "art_director" },
       });
-      const { text, directives } = parseArtDirectives(raw);
+      const parsed = parseArtDirectives(raw);
+      const { directives } = parsed;
+      // Les options illustrées sont dessinées avant que la question s'affiche (ADR-58).
+      const text = await this.#illustrate(project, parsed.text);
       const applied = this.#apply(project, directives);
       // Le cadrage d'abord (ADR-49) : une réponse qui pose une question ne lance aucune fabrication.
       const asking = text.includes(CHOICE_MARK);
@@ -542,6 +670,9 @@ export class ArtService {
       const summary = applied.length ? `\n${DONE_MARK}${applied.join(" · ")}` : "";
       this.#insert(project, "art", `${text || "C'est noté."}${summary}`, costUsd);
       await this.#commit(p.root, `art: ${applied.join(", ") || "réponse du Directeur artistique"}`);
+      // Planches et duels ne fabriquent aucun visuel du jeu : ils partent même avec des questions (ADR-58).
+      for (const b of directives.references) this.#startBoard(project, b);
+      for (const s of directives.styles) this.#startDuel(project, s);
       if (asking) return;
       // Le générateur part de la fiche à jour, une fois le tour écrit et commité.
       if (this.#imagegen.state().installed) {
@@ -594,7 +725,8 @@ export class ArtService {
         : "L'atelier 3D est prêt (Tripo + Blender) : marque chaque modèle 3D avec [[MODELE3D]] ; sa 3D se fabrique dès que son image est retenue, ou tout de suite pour un objet simple.",
       existsSync(join(artRoot(p.root), "bible.md"))
         ? "La bible existe (bible.md) : relis-la avant de proposer."
-        : "Il n'y a pas encore de bible : si l'utilisateur n'a rien demandé d'autre, propose de la construire ensemble (deux ou trois questions de goût, puis une première version).",
+        : "Il n'y a pas encore de bible : si l'utilisateur n'a rien demandé d'autre, propose de poser la direction ensemble (conception visuelle, étapes 1 à 4).",
+      directionContext(readDirection(p.root), { bible: existsSync(join(artRoot(p.root), "bible.md")), generator: this.#imagegen.state().installed }),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -612,6 +744,7 @@ export class ArtService {
     }
     const m = readManifest(gameRoot);
     const now = this.#clock.now();
+    const style = readDirection(gameRoot).style?.file ?? null;
     for (const raw of d.assets) {
       const str = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string).trim().slice(0, 2000) : "");
       const existing = m.assets.find((a) => a.id === str("id"));
@@ -655,7 +788,7 @@ export class ArtService {
       if (!a || a.status === "integration" || a.status === "integre") continue;
       a.prompts = g.prompts.map((p) => p.slice(0, 2000));
       if (g.format) a.format = g.format;
-      if (g.ref) a.styleRef = resolveRef(m.assets, root, g.ref, a.id);
+      if (g.ref) a.styleRef = resolveRef(m.assets, root, g.ref, a.id, style);
       if (a.status === "propose") this.#setStatus(a, "production");
       a.updated_at = now;
       produce.push(a.id);
@@ -668,7 +801,7 @@ export class ArtService {
       a.sketches = c.options.map((o) => ({ file: "", label: o.label, prompt: o.prompt }));
       a.direction = null;
       if (c.format) a.format = c.format;
-      a.styleRef = c.ref ? resolveRef(m.assets, root, c.ref, a.id) : null;
+      a.styleRef = c.ref ? resolveRef(m.assets, root, c.ref, a.id, style) : null;
       a.updated_at = now;
       sketched.push(a.id);
     }
@@ -734,9 +867,8 @@ export class ArtService {
         project,
         "art",
         [
-          ...asset.sketches.flatMap((s, k) => [`**Croquis ${k + 1} : ${s.label}**`, `${IMAGE_MARK}${s.file}`]),
           `Voici ${asset.sketches.length} directions pour ${id} « ${asset.name} ». Choisissez celle qui vous parle : je la fabrique et la mène jusqu'au jeu sans vous redemander.`,
-          `${CHOICE_MARK}${sketchQuestion(id, asset.name)} || ${[...asset.sketches.map((s, k) => `Croquis ${k + 1} : ${s.label}`), "Aucun, on en reparle"].join(" || ")}`,
+          `${CHOICE_MARK}${sketchQuestion(id, asset.name)} || ${[...asset.sketches.map((s, k) => `Croquis ${k + 1} : ${s.label}${s.file ? `${VISUAL_SEP}${s.file}` : ""}`), "Aucun, on en reparle"].join(" || ")}`,
         ].join("\n"),
         null,
       );
@@ -746,7 +878,8 @@ export class ArtService {
   }
 
   /** Votre croquis : il devient la direction, et la fabrication part sans autre question. */
-  async #chooseSketch(project: string, id: string, k: number): Promise<void> {
+  async #chooseSketch(project: string, id: string, k: number, recorded: Promise<void> | null = null): Promise<void> {
+    await recorded;
     const gameRoot = this.#projects.get(project).root;
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === id);
@@ -765,6 +898,183 @@ export class ArtService {
       null,
     );
     if (this.#imagegen.state().installed) this.#startProduce(project, id);
+  }
+
+  // ── Conception visuelle (ADR-58) : questions illustrées, planches de références, duels de styles ──
+
+  /** Une tâche d'exploration en cours, affichée en clair dans la discussion ; retirée à la fin, quoi qu'il arrive. */
+  async #explore<T>(project: string, key: string, step: string, fn: (say: (s: string) => void) => Promise<T>): Promise<T> {
+    const jobs = this.#exploring.get(project) ?? new Map<string, string>();
+    this.#exploring.set(project, jobs);
+    jobs.set(key, step);
+    try {
+      return await fn((s) => jobs.set(key, s));
+    } finally {
+      jobs.delete(key);
+    }
+  }
+
+  /**
+   * Les options « libellé @@ visuel » : une image de studio/art est gardée telle quelle, un prompt est dessiné en vignette
+   * (générateur local) dans choix/ ; sans générateur, ou si le dessin échoue, l'option reste en mots.
+   */
+  async #illustrate(project: string, text: string): Promise<string> {
+    if (!text.includes(VISUAL_SEP)) return text;
+    const root = this.#root(project);
+    const lines = text.split("\n");
+    const todo: { line: number; option: number; prompt: string }[] = [];
+    const parsed = lines.map((l, i) => {
+      if (!l.startsWith(CHOICE_MARK)) return null;
+      const [q, ...options] = l.slice(CHOICE_MARK.length).split(" || ");
+      const opts = options.map((o, k) => {
+        const [label, visual = ""] = o.split(VISUAL_SEP);
+        const v = visual.trim();
+        if (!v) return { label: label!, file: null as string | null };
+        if (safeRel(v) && IMAGE_MIME[extname(v).toLowerCase()]) return { label: label!, file: existsSync(join(root, v)) ? v : null };
+        todo.push({ line: i, option: k, prompt: v });
+        return { label: label!, file: null };
+      });
+      return { q: q!, opts };
+    });
+    const draw = this.#imagegen.state().installed ? todo.slice(0, MAX_VIGNETTES) : [];
+    if (draw.length)
+      await this.#explore(project, "vignettes", "Le Directeur artistique dessine les vignettes de ses questions", async (say) => {
+        const seq = (this.#db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM art_messages WHERE project = ?").get(project) as { next: number }).next;
+        for (const [n, t] of draw.entries()) {
+          say(`Vignettes des questions : ${n + 1} sur ${draw.length}`);
+          try {
+            const png = await this.#imagegen.generate({ prompt: t.prompt, width: 512, height: 512, seed: randomInt(2 ** 31) });
+            const file = this.#free(root, "choix", `m${seq}-${n + 1}`, ".png");
+            writeAtomic(join(root, file), png);
+            parsed[t.line]!.opts[t.option]!.file = file;
+          } catch {
+            /* vignette manquée : l'option reste en mots */
+          }
+        }
+      });
+    return lines
+      .map((l, i) => {
+        const p = parsed[i];
+        return p ? `${CHOICE_MARK}${p.q} || ${p.opts.map((o) => (o.file ? `${o.label}${VISUAL_SEP}${o.file}` : o.label)).join(" || ")}` : l;
+      })
+      .join("\n");
+  }
+
+  #startBoard(project: string, b: ArtDirectives["references"][number]): void {
+    this.#track(this.#explore(project, `planche-${randomUUID()}`, `Planche « ${b.theme} » : recherche des images`, (say) => this.#board(project, b, say)));
+  }
+
+  /**
+   * Une planche de références (ADR-58) : chaque adresse donnée par le Directeur artistique est téléchargée (image, ou
+   * image d'aperçu de la page) dans moodboard/, avec sa source et ce qu'il veut en prendre ; vous dites ensuite, image
+   * par image, ce que vous aimez ou voulez éviter.
+   */
+  async #board(project: string, b: ArtDirectives["references"][number], say: (s: string) => void): Promise<void> {
+    const gameRoot = this.#projects.get(project).root;
+    const root = artRoot(gameRoot);
+    const got: { file: string; url: string; title: string; why: string }[] = [];
+    const failed: { url: string; reason: string }[] = [];
+    const known = new Set(readDirection(gameRoot).references.map((r) => r.source));
+    for (const [k, item] of b.items.entries()) {
+      say(`Planche « ${b.theme} » : image ${k + 1} sur ${b.items.length}`);
+      if (known.has(item.url)) {
+        failed.push({ url: item.url, reason: "déjà dans le moodboard" });
+        continue;
+      }
+      try {
+        const img = await this.#webRefs.fetchImage(item.url);
+        const kind = IMAGE_TYPES[img.mime];
+        if (!kind?.magic(img.data)) throw new Error("ce n'est pas une image PNG, JPEG ou WebP");
+        const base = `web-${slugName(item.title || new URL(item.url).hostname)}`;
+        const file = this.#free(root, "moodboard", base, kind.ext);
+        writeAtomic(join(root, file), img.data);
+        got.push({ file, url: item.url, title: item.title, why: item.why });
+      } catch (err) {
+        failed.push({ url: item.url, reason: (err as Error).message.slice(0, 160) });
+      }
+    }
+    const d = readDirection(gameRoot);
+    const id = nextId("P", d.boards);
+    const now = this.#clock.now();
+    d.boards.push({ id, theme: b.theme, at: now, failed });
+    d.references.push(...got.map((g) => ({ file: g.file, board: id, theme: b.theme, source: g.url, title: g.title, why: g.why, verdict: null, at: now })));
+    writeDirection(gameRoot, d);
+    await this.#commit(gameRoot, `art: planche ${id} « ${b.theme} » (${got.length} références)`);
+    this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: "art.board_added", subject: id, payload: { images: got.length, failed: failed.length } });
+    this.#insert(
+      project,
+      "art",
+      got.length
+        ? [
+            `**Planche ${id} « ${b.theme} »** : ${got.length} référence(s). Pour chacune, dites si vous aimez ou si vous voulez l'éviter, puis « Envoyer mon avis ». Ce sont des inspirations, pas des images pour le jeu.`,
+            `${BOARD_MARK}${id}`,
+            failed.length ? `(${failed.length} adresse(s) non récupérée(s) : ${failed.map((f) => f.reason).join(" ; ")})` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : `Je n'ai pu récupérer aucune image pour la planche « ${b.theme} » (${failed.map((f) => f.reason).join(" ; ")}). Demandez-moi d'autres références.`,
+      null,
+    );
+  }
+
+  #startDuel(project: string, s: ArtDirectives["styles"][number]): void {
+    if (!this.#imagegen.state().installed) {
+      this.#insert(project, "art", `Le duel de styles « ${s.subject} » attend le générateur d'images local (onglet Visuels, « Installer le générateur »). En attendant, je peux vous montrer des références.`, null);
+      return;
+    }
+    this.#track(this.#explore(project, `duel-${randomUUID()}`, `Duel de styles « ${s.subject} » : en attente de la carte graphique`, (say) => this.#duel(project, s, say)));
+  }
+
+  /** Un duel de styles (ADR-58) : un même sujet dessiné dans chaque style, que vous départagez d'un clic. */
+  async #duel(project: string, s: ArtDirectives["styles"][number], say: (s: string) => void): Promise<void> {
+    const gameRoot = this.#projects.get(project).root;
+    const root = artRoot(gameRoot);
+    const id = nextId("S", readDirection(gameRoot).duels);
+    const [width, height] = (s.format ?? "1024x1024").split("x").map(Number) as [number, number];
+    // Une même graine pour tous les styles : la composition se ressemble, seul le style change.
+    const seed = randomInt(2 ** 31);
+    const options: { label: string; prompt: string; file: string }[] = [];
+    try {
+      for (const [k, o] of s.options.entries()) {
+        say(`Duel de styles « ${s.subject} » : style ${k + 1} sur ${s.options.length}`);
+        const png = await this.#imagegen.generate({ prompt: o.prompt, width, height, seed });
+        const file = this.#free(root, "styles", `${id.toLowerCase()}-${k + 1}`, ".png");
+        writeAtomic(join(root, file), png);
+        options.push({ ...o, file });
+      }
+    } catch (err) {
+      this.#insert(project, "art", `Le générateur n'a pas pu dessiner le duel de styles « ${s.subject} » : ${(err as Error).message.slice(0, 300)}. Redemandez-le-moi.`, null);
+      return;
+    }
+    const d = readDirection(gameRoot);
+    d.duels.push({ id, subject: s.subject, options, chosen: null, at: this.#clock.now() });
+    writeDirection(gameRoot, d);
+    await this.#commit(gameRoot, `art: duel de styles ${id} « ${s.subject} »`);
+    this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: "art.duel_added", subject: id, payload: { styles: options.length } });
+    this.#insert(
+      project,
+      "art",
+      [
+        `**Duel de styles ${id}** : le même sujet, « ${s.subject} », dans ${options.length} styles. Choisissez celui qui ressemble à votre jeu : il deviendra la référence de style de tous les visuels.`,
+        `${CHOICE_MARK}${styleQuestion(id, s.subject)} || ${[...options.map((o, k) => `Style ${k + 1} : ${o.label}${VISUAL_SEP}${o.file}`), "Aucun, d'autres pistes"].join(" || ")}`,
+      ].join("\n"),
+      null,
+    );
+  }
+
+  /** Le style choisi au duel devient le style du jeu (référence « | ref style ») ; le choix est gardé. */
+  async #chooseStyle(project: string, id: string, k: number, recorded: Promise<void> | null): Promise<void> {
+    await recorded;
+    const gameRoot = this.#projects.get(project).root;
+    const d = readDirection(gameRoot);
+    const duel = d.duels.find((x) => x.id === id);
+    const o = duel?.options[k - 1];
+    if (!duel || !o) return;
+    duel.chosen = k;
+    d.style = { duel: id, label: o.label, prompt: o.prompt, file: o.file, at: this.#clock.now() };
+    writeDirection(gameRoot, d);
+    await this.#commit(gameRoot, `art: style « ${o.label} » retenu (duel ${id})`);
+    this.#journal.append({ project, actor: { kind: "human" }, type: "art.style_chosen", subject: id, payload: { style: o.file } });
   }
 
   // ── Générateur local (ADR-46, ADR-49) ──
@@ -1510,15 +1820,26 @@ export function safeRel(rel: string): boolean {
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
 export const sketchQuestion = (id: string, name: string) => `Quel croquis pour ${id} « ${name} » ?`;
 const SKETCH_ANSWER = /^Quel croquis pour (A-\d{4,})\b[^\n]*\?\s*→\s*Croquis (\d+)\b/;
+/** La question d'un duel de styles, et la réponse de l'interface (ADR-58). */
+export const styleQuestion = (id: string, subject: string) => `Quel style pour le jeu (duel ${id}, « ${subject} ») ?`;
+const STYLE_ANSWER = /^Quel style pour le jeu \(duel (S-\d+)\b[^\n]*\?\s*→\s*Style (\d+)\b/m;
+/** Vignettes dessinées au plus pour les questions d'un message (quelques secondes chacune). */
+const MAX_VIGNETTES = 8;
+
+/** « Concept art de Hades » → « concept-art-de-hades » (nom de fichier court). */
+function slugName(s: string): string {
+  return (s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "reference").slice(0, 40);
+}
 
 /** Un nouveau sujet dans le style de l'image de référence (Flux Kontext). */
 const styled = (prompt: string) => `Using exactly the same art style, rendering, palette and level of detail as this image, draw a new, different subject: ${prompt}`;
 
 /**
- * « A-0002 » → l'image retenue de cet asset (verdict, sinon croquis choisi) ; « moodboard/x.png » → ce fichier s'il existe.
- * Un asset ne se prend pas lui-même pour référence.
+ * « A-0002 » → l'image retenue de cet asset (verdict, sinon croquis choisi) ; « moodboard/x.png » → ce fichier s'il existe ;
+ * « style » → l'image du style retenu au duel (ADR-58). Un asset ne se prend pas lui-même pour référence.
  */
-function resolveRef(assets: Asset[], root: string, ref: string, self: string): string | null {
+function resolveRef(assets: Asset[], root: string, ref: string, self: string, style: string | null = null): string | null {
+  if (/^style$/i.test(ref)) return style && existsSync(join(root, style)) ? style : null;
   const id = /^A-\d{4,}$/i.exec(ref)?.[0]?.toUpperCase();
   if (id) {
     const a = id === self ? null : assets.find((x) => x.id === id);

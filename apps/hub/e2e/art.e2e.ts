@@ -102,12 +102,17 @@ describe("direction artistique", () => {
     await page.locator(".composer input[type=file]").setInputFiles(join(sb.dir, "inspiration.png"));
     await page.locator(".art-chip img").waitFor();
 
+    // L'onglet ne change plus tout seul (ADR-58) : on va voir les visuels.
+    await page.locator(".art-panel .tab", { hasText: "Visuels (1)" }).click({ timeout: 15_000 });
     await page.locator(".art-asset", { hasText: "Icône de poudre" }).waitFor({ timeout: 15_000 });
     await page.locator(".art-done", { hasText: "bible mise à jour · A-0001 proposé" }).waitFor();
     await expect(page.locator(".art-prompt code").first().textContent()).resolves.toMatch(/gunpowder barrel icon/);
     await page.screenshot({ path: join(shots, "art-1-discussion.png") });
 
-    await page.locator(".art-panel .tab", { hasText: "Bible" }).click();
+    // La direction en images : la palette en pastilles, le texte de la bible à déplier (ADR-58).
+    await page.locator(".art-panel .tab", { hasText: "Direction" }).click();
+    await page.locator(".art-swatch", { hasText: "#1B2A3A" }).waitFor();
+    await page.locator(".art-vision summary", { hasText: "Lire le texte" }).click();
     await page.locator(".art-bible", { hasText: "#1B2A3A : mer de nuit" }).waitFor();
     await page.locator(".art-panel .tab", { hasText: "Moodboard" }).click();
     await page.locator(".art-mood-grid img").waitFor();

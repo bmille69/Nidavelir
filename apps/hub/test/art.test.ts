@@ -8,6 +8,7 @@ import { safeRel } from "../src/art/art-service.ts";
 import { fluxWorkflow, kontextWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
 import { VIEWS, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
 import { parseArtDirectives, parseFormat, parseModel3D, parseRef } from "../src/art/prompts.ts";
+import { assertPublic, pageImage, privateAddress, type WebRefsPort } from "../src/art/web-refs.ts";
 import type { CheckerPort } from "../src/quality/checks.ts";
 import { createHub } from "../src/hub.ts";
 import { PolicyEngine } from "../src/executor/policy-engine.ts";
@@ -156,7 +157,7 @@ const artisanSteps = (code = "tourner(-90)\nmatiere()",summary = "Tourné face �
 const quietChecker: CheckerPort = { tests: async () => ({ status: "none", detail: "" }), launch: async () => ({ status: "none", detail: "" }) };
 
 /** Le même projet, avec un générateur local et un atelier 3D branchés, et les vérifications du hub (captures). */
-async function setupLocal(checker: CheckerPort = quietChecker) {
+async function setupLocal(checker: CheckerPort = quietChecker, webRefs?: WebRefsPort) {
   const fake = new Artist();
   const sb = sandbox(fake);
   sb.hub.close();
@@ -171,6 +172,7 @@ async function setupLocal(checker: CheckerPort = quietChecker) {
     imagegen: gen,
     model3d: m3d,
     checker,
+    webRefs,
   });
   const repo = sb.makeGameRepo("games/bordee", { "CLAUDE.md": "# Bordée\nBataille navale 1900-1945 stylisée.\n" });
   await sb.hub.projects.register(sb.human(), { path: repo, slug: "bordee", name: "Bordée" });
@@ -423,8 +425,10 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
       ["production/a-0001-croquis-3.png", "Templier élancé"],
     ]);
     const question = art.state("bordee").messages.at(-1)!.text;
-    expect(question).toMatch(/\*\*Croquis 1 : Chevalier massif\*\*\n§IMAGE§ production\/a-0001-croquis-1.png/);
-    expect(question).toMatch(/§CHOIX§ Quel croquis pour A-0001 « Titan » \? \|\| Croquis 1 : Chevalier massif \|\| Croquis 2 : Colosse de pierre \|\| Croquis 3 : Templier élancé \|\| Aucun, on en reparle/);
+    // Chaque croquis est une option illustrée de la question (ADR-58).
+    expect(question).toMatch(
+      /§CHOIX§ Quel croquis pour A-0001 « Titan » \? \|\| Croquis 1 : Chevalier massif @@ production\/a-0001-croquis-1.png \|\| Croquis 2 : Colosse de pierre @@ production\/a-0001-croquis-2.png \|\| Croquis 3 : Templier élancé @@ production\/a-0001-croquis-3.png \|\| Aucun, on en reparle/,
+    );
     expect(fake.calls.filter((c) => c.kind === "structured")).toHaveLength(0);
 
     // Votre clic : pas de tour du Directeur artistique, la fabrication part du croquis 2.
@@ -937,5 +941,166 @@ describe("outils du Directeur artistique et du développeur", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("conception visuelle (ADR-58)", () => {
+  it("des intentions au style du jeu : questions illustrées, planche de références, duel de styles, rien ne se perd", async () => {
+    const web: WebRefsPort = {
+      fetchImage: async (url) => {
+        if (url.includes("absente")) throw new Error("le site répond 404");
+        return { data: PNG, mime: "image/png", url };
+      },
+    };
+    const { sb, fake, gen, repo, art } = await setupLocal(quietChecker, web);
+    gen.installed = true;
+
+    // 1. Intentions : une question illustrée ; les vignettes sont dessinées avant que la question s'affiche.
+    fake.replies.push(
+      [
+        "Commençons par l'ambiance.",
+        "[[CHOIX: Quelle mer pour Bordée ?]] Grise et dramatique => a stormy grey sea, naval poster | Bleu d'affiche => the same sea in flat deep poster blue [[/CHOIX]]",
+        "[[CHOIX: Quel rythme ?]] Lent | Nerveux [[/CHOIX]]",
+      ].join("\n"),
+    );
+    art.send(sb.human(), "bordee", "Construisons la direction artistique");
+    await art.idle();
+    expect(gen.requests.map((r) => [r.prompt, r.width, r.height])).toEqual([
+      ["a stormy grey sea, naval poster", 512, 512],
+      ["the same sea in flat deep poster blue", 512, 512],
+    ]);
+    const asked = art.state("bordee").messages.at(-1)!.text;
+    expect(asked).toMatch(/§CHOIX§ Quelle mer pour Bordée \? \|\| Grise et dramatique @@ choix\/m\d+-1\.png \|\| Bleu d'affiche @@ choix\/m\d+-2\.png/);
+    expect(asked).toMatch(/§CHOIX§ Quel rythme \? \|\| Lent \|\| Nerveux/);
+    const vignette = /Bleu d'affiche @@ (choix\/\S+\.png)/.exec(asked)![1]!;
+    expect(existsSync(join(repo, "studio", "art", vignette))).toBe(true);
+
+    // Vos deux réponses en un envoi : gardées avec l'image, et rappelées au Directeur artistique (il ne les repose pas).
+    fake.replies.push(
+      [
+        "Noté. Voici des références.",
+        "[[REFERENCES: Affiches navales des années 1930]]",
+        "- https://example.org/affiche-1.jpg | Affiche de la Marine 1931 | les aplats et le ciel en bandes",
+        "- https://example.org/page-absente | Page disparue | rien",
+        "- pas une adresse | ignorée | ignorée",
+        "[[/REFERENCES]]",
+      ].join("\n"),
+    );
+    art.send(sb.human(), "bordee", "Quelle mer pour Bordée ? → Bleu d'affiche\nQuel rythme ? → je te laisse choisir");
+    await art.idle();
+    let d = art.state("bordee").direction;
+    expect(d.choices).toEqual([{ question: "Quelle mer pour Bordée ?", answer: "Bleu d'affiche", image: vignette, at: expect.any(String) }]);
+    expect(fake.calls.at(-1)!.systemPrompt).toMatch(/Choix déjà tranchés[\s\S]*- Quelle mer pour Bordée \? → Bleu d'affiche/);
+
+    // 2. Références : l'image arrive dans le moodboard avec sa source ; l'adresse morte est signalée, pas inventée.
+    expect(d.boards).toMatchObject([{ id: "P-01", theme: "Affiches navales des années 1930", failed: [{ url: "https://example.org/page-absente", reason: "le site répond 404" }] }]);
+    expect(d.references).toMatchObject([
+      { file: "moodboard/web-affiche-de-la-marine-1931.png", board: "P-01", source: "https://example.org/affiche-1.jpg", why: "les aplats et le ciel en bandes", verdict: null },
+    ]);
+    const board = art.state("bordee").messages.at(-1)!.text;
+    expect(board).toMatch(/\*\*Planche P-01 « Affiches navales des années 1930 »\*\* : 1 référence/);
+    expect(board).toMatch(/§PLANCHE§ P-01/);
+    expect(board).toMatch(/1 adresse\(s\) non récupérée\(s\) : le site répond 404/);
+    expect(art.state("bordee").moodboard.map((m) => m.file)).toContain("moodboard/web-affiche-de-la-marine-1931.png");
+
+    // Votre avis : gardé, envoyé au Directeur artistique, qui propose un duel de styles.
+    fake.replies.push(
+      [
+        "Les aplats vous plaisent : voici trois styles.",
+        "[[STYLES: Un cuirassé en mer, vue de trois quarts | 768x768]]",
+        "# Affiche plate",
+        "A battleship at sea, flat poster style.",
+        "---",
+        "# Gravure",
+        "A battleship at sea, engraving style.",
+        "---",
+        "# Aquarelle",
+        "A battleship at sea, watercolor style.",
+        "[[/STYLES]]",
+      ].join("\n"),
+    );
+    await art.react(sb.human(), "bordee", { verdicts: { "moodboard/web-affiche-de-la-marine-1931.png": "aime", "moodboard/inconnue.png": "evite" }, comment: "Plus de contraste" });
+    await art.idle();
+    const said = art.state("bordee").messages.filter((m) => m.role === "human").at(-1)!.text;
+    expect(said).toBe("Mon avis sur les références :\n- J'aime : « Affiche de la Marine 1931 »\nPlus de contraste");
+    expect(fake.calls.at(-1)!.systemPrompt).toMatch(/Références qu'il aime[\s\S]*web-affiche-de-la-marine-1931\.png « Affiche de la Marine 1931 »/);
+
+    // 3. Duel : le même sujet, la même graine, trois styles ; vous choisissez d'un clic.
+    const duel = gen.requests.slice(2);
+    expect(duel.map((r) => [r.prompt, r.width])).toEqual([
+      ["A battleship at sea, flat poster style.", 768],
+      ["A battleship at sea, engraving style.", 768],
+      ["A battleship at sea, watercolor style.", 768],
+    ]);
+    expect(new Set(duel.map((r) => r.seed)).size).toBe(1);
+    const q = art.state("bordee").messages.at(-1)!.text;
+    expect(q).toMatch(/§CHOIX§ Quel style pour le jeu \(duel S-01, « Un cuirassé en mer, vue de trois quarts »\) \? \|\| Style 1 : Affiche plate @@ styles\/s-01-1\.png/);
+
+    fake.replies.push(
+      [
+        "Va pour l'affiche plate.",
+        "[[BIBLE]]\n# Bible\n## Palette\n- #1B2A3A : mer\n## Phrase de style\nflat naval poster\n[[/BIBLE]]",
+        '[[ASSET]] {"name": "Cuirassé", "type": "illustration", "usage": "carte", "specs": "512x768"} [[/ASSET]]',
+        "[[GENERER: A-0001 | 512x768 | ref style]] A dreadnought, flat poster style. [[/GENERER]]",
+      ].join("\n"),
+    );
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Conforme.", points: [], prompt: null } as never);
+    art.send(sb.human(), "bordee", "Quel style pour le jeu (duel S-01, « Un cuirassé en mer, vue de trois quarts ») ? → Style 1 : Affiche plate");
+    await art.idle();
+    d = art.state("bordee").direction;
+    expect(d.style).toMatchObject({ duel: "S-01", label: "Affiche plate", file: "styles/s-01-1.png", prompt: "A battleship at sea, flat poster style." });
+    expect(d.duels[0]!.chosen).toBe(1);
+    expect(d.choices.map((c) => [c.answer, c.image])).toContainEqual(["Style 1 : Affiche plate", "styles/s-01-1.png"]);
+    // Le Directeur artistique a repris la main (bible), et le style retenu sert de référence au premier visuel.
+    expect(fake.calls.filter((c) => c.kind === "reply").at(-1)!.systemPrompt).toMatch(/Style retenu \(duel S-01\) : « Affiche plate »/);
+    expect(art.state("bordee").bible).toMatch(/flat naval poster/);
+    expect(art.state("bordee").assets[0]!.styleRef).toBe("styles/s-01-1.png");
+
+    // Tout est dans le dépôt du jeu : le développeur et les tours suivants le relisent.
+    const saved = JSON.parse(readFileSync(join(repo, "studio", "art", "direction.json"), "utf8")) as { references: { verdict: string }[]; style: { file: string } };
+    expect(saved.references[0]!.verdict).toBe("aime");
+    expect(saved.style.file).toBe("styles/s-01-1.png");
+    expect(log(repo)).toMatch(/art: style « Affiche plate » retenu \(duel S-01\)/);
+    expect(log(repo)).toMatch(/art: planche P-01/);
+  }, 60_000);
+
+  it("sans générateur : les options restent en mots et le duel attend, sans rien perdre", async () => {
+    const { sb, fake, gen, art } = await setupLocal();
+    fake.replies.push("[[CHOIX: Quelle mer ?]] Grise => a grey sea | Bleue => a blue sea [[/CHOIX]]\n[[STYLES: Un navire]] # A\nship, style A\n---\n# B\nship, style B [[/STYLES]]");
+    art.send(sb.human(), "bordee", "On commence ?");
+    await art.idle();
+    expect(gen.requests).toHaveLength(0);
+    const msgs = art.state("bordee").messages;
+    expect(msgs.find((m) => m.text.includes("§CHOIX§"))!.text).toMatch(/§CHOIX§ Quelle mer \? \|\| Grise \|\| Bleue$/m);
+    expect(msgs.at(-1)!.text).toMatch(/Le duel de styles « Un navire » attend le générateur/);
+  });
+
+  it("les choix faits avant la direction visuelle sont retrouvés dans l'historique", async () => {
+    const { sb, fake, repo, art } = await setupLocal();
+    fake.replies.push("[[CHOIX: Quelle mer ?]] Grise | Bleue [[/CHOIX]]", "Noté.");
+    art.send(sb.human(), "bordee", "On commence ?");
+    await art.idle();
+    art.send(sb.human(), "bordee", "Quelle mer ? → Bleue");
+    await art.idle();
+    // Un projet d'avant ADR-58 : pas de direction.json, seulement la discussion.
+    rmSync(join(repo, "studio", "art", "direction.json"));
+    expect(art.state("bordee").direction.choices.map((c) => `${c.question} → ${c.answer}`)).toEqual(["Quelle mer ? → Bleue"]);
+  });
+});
+
+describe("références web : adresses sûres seulement (ADR-58)", () => {
+  it("refuse la machine et le réseau local, accepte une adresse publique", async () => {
+    for (const ip of ["127.0.0.1", "10.0.0.5", "192.168.1.20", "172.16.0.1", "169.254.169.254", "::1", "fd00::1", "::ffff:127.0.0.1", "0.0.0.0"]) expect(privateAddress(ip), ip).toBe(true);
+    for (const ip of ["8.8.8.8", "151.101.1.69", "2606:4700::1111"]) expect(privateAddress(ip), ip).toBe(false);
+    await expect(assertPublic("http://localhost:3000/x.png")).rejects.toThrow(/locale|port/);
+    await expect(assertPublic("http://127.0.0.1/x.png")).rejects.toThrow(/réseau local/);
+    await expect(assertPublic("file:///C:/secret.png")).rejects.toThrow(/http, https/);
+    await expect(assertPublic("https://user:pw@example.org/x.png")).rejects.toThrow(/identifiants/);
+    expect((await assertPublic("https://93.184.215.14/a.jpg")).hostname).toBe("93.184.215.14");
+  });
+  it("trouve l'image d'aperçu d'une page", () => {
+    expect(pageImage('<head><meta property="og:image" content="/img/cover.jpg?a=1&amp;b=2"></head>', "https://store.example.org/app/1")).toBe("https://store.example.org/img/cover.jpg?a=1&b=2");
+    expect(pageImage('<meta content="https://cdn.example.org/x.png" property="og:image" />', "https://example.org")).toBe("https://cdn.example.org/x.png");
+    expect(pageImage("<html>rien</html>", "https://example.org")).toBeNull();
   });
 });

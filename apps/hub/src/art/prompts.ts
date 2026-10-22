@@ -47,6 +47,36 @@ Ton métier :
   Une image qui servira à la 3D : objet entier, de face (pose en A pour un personnage), fond uni clair, lumière douce et
   égale, aucune lueur forte, aucun halo, aucune ombre portée marquée : Tripo recopie tout ce qu'il voit sur le modèle.
 
+La conception visuelle (ADR-58), avant de fabriquer les visuels du jeu, dans cet ordre. Le contexte
+<direction_visuelle> te dit où on en est, ce qui est déjà tranché et ce qu'il aime : appuie-toi dessus, rien ne s'y perd.
+1. INTENTIONS : l'émotion, les références qu'il a en tête, ce qui doit se lire d'un coup d'œil. Deux ou trois questions,
+   illustrées dès qu'elles portent sur un aspect visible.
+2. RÉFÉRENCES : à partir de ses mots, même vagues (« sombre, nordique, un peu Hades mais plus froid »), cherche sur le web
+   des images de jeux, de concept art, de films, de peinture ou de photo qui incarnent ces pistes, et montre-les-lui en
+   planche ([[REFERENCES]]). Variées : plusieurs interprétations de ses mots, pas huit fois la même. Il dit, image par
+   image, ce qu'il aime et ce qu'il veut éviter ; son avis t'arrive en message et reste dans <direction_visuelle>.
+   Tire-en ce qui revient (couleurs, formes, lumière) et dis-le-lui en une phrase avant d'aller plus loin.
+3. STYLES : un duel ([[STYLES]]) : un même sujet représentatif du jeu (son héros, une scène type) dessiné dans 3 styles
+   vraiment différents, nourris des références aimées. Il choisit d'un clic ; le style retenu devient la référence de
+   style des visuels (« | ref style ») et sa phrase de style entre dans la bible. Un second duel peut affiner (variantes du
+   style retenu), pas plus, sauf s'il le demande.
+4. BIBLE : la synthèse de tout cela ([[BIBLE]]) : palette en codes hexadécimaux avec le rôle de chaque couleur, la phrase
+   de style, ce qu'on prend à chaque référence aimée (cite le fichier moodboard/…), ce qu'on évite.
+5. VISUELS : seulement ensuite, le circuit d'un visuel ci-dessous.
+S'il arrive avec une demande précise (un visuel, une retouche), traite-la : ces étapes ne sont pas un passage obligé à
+chaque message. Mais si la direction n'est pas posée, dis-le et propose de la poser d'abord.
+
+Les questions de goût (règles strictes) :
+- Seulement sur le sujet en cours : jamais une question sur la carte 3 pendant qu'on dessine un ennemi.
+- Jamais une question déjà tranchée (voir <direction_visuelle>) : applique la réponse.
+- Une question qui se juge à l'œil (forme, couleur, matière, ambiance, style) est ILLUSTRÉE : chaque option a son image
+  (« libellé => visuel », voir [[CHOIX]]). Si tu ne peux pas la montrer, tranche toi-même, note-le dans la bible
+  (« Choix faits pour vous ») et avance.
+- Pas de question de planning (« quel visuel ensuite ? ») parmi les questions de goût : propose la suite en une phrase,
+  il répondra s'il veut autre chose.
+- Trois questions au plus par message, la plus structurante d'abord ; une option « Je te laisse choisir » est inutile,
+  l'interface la propose déjà.
+
 Le circuit d'un visuel (ADR-49), dans cet ordre, sans en sauter :
 1. CADRAGE : toutes tes questions de goût sur ce visuel, d'un coup (trois au plus), AVANT toute fabrication. Une réponse
    qui pose une question ne lance rien : le hub ignore alors [[CROQUIS]], [[GENERER]] et [[MODELE3D]] dans cette réponse.
@@ -77,7 +107,7 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   # nom court
   prompt Flux de la direction 2
   --- … [[/CROQUIS]] : 2 à 4 directions différentes pour cet asset ; l'utilisateur choisit, puis le hub fabrique seul.
-  Ajoute « | ref A-0002 » (un asset validé) ou « | ref moodboard/x.png » après le format pour dessiner DANS LE STYLE de
+  Ajoute « | ref A-0002 » (un asset validé), « | ref style » (le style retenu au duel) ou « | ref moodboard/x.png » après le format pour dessiner DANS LE STYLE de
   cette image (Flux Kontext, quand le contexte dit qu'il est prêt) : c'est ce qui donne un air de famille aux personnages,
   ennemis et objets d'un même jeu. Le prompt décrit alors seulement le nouveau sujet. Vaut aussi pour [[GENERER]].
 - [[GENERER: A-0001 | 1024x1024]] prompt Flux [[/GENERER]] : fait fabriquer l'asset par le générateur local, au format
@@ -106,6 +136,25 @@ ${ANIMATION_CATALOG}
 - [[NOTE: moodboard/x.png]] ce que tu retiens de cette image pour notre jeu [[/NOTE]]
 - [[CHOIX: la question]] option 1 | option 2 | option 3 [[/CHOIX]] : une question de goût, que l'utilisateur tranche d'un clic.
   Une à trois questions à la fois au plus, chacune avec 2 à 4 options courtes et parlantes. Seulement au cadrage.
+  Option illustrée : « libellé => visuel », où visuel est une image de studio/art (moodboard/x.jpg, production/y.png) ou
+  un prompt Flux en anglais que le hub dessine en vignette avant d'afficher la question (même sujet, même cadrage d'une
+  option à l'autre, seule la différence demandée change ; phrase de style à la fin si la bible en a une). Exemple :
+  [[CHOIX: Quel ton pour les plaques d'armure ?]] Gris-pierre chaud => a knight's chest plate in warm stone grey,
+  matte, studio light, plain background | Brun froid => the same chest plate in cold brown leather tone, matte, studio
+  light, plain background [[/CHOIX]]. Deux questions illustrées au plus par message (chaque vignette prend quelques secondes).
+- [[REFERENCES: le thème de la planche]]
+  https://adresse | titre court | ce qu'on en prend pour notre jeu
+  … (4 à 8 lignes) [[/REFERENCES]] : une planche de références. L'adresse est celle d'une image (.jpg, .png, .webp) ou
+  d'une page qui la montre (le hub prend alors son image d'aperçu) : pages de jeux (Steam, sites officiels), ArtStation,
+  Wikimedia Commons, musées. Vérifie que l'adresse existe (WebSearch, WebFetch) ; n'invente jamais une adresse. Le hub
+  télécharge les images dans moodboard/ avec leur source, les montre, et te dit lesquelles n'ont pas pu être récupérées.
+  Une ou deux planches par message au plus. Ce sont des références d'inspiration, jamais des images pour le jeu.
+- [[STYLES: le sujet commun | 1024x1024]] # nom court du style 1
+  prompt Flux complet du sujet dans ce style
+  ---
+  # nom court du style 2
+  … [[/STYLES]] : un duel de 2 à 4 styles (générateur local nécessaire). Le sujet et le cadrage sont identiques d'un
+  prompt à l'autre ; seuls le style, le rendu, la lumière et la palette changent. Un duel à la fois.
 
 Réponds en français, en Markdown simple, sans jargon : court quand c'est une question, détaillé quand tu présentes une direction.`;
 
@@ -117,11 +166,15 @@ export type ArtDirectives = {
   sketches: { asset: string; format: string | null; options: { label: string; prompt: string }[]; ref: string | null }[];
   model3d: { asset: string; spec: Model3DSpec }[];
   notes: { file: string; note: string }[];
+  /** Planches de références à aller chercher sur le web (ADR-58). */
+  references: { theme: string; items: { url: string; title: string; why: string }[] }[];
+  /** Duel de styles : un même sujet dessiné dans 2 à 4 styles (ADR-58). */
+  styles: { subject: string; format: string | null; options: { label: string; prompt: string }[] }[];
 };
 
 /** Repère et retire les balises du Directeur artistique ; les questions de goût deviennent des lignes « §CHOIX§ ». */
 export function parseArtDirectives(text: string): { text: string; directives: ArtDirectives } {
-  const d: ArtDirectives = { bible: null, assets: [], midjourney: [], generate: [], sketches: [], model3d: [], notes: [] };
+  const d: ArtDirectives = { bible: null, assets: [], midjourney: [], generate: [], sketches: [], model3d: [], notes: [], references: [], styles: [] };
   let out = text;
   const take = (re: RegExp, fn: (m: string[]) => string | void) => {
     out = out.replace(re, (...args) => fn(args.slice(0, -2) as string[]) ?? "");
@@ -170,16 +223,7 @@ export function parseArtDirectives(text: string): { text: string; directives: Ar
   take(/\[\[\s*CROQUIS\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*CROQUIS\s*\]\]/gi, (m) => {
     const [asset = "", format = ""] = m[1]!.split("|").map((s) => s.trim());
     const id = /A-\d{4,}/.exec(asset)?.[0];
-    const options = m[2]!
-      .split(/^\s*---\s*$/m)
-      .map((block, k) => {
-        const lines = block.trim().replace(/^`+|`+$/g, "").trim().split("\n");
-        const titled = /^#\s*(.+)$/.exec(lines[0]?.trim() ?? "");
-        const prompt = (titled ? lines.slice(1) : lines).join("\n").trim();
-        return { label: (titled?.[1]?.trim() || `Direction ${k + 1}`).slice(0, 60), prompt: prompt.slice(0, 2000) };
-      })
-      .filter((o) => o.prompt)
-      .slice(0, 4);
+    const options = titledBlocks(m[2]!, "Direction");
     if (id && options.length >= 2) d.sketches.push({ asset: id, format: parseFormat(format), options, ref: parseRef(m[1]!) });
   });
   take(/\[\[\s*MODELE3D\s*:([^\]]*)\]\](?:\s*\[\[\s*\/\s*MODELE3D\s*\]\])?/gi, (m) => {
@@ -191,15 +235,47 @@ export function parseArtDirectives(text: string): { text: string; directives: Ar
     const file = m[1]!.trim();
     if (file && m[2]!.trim()) d.notes.push({ file, note: m[2]!.trim().slice(0, 2000) });
   });
+  take(/\[\[\s*REFERENCES\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*REFERENCES\s*\]\]/gi, (m) => {
+    const items = m[2]!
+      .split("\n")
+      .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").split("|").map((s) => s.trim()))
+      .filter(([url]) => /^https?:\/\/\S+$/i.test(url ?? ""))
+      .map(([url, title = "", why = ""]) => ({ url: url!.slice(0, 1000), title: title.slice(0, 160), why: why.slice(0, 400) }))
+      .slice(0, 8);
+    if (items.length && d.references.length < 2) d.references.push({ theme: m[1]!.trim().slice(0, 100) || "Références", items });
+  });
+  take(/\[\[\s*STYLES\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*STYLES\s*\]\]/gi, (m) => {
+    const [subject = "", format = ""] = m[1]!.split("|").map((s) => s.trim());
+    const options = titledBlocks(m[2]!, "Style");
+    if (subject && options.length >= 2 && !d.styles.length) d.styles.push({ subject: subject.slice(0, 160), format: parseFormat(format), options });
+  });
   take(/\[\[\s*CHOIX\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*CHOIX\s*\]\]/gi, (m) => {
     const options = m[2]!
       .split("|")
-      .map((o) => o.replace(/§[A-Z]+§/g, "").trim().replace(/\s+/g, " "))
+      .map((o) => {
+        // « libellé => visuel » : une image de studio/art, ou un prompt Flux que le hub dessine en vignette (ADR-58).
+        const [label = "", visual = ""] = o.replace(/§[A-Z]+§/g, "").split("=>").map((x) => x.trim().replace(/\s+/g, " "));
+        return label ? (visual ? `${label.slice(0, 120)}${VISUAL_SEP}${visual.slice(0, 600)}` : label.slice(0, 120)) : "";
+      })
       .filter(Boolean)
       .slice(0, 4);
     return options.length >= 2 ? `\n${CHOICE_MARK}${m[1]!.trim()} || ${options.join(" || ")}\n` : "";
   });
   return { text: out.replace(/\n{3,}/g, "\n\n").trim(), directives: d };
+}
+
+/** Blocs « # nom » + prompt séparés par « --- » : les directions d'un croquis ou les styles d'un duel. */
+function titledBlocks(raw: string, fallback: string): { label: string; prompt: string }[] {
+  return raw
+    .split(/^\s*---\s*$/m)
+    .map((block, k) => {
+      const lines = block.trim().replace(/^`+|`+$/g, "").trim().split("\n");
+      const titled = /^#\s*(.+)$/.exec(lines[0]?.trim() ?? "");
+      const prompt = (titled ? lines.slice(1) : lines).join("\n").trim();
+      return { label: (titled?.[1]?.trim() || `${fallback} ${k + 1}`).slice(0, 60), prompt: prompt.slice(0, 2000) };
+    })
+    .filter((o) => o.prompt)
+    .slice(0, 4);
 }
 
 /** « taille 12 | triangles 8000 | squelette | animations walk, slash » → mesures de la 3D, bornées. */
@@ -244,6 +320,10 @@ export const CHOICE_MARK = "§CHOIX§ ";
 export const DONE_MARK = "§FAIT§ ";
 /** Ligne « §IMAGE§ moodboard/x.png » : l'interface y affiche l'image. */
 export const IMAGE_MARK = "§IMAGE§ ";
+/** Ligne « §PLANCHE§ P-01 » : l'interface y affiche la planche de références, avec votre avis sur chaque image (ADR-58). */
+export const BOARD_MARK = "§PLANCHE§ ";
+/** Dans une option de question, « libellé @@ image » : l'option s'affiche en vignette (ADR-58). */
+export const VISUAL_SEP = " @@ ";
 
 export const VERDICT_SCHEMA = {
   type: "object",

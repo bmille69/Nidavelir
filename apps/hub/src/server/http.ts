@@ -53,6 +53,11 @@ const Body = {
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
   tripoKey: z.object({ key: z.string().min(8).max(200) }),
+  artReact: z.object({
+    verdicts: z.record(z.string().max(300), z.enum(["aime", "evite"]).nullable()).refine((v) => Object.keys(v).length <= 100),
+    comment: z.string().max(4000).optional(),
+    tell: z.boolean().optional(),
+  }),
   expressCreate: z.object({ idea: z.string().min(3).max(4000), mode: z.enum(["eclair", "soigne"]) }),
   expressImprove: z.object({ request: z.string().min(3).max(2000) }),
   model: z.object({ role: z.enum(MODEL_ROLES), model: z.enum(MODEL_CHOICES.map((c) => c.id) as [ModelId, ...ModelId[]]) }),
@@ -223,6 +228,8 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.post("/art/kontext/install", async (req) => hub.art.installKontext(req.human!));
     api.post("/art/blender/install", async (req) => hub.art.installBlender(req.human!));
     api.post("/art/tripo/key", async (req) => hub.art.setTripoKey(req.human!, Body.tripoKey.parse(req.body).key));
+    // Votre avis sur les références d'une planche (ADR-58).
+    api.post("/projects/:slug/art/references", async (req) => hub.art.react(req.human!, (req.params as { slug: string }).slug, Body.artReact.parse(req.body)));
     api.post("/projects/:slug/art/assets/:id/model", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.generateModel(req.human!, slug, id);

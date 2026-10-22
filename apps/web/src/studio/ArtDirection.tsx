@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { navigate } from "../App.tsx";
 import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
+import { Choices, DirectionView, Moodboard, ReferenceBoard } from "./ArtVision.tsx";
 import { Icon } from "./Icon.tsx";
 
 const PHONE = typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 860px)").matches;
 const IMAGE_MARK = "§IMAGE§ ";
 const CHOICE_MARK = "§CHOIX§ ";
 const DONE_MARK = "§FAIT§ ";
+const BOARD_MARK = "§PLANCHE§ ";
 const ACCEPT = "image/png,image/jpeg,image/webp";
 
 const STATUS: Record<AssetStatus, string> = {
@@ -20,7 +22,7 @@ const STATUS: Record<AssetStatus, string> = {
 };
 const ORDER: AssetStatus[] = ["a_valider", "production", "propose", "valide", "integration", "integre"];
 
-type Tab = "assets" | "moodboard" | "bible";
+type Tab = "direction" | "assets" | "moodboard";
 
 /**
  * L'espace du Directeur artistique (ADR-43) : vous lui parlez et lui confiez vos images d'inspiration ; il tient la
@@ -33,7 +35,7 @@ export function ArtDirection({ slug }: { slug: string }) {
   const [draft, setDraft] = useState("");
   const [attached, setAttached] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [tab, setTab] = useState<Tab>("assets");
+  const [tab, setTab] = useState<Tab | null>(null);
   const [pane, setPane] = useState<"chat" | "side">("chat");
   const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -42,11 +44,14 @@ export function ArtDirection({ slug }: { slug: string }) {
   const load = useCallback(() => api.art(slug).then(setState, (e: Error) => setError(e.message)), [slug]);
   useEffect(() => {
     setState(null);
+    setTab(null);
     void load();
   }, [load]);
   // Pendant qu'il répond ou que le validateur juge : on suit de près ; sinon, de temps en temps.
+  const exploring = state?.busy.exploring ?? [];
   const busy =
-    !!state && (state.busy.replying || state.busy.validating.length > 0 || state.busy.generating.length > 0 || !!state.generator.installing || !!state.workshop3d.blender.installing);
+    !!state &&
+    (state.busy.replying || exploring.length > 0 || state.busy.validating.length > 0 || state.busy.generating.length > 0 || !!state.generator.installing || !!state.workshop3d.blender.installing);
   useEffect(() => {
     const t = setInterval(() => void load(), busy ? 2500 : 10_000);
     return () => clearInterval(t);
@@ -106,6 +111,18 @@ export function ArtDirection({ slug }: { slug: string }) {
   const lastArt = [...state.messages].reverse().find((m) => m.role === "art");
   const lastIsArt = state.messages.at(-1)?.role === "art";
   const toValidate = state.assets.filter((a) => a.status === "a_valider" || a.status === "valide").length;
+  // Tant que la direction n'est pas posée (pas de bible ni de visuel), on ouvre sur elle ; ensuite sur les visuels.
+  // Choisi une fois, à l'ouverture : l'onglet ne change plus tout seul pendant que vous travaillez.
+  const shown: Tab = tab ?? (state.bible || state.assets.length ? "assets" : "direction");
+  if (!tab) setTab(shown);
+  // Vos réponses, message par message : l'option choisie reste marquée sous chaque question.
+  const answers = new Map<string, Record<string, string>>();
+  state.messages.forEach((m, i) => {
+    if (m.role !== "art" || !m.text.includes(CHOICE_MARK)) return;
+    const next = state.messages.slice(i + 1).find((x) => x.role === "human");
+    const pairs = (next?.text ?? "").split("\n").map((l) => /^(.+?\?)\s*→\s*(.+)$/.exec(l.trim())).filter((x): x is RegExpExecArray => !!x);
+    answers.set(m.id, Object.fromEntries(pairs.map((p) => [p[1]!.trim(), p[2]!.trim()])));
+  });
 
   return (
     <main className={`project art-project pane-${pane}`}>
@@ -155,14 +172,23 @@ export function ArtDirection({ slug }: { slug: string }) {
                 slug={slug}
                 choices={m.id === lastArt?.id && lastIsArt && !state.busy.replying}
                 onChoose={(answer) => void send(answer)}
+                answers={answers.get(m.id)}
+                direction={state.direction}
+                act={act}
               />
             </div>
           ))}
           {state.busy.replying && (
             <div className="msg director art muted">
-              <span className="live-dot" /> Le Directeur artistique regarde vos images et cherche des références… (une à quelques minutes)
+              <span className="live-dot" /> {exploring[0] ?? "Le Directeur artistique regarde vos images et cherche des références"}… (une à quelques minutes)
             </div>
           )}
+          {!state.busy.replying &&
+            exploring.map((e) => (
+              <div key={e} className="msg director art muted">
+                <span className="live-dot" /> {e}…
+              </div>
+            ))}
           <div ref={endRef} />
         </div>
         {error && <p className="error">{error}</p>}
@@ -206,14 +232,16 @@ export function ArtDirection({ slug }: { slug: string }) {
 
       <aside className="panel art-panel">
         <div className="tabs">
-          {(["assets", "moodboard", "bible"] as Tab[]).map((t) => (
-            <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-              {t === "assets" ? `Visuels (${state.assets.length})` : t === "moodboard" ? `Moodboard (${state.moodboard.length})` : "Bible"}
+          {(["direction", "assets", "moodboard"] as Tab[]).map((t) => (
+            <button key={t} className={shown === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
+              {t === "assets" ? `Visuels (${state.assets.length})` : t === "moodboard" ? `Moodboard (${state.moodboard.length})` : "Direction"}
             </button>
           ))}
         </div>
 
-        {tab === "assets" && (
+        {shown === "direction" && <DirectionView slug={slug} bible={state.bible} direction={state.direction} assets={state.assets} act={act} />}
+
+        {shown === "assets" && (
           <div className="art-assets">
             <GeneratorCard generator={state.generator} act={act} />
             {state.assets.some((a) => a.model3d) && <Workshop3DCard workshop={state.workshop3d} act={act} />}
@@ -234,28 +262,18 @@ export function ArtDirection({ slug }: { slug: string }) {
           </div>
         )}
 
-        {tab === "moodboard" && (
+        {shown === "moodboard" && (
           <div className="art-mood" onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, "moodboard")}>
             <button className="secondary" onClick={() => fileInput.current?.click()} disabled={uploading}>
               <Icon name="upload" size={16} /> Ajouter des images
             </button>
-            {state.moodboard.length === 0 && <p className="muted small">Glissez ici des images qui vous inspirent : le Directeur artistique les regarde et note ce qu'il en retient.</p>}
-            <div className="art-mood-grid">
-              {state.moodboard.map((m) => (
-                <figure key={m.file}>
-                  <a href={api.artFile(slug, m.file)} target="_blank" rel="noreferrer">
-                    <img src={api.artFile(slug, m.file)} alt={m.file} loading="lazy" />
-                  </a>
-                  <figcaption className="small">{m.note ?? <span className="muted">Pas encore commentée</span>}</figcaption>
-                </figure>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {tab === "bible" && (
-          <div className="art-bible md">
-            {state.bible ? <Markdown text={state.bible} /> : <p className="muted small">Pas encore de bible visuelle. Demandez au Directeur artistique de la construire avec vous.</p>}
+            {state.moodboard.length === 0 && (
+              <p className="muted small">
+                Glissez ici des images qui vous inspirent, ou demandez au Directeur artistique d'en chercher sur le web à partir de vos mots : il les regarde et note ce
+                qu'il en retient.
+              </p>
+            )}
+            <Moodboard slug={slug} images={state.moodboard} direction={state.direction} act={act} />
           </div>
         )}
       </aside>
@@ -264,20 +282,29 @@ export function ArtDirection({ slug }: { slug: string }) {
 }
 
 /** Message du Directeur artistique : texte, images citées, et ses questions de goût en boutons. */
-function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string; choices: boolean; onChoose: (answer: string) => void }) {
-  // Plusieurs questions : chaque clic choisit, un seul envoi pour toutes ; une seule question : le clic envoie.
-  const [picked, setPicked] = useState<Record<number, string>>({});
+function ArtText({
+  text,
+  slug,
+  choices,
+  onChoose,
+  answers,
+  direction,
+  act,
+}: {
+  text: string;
+  slug: string;
+  choices: boolean;
+  onChoose: (answer: string) => void;
+  answers?: Record<string, string>;
+  direction: ArtState["direction"];
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
   const lines = text.split("\n");
   const images = lines.filter((l) => l.startsWith(IMAGE_MARK)).map((l) => l.slice(IMAGE_MARK.length).trim());
   const questions = lines.filter((l) => l.startsWith(CHOICE_MARK)).map((l) => l.slice(CHOICE_MARK.length).split(" || "));
-  const pick = (k: number, o: string) => {
-    if (questions.length === 1) return onChoose(`${questions[0]![0]} → ${o}`);
-    setPicked((p) => (p[k] === o ? Object.fromEntries(Object.entries(p).filter(([i]) => Number(i) !== k)) : { ...p, [k]: o }));
-  };
-  const sendAll = () => onChoose(questions.map(([q], k) => `${q} → ${picked[k] ?? "je te laisse choisir"}`).join("\n"));
-  const answered = Object.keys(picked).length;
+  const boards = lines.filter((l) => l.startsWith(BOARD_MARK)).map((l) => l.slice(BOARD_MARK.length).trim());
   const done = lines.filter((l) => l.startsWith(DONE_MARK)).map((l) => l.slice(DONE_MARK.length));
-  const body = lines.filter((l) => !l.startsWith(IMAGE_MARK) && !l.startsWith(CHOICE_MARK) && !l.startsWith(DONE_MARK)).join("\n").trim();
+  const body = lines.filter((l) => ![IMAGE_MARK, CHOICE_MARK, DONE_MARK, BOARD_MARK].some((mark) => l.startsWith(mark))).join("\n").trim();
   return (
     <>
       {body && (
@@ -299,28 +326,10 @@ function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string
           <Icon name="check" size={14} /> {d}
         </p>
       ))}
-      {questions.map(([q, ...options], k) => (
-        <div key={k} className="art-choice">
-          <p className="small">
-            <b>{q}</b>
-          </p>
-          <div className="art-choice-options">
-            {options.map((o) => (
-              <button key={o} className={picked[k] === o ? "small" : "secondary small"} aria-pressed={picked[k] === o} disabled={!choices} onClick={() => pick(k, o)}>
-                {o}
-              </button>
-            ))}
-          </div>
-        </div>
+      {boards.map((b) => (
+        <ReferenceBoard key={b} slug={slug} board={b} direction={direction} act={act} />
       ))}
-      {questions.length > 1 && choices && (
-        <div className="art-choice-send">
-          <button className="small" disabled={!answered} onClick={sendAll}>
-            Envoyer mes choix ({answered}/{questions.length})
-          </button>
-          {answered > 0 && answered < questions.length && <span className="muted small">Les questions sans réponse : il choisira pour vous.</span>}
-        </div>
-      )}
+      {questions.length > 0 && <Choices slug={slug} questions={questions} enabled={choices} onChoose={onChoose} answers={answers} />}
     </>
   );
 }
