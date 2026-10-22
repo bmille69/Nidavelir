@@ -834,6 +834,7 @@
 .md ul, .md ol { margin: 0.3rem 0; padding-left: 1.2rem; line-height: 1.6; }
 .concept-chantiers { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.6rem; }
 .concept-chantiers .text { white-space: pre-wrap; margin-top: 0.3rem; }
+.concept-step { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.4rem 0 0.2rem; }
 .concept-sources { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; word-break: break-all; }
 .concept-finish { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.95rem 1.1rem; border-top: 1px solid var(--border); }
 .concept-finish button { align-self: flex-start; }

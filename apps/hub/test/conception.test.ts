@@ -88,6 +88,29 @@ describe("Concepteur", () => {
     expect(sb.hub.conversations.messages("destiny", thread)[0]!.text).toMatch(/1\. Base technique/);
   });
 
+  it("« transmets » envoie les chantiers de toutes les étapes, pas seulement la première", async () => {
+    const fake = new FakeOrchestrator();
+    const sb = sandbox(fake);
+    const root = sb.makeGameRepo("games/destiny", { "README.md": "# D\n" });
+    await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny" });
+    const chantiers = [
+      { etape: "1. Base jouable", title: "Recettes", goal: "Objectif : les recettes." },
+      { etape: "1. Base jouable", title: "Établi", goal: "Objectif : l'établi." },
+      { etape: "2. Profondeur", title: "Raretés", goal: "Objectif : les raretés." },
+      { etape: "3. Finition", title: "Sons du craft", goal: "Objectif : les sons." },
+    ];
+    fake.extractions.push(() => turn({ title: "Système de craft", engine: "", ready: true, questions: [], chantiers, transmettre: true }) as never);
+    const c = sb.hub.conceptions.start(sb.human(), { kind: "feature", project: "destiny", idea: "un système de craft" });
+    await sb.hub.conceptions.idle();
+    expect(fake.calls[0]!.systemPrompt).toMatch(/chantiers de TOUTES les étapes/);
+    const tasks = sb.hub.tasks.list("destiny");
+    expect(tasks.map((t) => t.title).sort()).toEqual(["Établi", "Raretés", "Recettes", "Sons du craft"].sort());
+    expect(tasks.find((t) => t.title === "Raretés")!.goal).toMatch(/^Étape : 2\. Profondeur/);
+    expect(sb.hub.conceptions.messages(c.id).at(-1)!.text).toMatch(/4 chantier\(s\), sur 3 étapes/);
+    const thread = tasks[0]!.origin!.thread;
+    expect(sb.hub.conversations.messages("destiny", thread)[0]!.text).toMatch(/1\. Base jouable\n1\. Recettes\n2\. Établi\n\n2\. Profondeur\n3\. Raretés/);
+  });
+
   it("une erreur du Concepteur est dite clairement et on peut réessayer", async () => {
     const fake = new FakeOrchestrator();
     const sb = sandbox(fake);

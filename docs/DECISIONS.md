@@ -631,6 +631,12 @@ Mesures :
 - **Titan** : à dire à la DA « remplace hurt par hit_to_body_01 » (10 crédits) ; le validateur fera couper slash et ralentir run.
 - **Étape 2, à venir** : Meshy (clé API du directeur créatif), essai sur le Titan pour une course « lourde et droite » décrite en mots, jugé sur bandes.
 
+### ADR-57 : le Concepteur transmet les chantiers de toutes les étapes
+**Statut** : Retenue le 22/10/2026, sur constat du directeur créatif : « transmets » n'envoyait que l'étape 1 ; les étapes suivantes restaient du texte dans le dossier et n'arrivaient jamais en chantier, d'où des conceptions à moitié réalisées. Remplace le choix du 17/10 (étapes suivantes lancées à la main).
+- Les chantiers du Concepteur couvrent **toutes** les étapes de la section « Étapes », dans l'ordre, chacun avec le nom de son étape (`etape`). Plafond relevé de 12 à 40.
+- Pour limiter le coût des tours de cadrage : consignes d'une ou deux phrases tant que la conception n'est pas prête, complètes (environ 800 caractères) dès qu'elle l'est.
+- « Transmets » crée tous les chantiers ; en atelier ils partent un par un, dans l'ordre (ADR-31). Chaque consigne commence par « Étape : … ». Le panneau et la discussion les regroupent par étape.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

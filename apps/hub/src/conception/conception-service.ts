@@ -260,7 +260,7 @@ export class ConceptionService {
       const auto = this.#projects.get(project).autonomy === "workshop";
       say(
         [
-          `✓ C'est transmis à l'équipe : ${r.tasks.length} chantier(s) (${r.tasks.join(", ")}).`,
+          `✓ C'est transmis à l'équipe : ${r.tasks.length} chantier(s)${steps(c) > 1 ? `, sur ${steps(c)} étapes` : ""} (${r.tasks.join(", ")}).`,
           auto
             ? "Ils partent un par un, dans l'ordre ; le développeur reçoit pour chacun la consigne complète et le dossier de conception, sans résumé."
             : "Ils attendent dans « Chantiers » : lancez-les quand vous voulez.",
@@ -292,19 +292,22 @@ export class ConceptionService {
     }
     thread ??= this.#conversations.createThread(project, `Conception : ${c.data.title}`).id;
     const launch = opts.launch && p.autonomy === "workshop";
-    const list = c.data.chantiers.map((ch, k) => `${k + 1}. ${ch.title}`).join("\n");
+    const list = c.data.chantiers
+      .map((ch, k, all) => `${ch.etape && ch.etape !== all[k - 1]?.etape ? `\n${ch.etape}\n` : ""}${k + 1}. ${ch.title}`)
+      .join("\n")
+      .trim();
     this.#conversations.notify(
       project,
       thread,
       launch
         ? `Conception « ${c.data.title} » transmise par le Concepteur. Le dossier est dans ${opts.dossier}.\n\nChantiers, réalisés un par un dans cet ordre (chacun reçoit sa consigne complète et le dossier) :\n${list || "(aucun)"}\n\nParlez-moi ici pour ajuster ou arrêter quoi que ce soit.`
-        : `Conception « ${c.data.title} » terminée. Le dossier est dans ${opts.dossier}.\n\nPremiers chantiers, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
+        : `Conception « ${c.data.title} » terminée. Le dossier est dans ${opts.dossier}.\n\nChantiers de toutes les étapes, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
     );
     const tasks = c.data.chantiers.map(
       (ch) =>
         this.#tasks.createFromConversation(
           project,
-          { title: ch.title, goal: `${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`.slice(0, 4000) },
+          { title: ch.title, goal: `${ch.etape ? `Étape : ${ch.etape}\n\n` : ""}${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`.slice(0, 4000) },
           thread!,
         ).id,
     );
@@ -405,6 +408,7 @@ function toConception(r: Row): Conception {
   };
 }
 
+const steps = (c: Conception) => new Set(c.data.chantiers.map((ch) => ch.etape).filter(Boolean)).size;
 const esc = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›");
 
 export function slugify(name: string): string {

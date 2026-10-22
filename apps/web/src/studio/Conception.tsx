@@ -42,7 +42,7 @@ export function ConceptionStart({ project, thread }: { project?: string; thread?
           <p className="hero-sub">
             {project
               ? `Pour ${name} : décrivez la fonctionnalité comme elle vous vient. Le Concepteur connaît votre code ; il pose les bonnes questions, cherche ce qui existe et prépare les chantiers.`
-              : "Décrivez votre idée comme elle vous vient, même en vrac. Le Concepteur pose les bonnes questions, étudie la faisabilité, cherche ce qui existe, et prépare un dossier et les premiers chantiers."}
+              : "Décrivez votre idée comme elle vous vient, même en vrac. Le Concepteur pose les bonnes questions, étudie la faisabilité, cherche ce qui existe, et prépare un dossier et les chantiers de toutes les étapes."}
           </p>
         </div>
       </header>
@@ -194,8 +194,9 @@ export function ConceptionView({ id }: { id: string }) {
           {tab === "dossier" && (c.data.dossier ? <Markdown text={c.data.dossier} /> : <p className="muted">Le dossier apparaîtra ici après la première réponse.</p>)}
           {tab === "chantiers" && (
             <ol className="concept-chantiers">
-              {c.data.chantiers.map((ch) => (
-                <li key={ch.title}>
+              {c.data.chantiers.map((ch, k, all) => (
+                <li key={`${k}-${ch.title}`}>
+                  {ch.etape && ch.etape !== all[k - 1]?.etape && <div className="concept-step small">{ch.etape}</div>}
                   <strong>{ch.title}</strong>
                   <details>
                     <summary className="small">Consigne pour le développeur</summary>
@@ -227,7 +228,7 @@ export function ConceptionView({ id }: { id: string }) {
             <span className="muted small">
               {c.data.ready
                 ? c.kind === "project"
-                  ? "Crée le dossier du jeu, Git, le CLAUDE.md, le dossier de conception et les premiers chantiers (non lancés)."
+                  ? "Crée le dossier du jeu, Git, le CLAUDE.md, le dossier de conception et les chantiers de toutes les étapes (non lancés)."
                   : "Range le dossier dans le projet et prépare les chantiers (non lancés)."
                 : "Disponible quand l'essentiel est tranché."}
             </span>

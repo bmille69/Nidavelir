@@ -226,7 +226,7 @@ export type ConceptTurn = {
   title: string;
   engine: string;
   dossier: string;
-  chantiers: { title: string; goal: string }[];
+  chantiers: { etape?: string; title: string; goal: string }[];
   ready: boolean;
   claude_md: string;
   sources: { title: string; url: string }[];

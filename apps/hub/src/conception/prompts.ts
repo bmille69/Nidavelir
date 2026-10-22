@@ -21,8 +21,17 @@ export const ConceptTurn = z.object({
   engine: z.enum(["godot", "web", "autre", ""]),
   /** Le dossier de conception complet, à jour, en Markdown. */
   dossier: z.string().min(1).max(14000),
-  /** Premiers chantiers, dans l'ordre : chacun livrable et vérifiable. */
-  chantiers: z.array(z.object({ title: z.string().min(1).max(120), goal: z.string().min(1).max(3000) })).max(12),
+  /** Chantiers de TOUTES les étapes, dans l'ordre : chacun livrable et vérifiable. */
+  chantiers: z
+    .array(
+      z.object({
+        /** Nom de l'étape du dossier à laquelle appartient le chantier (« 1. Base jouable »). */
+        etape: z.string().max(80).default(""),
+        title: z.string().min(1).max(120),
+        goal: z.string().min(1).max(3000),
+      }),
+    )
+    .max(40),
   /** Prêt à démarrer : les questions bloquantes sont tranchées. */
   ready: z.boolean(),
   /** CLAUDE.md du nouveau projet (vide tant que ready est faux, ou pour une fonctionnalité). */
@@ -66,12 +75,13 @@ Dossier ("dossier", Markdown, concis, 1 500 mots au plus, réécrit en entier à
 ## Choix faits pour vous
 ## Questions encore ouvertes
 
-Chantiers ("chantiers") : les chantiers de la PREMIÈRE étape, dans l'ordre, chacun petit, livrable et vérifiable. Leur "goal" est une consigne complète pour le développeur (Claude Code) : objectif, à faire, où, contraintes, vérification, hors périmètre.
+Chantiers ("chantiers") : les chantiers de TOUTES les étapes de la section « Étapes », dans l'ordre (étape 1, puis 2, etc.), chacun petit, livrable et vérifiable, avec dans "etape" le nom de son étape tel qu'écrit dans le dossier. Aucune étape ne doit manquer : rien d'autre ne créera les chantiers des étapes suivantes. Leur "goal" est une consigne complète pour le développeur (Claude Code) : objectif, à faire, où, contraintes, vérification, hors périmètre ; les chantiers des étapes suivantes s'appuient sur ce que les précédents auront construit.
+Tant que "ready" est faux, un "goal" d'une ou deux phrases suffit (le plan se voit, sans coûter cher) ; dès que "ready" est vrai, rédige chaque consigne en entier, concise (800 caractères environ, 3 000 au plus). 40 chantiers au plus : si le projet en demande davantage, regroupe ou réduis le périmètre et dis-le.
 Taille : vise une demi-heure de travail d'agent au plus, quelques fichiers. Le développeur relit tout ce qu'il a déjà lu à chaque action : un chantier deux fois plus long coûte bien plus que deux fois plus. Découpe plutôt que de grossir. Ajoute « (gros) » à la fin du titre seulement si le travail est vraiment indivisible ou délicat (architecture, refonte) : le hub lui donne alors le modèle le plus capable, environ 10 fois plus cher.
 
 Comment ton travail arrive à l'équipe (c'est le hub qui le fait, pas toi) :
 - Ton dossier s'affiche en direct dans le panneau à droite de votre conversation, et chaque chantier y est listé. Tu n'écris aucun fichier toi-même.
-- Quand le directeur créatif te dit de transmettre (« c'est bon », « transmets », « envoie à l'équipe », « lance les chantiers »), et que "ready" est vrai, mets "transmettre" à true. Le hub enregistre alors le dossier dans le jeu (studio/conceptions/…), crée les chantiers dans l'ordre et les confie au directeur et au développeur, qui recevront chacun le dossier complet. Dis-le simplement dans ta réponse.
+- Quand le directeur créatif te dit de transmettre (« c'est bon », « transmets », « envoie à l'équipe », « lance les chantiers »), et que "ready" est vrai, mets "transmettre" à true. Vérifie d'abord que les chantiers couvrent toutes les étapes et que chaque consigne est complète. Le hub enregistre alors le dossier dans le jeu (studio/conceptions/…), crée tous les chantiers, toutes étapes confondues, dans l'ordre et les confie au directeur et au développeur, qui recevront chacun le dossier complet. Dis-le simplement dans ta réponse.
 - Ne lui demande JAMAIS de copier-coller quoi que ce soit, ni de chercher un fichier : c'est le rôle du hub.
 - Si une partie est déjà faite (voir les chantiers existants ci-dessous, s'il y en a), retire-la de tes chantiers avant de transmettre, ou adapte-la.
 - Sinon, "transmettre" reste false.
