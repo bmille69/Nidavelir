@@ -27,7 +27,8 @@ export type GenState = {
  * `init` : une variation d'une image existante (le croquis choisi, ADR-49) au lieu d'une image partie de zéro.
  * `denoise` va de 0 (l'image telle quelle) à 1 (rien n'en reste).
  */
-export type GenRequest = { prompt: string; width: number; height: number; seed: number; init?: { image: Buffer; denoise: number }; edit?: { images: Buffer[] } };
+export type GenRequest = { prompt: string; width: number; height: number; seed: number; init?: { image: Buffer; denoise: number }; edit?: { images: Buffer[] }; scale?: { width: number; height: number } };
+/* `scale` (sprites du studio de modding, ADR-65) : l'image finale est réduite à cette taille, au plus proche voisin (pixel art). */
 /*
  * `edit` (Flux Kontext, ADR-51) : le prompt est une consigne appliquée à la première image (« move the big pauldron to the
  * other shoulder »), ou, avec une image de style, un nouveau sujet dessiné dans ce style. La taille vient de la première image.
@@ -302,6 +303,10 @@ export function fluxWorkflow(req: GenRequest, init?: string): Record<string, unk
     "7": { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["1", 2] } },
     "8": { class_type: "SaveImage", inputs: { filename_prefix: "nidavellir", images: ["7", 0] } },
   };
+  if (req.scale) {
+    graph["11"] = { class_type: "ImageScale", inputs: { image: ["7", 0], upscale_method: "nearest-exact", width: req.scale.width, height: req.scale.height, crop: "disabled" } };
+    (graph["8"] as { inputs: Record<string, unknown> }).inputs.images = ["11", 0];
+  }
   if (init && req.init) {
     graph["9"] = { class_type: "LoadImage", inputs: { image: init } };
     graph["10"] = { class_type: "VAEEncode", inputs: { pixels: ["9", 0], vae: ["1", 2] } };

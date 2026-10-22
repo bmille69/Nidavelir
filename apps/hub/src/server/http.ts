@@ -205,6 +205,14 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.post("/mods/:id/played", async (req) => hub.mods.played(req.human!, (req.params as { id: string }).id, Body.modText.parse(req.body).text));
     api.post("/mods/:id/improve", async (req) => hub.mods.improve(req.human!, (req.params as { id: string }).id, Body.modText.parse(req.body).text));
     api.post("/mods/:id/rebuild", async (req) => hub.mods.rebuild(req.human!, (req.params as { id: string }).id));
+    api.post("/mods/:id/assets/:file/redraw", async (req) => {
+      const { id, file } = req.params as { id: string; file: string };
+      return hub.mods.redraw(req.human!, id, file, Body.modText.parse(req.body).text);
+    });
+    api.get("/mods/:id/assets/:file", async (req, reply) => {
+      const { id, file } = req.params as { id: string; file: string };
+      return reply.header("cache-control", "no-store").type("image/png").send(readFileSync(hub.mods.assetPath(id, file)));
+    });
     api.post("/mods/:id/cancel", async (req) => {
       hub.mods.cancel((req.params as { id: string }).id);
       return { ok: true };

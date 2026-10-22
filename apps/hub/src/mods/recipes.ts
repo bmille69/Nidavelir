@@ -36,6 +36,8 @@ export type GameRecipe = {
   warnings: string[];
   /** La consigne de l'agent pour ce jeu. */
   agent: string;
+  /** Les sprites : comment les dessiner (style du jeu) et comment le mod les charge. */
+  sprites: { style: string; load: string };
 };
 
 const VS_NAME = /^[A-Za-z][A-Za-z0-9]{1,40}$/;
@@ -123,6 +125,18 @@ export const VAMPIRE_SURVIVORS: GameRecipe = {
     "- Mod pour le solo : ne touche à rien de réseau, de compte, de succès Steam ni de sauvegarde.",
     "- Construis avec exactement « dotnet build -c Release » (aucune autre commande de construction n'est permise) et corrige jusqu'à 0 erreur.",
   ].join("\n"),
+  sprites: {
+    style:
+      "pixel art game sprite in the style of Vampire Survivors and Castlevania: 16-bit gothic fantasy, bold dark outline, limited palette, simple shading, single subject centered and filling most of the frame, seen from the front, flat solid pure magenta background (#FF00FF) everywhere around it, no shadow on the ground, no text, no border",
+    load: [
+      "Comment les charger (MelonLoader, IL2CPP) :",
+      '- Chemin : System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.ModsDirectory, "<NomDuMod>", "fichier.png").',
+      "- Texture : var tex = new UnityEngine.Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(tex, System.IO.File.ReadAllBytes(chemin)); tex.filterMode = UnityEngine.FilterMode.Point;",
+      "- Le fond est magenta pur (#FF00FF) : rends transparents (alpha 0) les pixels proches du magenta (r > 0.85, g < 0.25, b > 0.85) avec GetPixels/SetPixels puis Apply().",
+      "- Sprite : UnityEngine.Sprite.Create(tex, new UnityEngine.Rect(0, 0, tex.width, tex.height), new UnityEngine.Vector2(0.5f, 0.5f), pixelsPerUnit), en reprenant le pixelsPerUnit du sprite d'origine pour garder la même taille à l'écran.",
+      "- Charge une seule fois et garde les sprites dans un dictionnaire ; si un fichier manque, laisse le visuel d'origine et écris-le dans le journal.",
+    ].join("\n"),
+  },
 };
 
 export const RECIPES: GameRecipe[] = [VAMPIRE_SURVIVORS];

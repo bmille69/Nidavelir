@@ -1444,3 +1444,9 @@ button.secondary.art-aime { color: var(--ok); border-color: var(--ok); backgroun
   .mod-layout { grid-template-columns: minmax(0, 1fr); }
   .mod-game small { max-width: 220px; }
 }
+.mod-sprites { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.6rem; }
+.mod-sprite { margin: 0; display: flex; flex-direction: column; gap: 0.35rem; padding: 0.55rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(0, 0, 0, 0.2); }
+.mod-sprite-img { height: 128px; display: grid; place-items: center; border-radius: var(--radius-sm); background: repeating-conic-gradient(#1b2030 0% 25%, #141826 0% 50%) 50% / 16px 16px; }
+.mod-sprite-img img { width: 112px; height: 112px; image-rendering: pixelated; object-fit: contain; }
+.mod-sprite .row { display: flex; gap: 0.35rem; }
+.mod-sprite input { flex: 1; min-width: 0; font-size: 0.78rem; }

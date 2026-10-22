@@ -324,6 +324,7 @@ export function createHub(options: HubOptions): Hub {
     executor: options.executor ?? noExecutor,
     vcs,
     toolchain: options.modToolchain ?? new RealToolchain(dataDir),
+    imagegen,
     dataDir,
     agentBaseUrl: options.agentBaseUrl ?? (() => "http://127.0.0.1:0/api/agent/runs"),
     steam: options.steamGames,

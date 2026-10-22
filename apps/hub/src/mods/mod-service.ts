@@ -17,6 +17,8 @@ import { buildPrompt, devSystem, fixBuildPrompt, fixLogPrompt, improvePrompt, PL
 import { matches, modName, recipe, recipeFor, type GameRecipe } from "./recipes.ts";
 import { gameBuild, installedGames, type SteamGame } from "./steam.ts";
 import type { ToolchainPort, ToolchainState } from "./toolchain.ts";
+import { filesIn } from "./toolchain.ts";
+import type { ImageGenPort } from "../art/imagegen.ts";
 
 export class ModError extends Error {
   constructor(message: string) {
@@ -47,6 +49,8 @@ export type Mod = {
   /** Le jeu a été mis à jour depuis la construction : le mod peut casser. */
   outdated: boolean;
   installed: Installed | null;
+  /** Les images du mod (assets/), dessinées par le générateur. */
+  assets: string[];
   played: (LogReport & { at: string }) | null;
   error: string | null;
   version: number;
@@ -87,6 +91,7 @@ export class ModService {
   readonly #executor: ExecutorPort;
   readonly #vcs: VcsPort;
   readonly #toolchain: ToolchainPort;
+  readonly #imagegen: ImageGenPort | null;
   readonly #dataDir: string;
   readonly #agentBaseUrl: () => string;
   readonly #steam: () => SteamGame[];
@@ -109,6 +114,8 @@ export class ModService {
     executor: ExecutorPort;
     vcs: VcsPort;
     toolchain: ToolchainPort;
+    /** Le générateur d'images local (ADR-46), pour les sprites des mods. */
+    imagegen?: ImageGenPort;
     dataDir: string;
     agentBaseUrl: () => string;
     steam?: () => SteamGame[];
@@ -120,6 +127,7 @@ export class ModService {
     this.#executor = deps.executor;
     this.#vcs = deps.vcs;
     this.#toolchain = deps.toolchain;
+    this.#imagegen = deps.imagegen ?? null;
     this.#dataDir = deps.dataDir;
     this.#agentBaseUrl = deps.agentBaseUrl;
     this.#steam = deps.steam ?? (() => installedGames());
@@ -259,7 +267,7 @@ export class ModService {
     this.#assertFree();
     this.#assertQuota();
     this.#update(id, { status: "running", phase: "code", error: null });
-    this.#event(id, "phase", "Code : le développeur écrit le mod…");
+    this.#event(id, "phase", "Fabrication : le dossier du mod se prépare…");
     this.#track(this.#make(id));
     return this.get(id);
   }
@@ -442,7 +450,12 @@ export class ModService {
       await this.#vcs.init(root);
       await this.#vcs.commitPaths(root, ["."], `mod: gabarit de « ${m.plan!.title} »`);
       this.#update(id, { name, root });
-      const report = await this.#run(id, r, root, buildPrompt(m.plan!, m.idea), CODE, abort.signal);
+      // Les images d'abord (ADR-65) : le développeur écrit le code qui les charge, en sachant qu'elles sont là.
+      const drawn = m.plan!.visuals.length ? await this.#draw(id, r, root, m.plan!.visuals, abort.signal) : [];
+      const assets = drawn.map((v) => `${v.file} (${v.size}×${v.size} px, fond magenta à rendre transparent) : ${v.description}`);
+      this.#update(id, { phase: "code" });
+      this.#event(id, "phase", "Code : le développeur écrit le mod…");
+      const report = await this.#run(id, r, root, buildPrompt(m.plan!, m.idea, assets, r.sprites.load.replace("<NomDuMod>", name)), CODE, abort.signal);
       await this.#vcs.commitPaths(root, ["."], `mod: première version de « ${m.plan!.title} »`);
       await this.#verify(id, r, root, abort.signal, report, fixBuildPrompt);
     } catch (err) {
@@ -490,6 +503,61 @@ export class ModService {
     }
   }
 
+  /**
+   * Les sprites du mod : le générateur local les dessine dans le style du jeu (fond magenta, réduits au plus proche voisin à
+   * la taille du jeu) dans assets/. Sans générateur, le mod se fait sans images, et « Redessiner » les fera plus tard.
+   */
+  async #draw(id: string, r: GameRecipe, root: string, visuals: ModPlan["visuals"], signal: AbortSignal): Promise<ModPlan["visuals"]> {
+    if (!this.#imagegen?.state().installed) {
+      this.#event(id, "info", "Le générateur d'images n'est pas installé (onglet Direction artistique d'un projet) : le mod se fait sans ses images ; « Redessiner » les ajoutera ensuite.");
+      return [];
+    }
+    this.#update(id, { phase: "visuels" });
+    this.#event(id, "phase", `Visuels : le générateur dessine ${visuals.length} image(s) dans le style du jeu…`);
+    mkdirSync(join(root, "assets"), { recursive: true });
+    const done: ModPlan["visuals"] = [];
+    for (const v of visuals) {
+      if (signal.aborted) throw new ModError("Arrêté par vous");
+      try {
+        const png = await this.#imagegen.generate({ prompt: `${r.sprites.style}. Subject: ${v.description}`, width: 1024, height: 1024, seed: Math.floor(Math.random() * 2 ** 31), scale: { width: v.size, height: v.size } });
+        writeFileSync(join(root, "assets", v.file), png);
+        done.push(v);
+        this.#event(id, "info", `Dessiné : ${v.file} (${v.size}×${v.size}).`);
+      } catch (err) {
+        this.#event(id, "error", `${v.file} n'a pas pu être dessiné : ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+    if (done.length) await this.#vcs.commitPaths(root, ["assets"], `mod: ${done.length} visuel(s) dessiné(s)`);
+    return done;
+  }
+
+  /** « Redessiner » une image du mod ; s'il est installé, la nouvelle image y est posée aussitôt. */
+  async redraw(session: HumanSession, id: string, file: string, hint: string): Promise<Mod> {
+    assertHumanSession(session);
+    const m = this.get(id);
+    if (m.status === "running" || m.status === "planning") throw new ModError("Le mod est en travail : attendez la fin");
+    const v = m.plan?.visuals.find((x) => x.file === file);
+    if (!v || !m.root) throw new ModError("Image inconnue pour ce mod");
+    if (!this.#imagegen?.state().installed) throw new ModError("Le générateur d'images n'est pas installé");
+    const r = recipe(m.recipe);
+    const description = hint.trim() ? `${v.description}. ${hint.trim().slice(0, 300)}` : v.description;
+    const png = await this.#imagegen.generate({ prompt: `${r.sprites.style}. Subject: ${description}`, width: 1024, height: 1024, seed: Math.floor(Math.random() * 2 ** 31), scale: { width: v.size, height: v.size } });
+    mkdirSync(join(m.root, "assets"), { recursive: true });
+    writeFileSync(join(m.root, "assets", v.file), png);
+    await this.#vcs.commitPaths(m.root, ["assets"], `mod: ${v.file} redessiné`);
+    this.#event(id, "info", `Redessiné : ${v.file}${hint.trim() ? ` (« ${hint.trim().slice(0, 120)} »)` : ""}.`);
+    if (m.installed && m.status === "ready") this.#place(m, r, this.#game(m.appid).game);
+    return this.get(id);
+  }
+
+  /** Une image du mod, pour l'interface. */
+  assetPath(id: string, file: string): string {
+    if (!safeAsset(file)) throw new ModError("Nom d'image refusé");
+    const p = join(this.get(id).root, "assets", file);
+    if (!existsSync(p)) throw new ModError("Image absente");
+    return p;
+  }
+
   /** Le hub construit lui-même ; en cas d'échec, jusqu'à deux corrections du développeur. */
   async #verify(id: string, r: GameRecipe, root: string, signal: AbortSignal, report: ModReport | null, fix: (out: string) => string): Promise<void> {
     const name = this.get(id).name;
@@ -526,8 +594,9 @@ export class ModService {
       this.#event(m.id, "info", saved ? `Vos sauvegardes du jeu sont copiées à l'abri (${saved}).` : "Aucune sauvegarde du jeu trouvée à copier.");
     }
     const files = [{ from: join(m.root, r.output(m.name)), to: `${m.name}.dll` }];
+    // Les images, une par une : chacune est notée (empreinte) et retirée exactement à la désinstallation.
     const assets = join(m.root, "assets");
-    if (existsSync(assets)) files.push({ from: assets, to: m.name });
+    for (const f of filesIn(assets).filter(safeAsset)) files.push({ from: join(assets, f), to: `${m.name}/${f}` });
     const installed = install(r, game.dir, files, gameBuild(game) || m.game_build || "", m.installed);
     this.#update(m.id, { installed_json: JSON.stringify(installed) });
     this.#event(m.id, "phase", "Installé dans le jeu : lancez une partie, puis « J'ai joué ».");
@@ -688,6 +757,7 @@ export class ModService {
       game_build: r.game_build,
       outdated: !!(r.game_build && now && now !== r.game_build),
       installed: r.installed_json ? (JSON.parse(r.installed_json) as Installed) : null,
+      assets: r.root ? filesIn(join(r.root, "assets")).filter(safeAsset) : [],
       played: r.played_json ? (JSON.parse(r.played_json) as Mod["played"]) : null,
       error: r.error,
       version: r.version,
@@ -747,7 +817,39 @@ function normalizePlan(v: unknown): ModPlan {
     settings,
     questions: arr("questions", 3),
     risks: arr("risks", 5),
+    visuals: Array.isArray(o.visuals) ? normalizeVisuals(o.visuals as Record<string, unknown>[]) : [],
   };
+}
+
+const SIZES = [16, 24, 32, 48, 64];
+
+/** Des noms de fichiers sûrs (minuscules, tirets, .png), uniques, et une taille de sprite permise. */
+function normalizeVisuals(list: Record<string, unknown>[]): ModPlan["visuals"] {
+  const seen = new Set<string>();
+  const out: ModPlan["visuals"] = [];
+  for (const v of list.slice(0, 8)) {
+    const base =
+      String(v.file ?? "")
+        .toLowerCase()
+        .replace(/\.png$/, "")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 40) || `sprite-${out.length + 1}`;
+    const file = `${base}.png`;
+    const description = String(v.description ?? "").trim().slice(0, 400);
+    if (seen.has(file) || !description) continue;
+    seen.add(file);
+    const size = Number(v.size);
+    out.push({ file, description, size: SIZES.includes(size) ? size : 32 });
+  }
+  return out;
+}
+
+/** Un nom de fichier d'image du mod, tel que le plan l'a fixé : rien d'autre ne passe. */
+export function safeAsset(file: string): boolean {
+  return /^[a-z0-9-]{1,40}\.png$/.test(file);
 }
 
 function planMarkdown(p: ModPlan, idea: string, game: string): string {

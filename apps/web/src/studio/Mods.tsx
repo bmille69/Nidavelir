@@ -209,6 +209,68 @@ export function ModsHome() {
   );
 }
 
+/** L'image comme en jeu : le fond magenta devient transparent, comme le fera le mod au chargement. */
+function Keyed({ src, alt }: { src: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height);
+      for (let i = 0; i < d.data.length; i += 4) if (d.data[i]! > 216 && d.data[i + 1]! < 64 && d.data[i + 2]! > 216) d.data[i + 3] = 0;
+      ctx.putImageData(d, 0, 0);
+      if (alive) setUrl(c.toDataURL("image/png"));
+    };
+    img.src = src;
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+  return url ? <img src={url} alt={alt} /> : <span className="muted small">…</span>;
+}
+
+/** Un sprite du mod : agrandi au pixel près, avec « Redessiner » (et une précision facultative). */
+function Sprite({ mod, visual, drawn, disabled, onDone, onError }: { mod: Mod; visual: { file: string; description: string; size: number }; drawn: boolean; disabled: boolean; onDone: () => void; onError: (m: string) => void }) {
+  const [hint, setHint] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function redraw() {
+    setBusy(true);
+    try {
+      await api.modRedraw(mod.id, visual.file, hint);
+      setHint("");
+      onDone();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <figure className="mod-sprite">
+      <div className="mod-sprite-img">{drawn ? <Keyed src={api.modAsset(mod.id, visual.file, mod.updated_at)} alt={visual.description} /> : <span className="muted small">pas encore dessiné</span>}</div>
+      <figcaption className="small">
+        <b>{visual.file}</b> <span className="muted">· {visual.size}×{visual.size}</span>
+        <br />
+        <span className="muted">{visual.description}</span>
+      </figcaption>
+      {mod.root && (
+        <div className="row">
+          <input value={hint} onChange={(e) => setHint(e.target.value)} placeholder="Précision (facultatif)" aria-label={`Précision pour ${visual.file}`} />
+          <button className="secondary small" disabled={disabled || busy} onClick={() => void redraw()}>
+            {busy ? "…" : drawn ? "Redessiner" : "Dessiner"}
+          </button>
+        </div>
+      )}
+    </figure>
+  );
+}
+
 /** Un mod : son plan, sa fabrication en direct, puis Installer / J'ai joué / Améliorer / Désinstaller. */
 export function ModView({ id }: { id: string }) {
   const [m, setM] = useState<Mod | null>(null);
@@ -306,6 +368,17 @@ export function ModView({ id }: { id: string }) {
                 </div>
               )}
               {p.risks.length > 0 && <p className="small muted">À savoir : {p.risks.join(" ")}</p>}
+            </section>
+          )}
+
+          {p?.visuals && p.visuals.length > 0 && (
+            <section className="panel-card">
+              <p className="eyebrow">Visuels du mod</p>
+              <div className="mod-sprites">
+                {p.visuals.map((v) => (
+                  <Sprite key={v.file} mod={m} visual={v} drawn={!!m.assets?.includes(v.file)} disabled={busy || working} onDone={() => void load()} onError={setError} />
+                ))}
+              </div>
             </section>
           )}
 

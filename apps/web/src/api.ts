@@ -26,7 +26,7 @@ export type ModGame = {
   protection: string | null;
   toolchain: ModToolchain | null;
 };
-export type ModPlan = { title: string; summary: string; kind: "regles" | "confort" | "apparence"; changes: string[]; settings: { name: string; default: string; description: string }[]; questions: string[]; risks: string[] };
+export type ModPlan = { title: string; summary: string; kind: "regles" | "confort" | "apparence"; changes: string[]; settings: { name: string; default: string; description: string }[]; questions: string[]; risks: string[]; visuals?: { file: string; description: string; size: number }[] };
 export type ModStatus = "planning" | "waiting" | "running" | "ready" | "failed" | "cancelled";
 export type Mod = {
   id: string;
@@ -45,6 +45,7 @@ export type Mod = {
   game_build: string | null;
   outdated: boolean;
   installed: { files: { path: string; sha256: string }[]; at: string; build: string } | null;
+  assets?: string[];
   played: { found: boolean; loaded: boolean; lines: string[]; errors: string[]; gameVersion: string | null; at: string } | null;
   error: string | null;
   version: number;
@@ -397,6 +398,8 @@ export const api = {
   modRebuild: (id: string) => request<Mod>("POST", `/mods/${id}/rebuild`, {}),
   modCancel: (id: string) => request<{ ok: true }>("POST", `/mods/${id}/cancel`, {}),
   modHide: (id: string) => request<{ ok: true }>("POST", `/mods/${id}/hide`, {}),
+  modRedraw: (id: string, file: string, text: string) => request<Mod>("POST", `/mods/${id}/assets/${file}/redraw`, { text }),
+  modAsset: (id: string, file: string, v: number | string) => `/api/human/mods/${id}/assets/${file}?v=${encodeURIComponent(String(v))}`,
   refreshUsage: () => request<UsageSnapshot>("POST", "/usage/refresh", {}),
   setModel: (role: ModelRole, model: string) => request<ModelSetting[]>("POST", "/studio/models", { role, model }),
   express: () => request<{ games: ExpressGame[]; running: string | null }>("GET", "/express"),

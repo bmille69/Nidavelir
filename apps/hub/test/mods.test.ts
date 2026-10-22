@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { fluxWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
 import { createHub } from "../src/hub.ts";
 import { readLog } from "../src/mods/installer.ts";
 import { modName, VAMPIRE_SURVIVORS, type GameRecipe } from "../src/mods/recipes.ts";
@@ -81,13 +82,33 @@ class FakeToolchain implements ToolchainPort {
   }
 }
 
-function setup(opts: { protected?: boolean } = {}) {
+/** Le générateur d'images factice : il retient les demandes et rend un petit PNG. */
+class FakeGen implements ImageGenPort {
+  requests: GenRequest[] = [];
+  readonly installed: boolean;
+  constructor(installed: boolean) {
+    this.installed = installed;
+  }
+  state(): GenState {
+    return { installed: this.installed, installing: null, error: null, size: "≈ 19 Go", kontext: { installed: false, installing: null, error: null, size: "≈ 17 Go" } };
+  }
+  install() {}
+  installKontext() {}
+  async generate(req: GenRequest) {
+    this.requests.push(req);
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, this.requests.length)]);
+  }
+  close() {}
+}
+
+function setup(opts: { protected?: boolean; generator?: boolean } = {}) {
   const sb = sandbox();
   sb.hub.close();
   const orchestrator = new FakeOrchestrator();
   const executor = new FakeExecutor();
   const steam = fakeSteam(sb.dir, opts);
   const toolchain = new FakeToolchain(join(sb.dir, "hub/.data/mods"));
+  const gen = new FakeGen(!!opts.generator);
   const hub = createHub({
     databasePath: join(sb.dir, "hub/.data/mods.db"),
     registry: { forbiddenTrees: [join(sb.dir, "hub")], forbiddenExact: [sb.dir] },
@@ -96,12 +117,13 @@ function setup(opts: { protected?: boolean } = {}) {
     executor,
     dataDir: join(sb.dir, "hub/.data"),
     modToolchain: toolchain,
+    imagegen: gen,
     steamGames: () => installedGames(steamLibraries([steam.steam])),
   });
   sb.hub = hub;
   hub.mods.gamesRoot = join(sb.dir, "games");
   hub.mods.saveEnv = { APPDATA: join(sb.dir, "AppData") };
-  return { sb, hub, orchestrator, executor, steam, toolchain };
+  return { sb, hub, orchestrator, executor, steam, toolchain, gen };
 }
 
 const log = (repo: string) => execFileSync("git", ["-C", repo, "log", "--format=%s"], { encoding: "utf8" });
@@ -232,6 +254,51 @@ describe("Studio de modding (ADR-65)", { timeout: 30_000 }, () => {
     await hub.mods.idle();
     expect(hub.mods.get(m0.id).status).toBe("ready");
     expect(hub.mods.get(m0.id).events.some((e) => /La construction échoue[\s\S]*CS0103/.test(e.text))).toBe(true);
+  });
+
+  it("les sprites : le générateur les dessine dans le style du jeu avant le code, ils s'installent avec le mod, « Redessiner » les refait", async () => {
+    const { sb, hub, orchestrator, executor, steam, gen } = setup({ generator: true });
+    hub.mods.installLoader(sb.human(), "1794680");
+    await hub.mods.idle();
+    mkdirSync(join(steam.game, "MelonLoader", "Il2CppAssemblies"), { recursive: true });
+    writeFileSync(join(steam.game, VAMPIRE_SURVIVORS.loader.generatedMark), "asm");
+    hub.mods.buildTypemap(sb.human(), "1794680");
+    await hub.mods.idle();
+    orchestrator.extractions.push({ ...PLAN, title: "Fouet rouge", kind: "apparence", visuals: [{ file: "Fouet Rouge!", description: "a crimson leather whip", size: 30 }] } as never);
+    const m0 = hub.mods.create(sb.human(), "1794680", "un fouet rouge sang");
+    await hub.mods.idle();
+    expect(hub.mods.get(m0.id).plan!.visuals).toEqual([{ file: "fouet-rouge.png", description: "a crimson leather whip", size: 32 }]);
+    executor.scripts.execute.push(async (t, req) => {
+      expect(req.prompt).toMatch(/fouet-rouge\.png \(32×32 px, fond magenta[\s\S]*ModsDirectory, "FouetRouge", "fichier\.png"/);
+      await t.write("Mod.cs", "// charge le sprite\n");
+      return REPORT;
+    });
+    hub.mods.go(sb.human(), m0.id);
+    await hub.mods.idle();
+    let m = hub.mods.get(m0.id);
+    expect(m.status).toBe("ready");
+    expect(gen.requests[0]).toMatchObject({ width: 1024, height: 1024, scale: { width: 32, height: 32 } });
+    expect(gen.requests[0]!.prompt).toMatch(/Vampire Survivors[\s\S]*magenta[\s\S]*Subject: a crimson leather whip/);
+    expect(m.assets).toEqual(["fouet-rouge.png"]);
+    expect(hub.mods.assetPath(m0.id, "fouet-rouge.png")).toMatch(/assets[\\/]fouet-rouge\.png$/);
+    expect(() => hub.mods.assetPath(m0.id, "../FouetRouge.csproj")).toThrow(/refusé/);
+
+    hub.mods.installMod(sb.human(), m0.id);
+    expect(hub.mods.get(m0.id).installed!.files.map((f) => f.path).sort()).toEqual(["Mods/FouetRouge.dll", "Mods/FouetRouge/fouet-rouge.png"]);
+    await hub.mods.redraw(sb.human(), m0.id, "fouet-rouge.png", "plus sombre");
+    expect(gen.requests.at(-1)!.prompt).toMatch(/a crimson leather whip\. plus sombre/);
+    m = hub.mods.get(m0.id);
+    expect(readFileSync(join(steam.game, "Mods", "FouetRouge", "fouet-rouge.png")).length).toBeGreaterThan(0);
+    hub.mods.uninstallMod(sb.human(), m0.id);
+    expect(existsSync(join(steam.game, "Mods", "FouetRouge"))).toBe(false);
+    expect(existsSync(join(steam.game, "Mods"))).toBe(true);
+  });
+
+  it("le générateur réduit l'image au plus proche voisin, à la taille du sprite", () => {
+    const g = fluxWorkflow({ prompt: "whip", width: 1024, height: 1024, seed: 1, scale: { width: 32, height: 32 } }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(g["11"]).toMatchObject({ class_type: "ImageScale", inputs: { upscale_method: "nearest-exact", width: 32, height: 32, image: ["7", 0] } });
+    expect(g["8"]!.inputs.images).toEqual(["11", 0]);
+    expect((fluxWorkflow({ prompt: "x", width: 512, height: 512, seed: 1 }) as Record<string, unknown>)["11"]).toBeUndefined();
   });
 
   it("refuse un jeu protégé par un anti-triche", async () => {

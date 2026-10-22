@@ -15,6 +15,48 @@ import { buildServer } from "../src/server/http.ts";
 import { FakeExecutor } from "../test/fake-executor.ts";
 import { FakeOrchestrator } from "../test/fake-orchestrator.ts";
 import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
+import { deflateSync } from "node:zlib";
+import type { GenRequest, GenState, ImageGenPort } from "../src/art/imagegen.ts";
+
+/** Un petit sprite de test : une croix rouge sombre sur fond magenta, à la taille demandée. */
+function sprite(size: number): Buffer {
+  const crc = (buf: Buffer) => {
+    let c = ~0;
+    for (const x of buf) {
+      c ^= x;
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+    return ~c >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  const rows = Array.from({ length: size }, (_, y) =>
+    Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, (_, x) => (Math.abs(x - y) < 3 || Math.abs(x + y - size) < 3 ? [150, 20, 30] : [255, 0, 255])).flat())]),
+  );
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+}
+
+class Gen implements ImageGenPort {
+  state(): GenState {
+    return { installed: true, installing: null, error: null, size: "≈ 19 Go", kontext: { installed: false, installing: null, error: null, size: "" } };
+  }
+  install() {}
+  installKontext() {}
+  async generate(req: GenRequest) {
+    return sprite(req.scale?.width ?? 32);
+  }
+  close() {}
+}
 
 const PORT = 4403;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -82,6 +124,7 @@ beforeAll(async () => {
     executor: exec,
     dataDir: join(sb.dir, "hub/.data"),
     modToolchain: new Tools(join(sb.dir, "hub/.data/mods")),
+    imagegen: new Gen(),
     steamGames: () => [
       { appid: "1794680", name: "Vampire Survivors", dir: gameDir, buildid: "100", library: lib },
       { appid: "1172470", name: "Apex Legends", dir: join(sb.dir, "apex"), buildid: "1", library: lib },
@@ -119,6 +162,7 @@ describe("studio de modding (ADR-65)", () => {
       kind: "regles",
       changes: ["Fouet : +30 % de dégâts", "Fouet évolué (Bloody Tear) : +30 % aussi"],
       settings: [{ name: "Bonus", default: "30", description: "Bonus de dégâts en %" }],
+      visuals: [{ file: "fouet-sang.png", description: "a blood red whip", size: 32 }, { file: "icone-fouet.png", description: "whip icon", size: 16 }],
       questions: [],
       risks: ["Une mise à jour du jeu peut casser le mod."],
     } as never);

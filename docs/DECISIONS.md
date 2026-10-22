@@ -727,8 +727,15 @@ Mesures :
 - **Jeux refusés** : avec anti-triche (`detectGame`). Pour un jeu avec du jeu en ligne, l'avertissement « mods pour le solo » s'affiche. Rien n'est publié.
 - **Version** : le `buildid` Steam est noté à la construction. Si Steam met le jeu à jour, le mod est signalé « à reconstruire », et l'installation est refusée tant qu'il ne l'est pas.
 - **Jeux Steam** (`mods/steam.ts`) : `libraryfolders.vdf` et les `appmanifest_*.acf` de chaque bibliothèque. Constaté : 36 jeux sur 4 bibliothèques ; VS dans `E:games`, reconnu, sans protection.
+- **Sprites** :
+  - Le plan peut demander des images : fichier, sujet, taille 16 à 64 px.
+  - Avant le code, le générateur local (Flux) les dessine dans le style du jeu, sur un fond magenta uni, à 1024 px. ComfyUI les réduit ensuite au plus proche voisin à la taille du sprite (`GenRequest.scale`, nœud `ImageScale`).
+  - Le développeur reçoit la liste des images et la manière de les charger (Texture2D, magenta rendu transparent, Sprite.Create au même pixelsPerUnit).
+  - Les images s'installent une par une dans `Mods/<NomDuMod>/`.
+  - « Redessiner », avec une précision facultative, refait une image et la réinstalle.
+  - L'interface montre les sprites comme en jeu : le magenta est rendu transparent dans le navigateur.
+  - Sans générateur, le mod se fait sans images.
 - **Reste à faire** :
-  - les sprites dessinés par le générateur (étape 6 du plan) ;
   - l'essai réel sur votre VS : installer MelonLoader, premier lancement, carte, premier mod.
 
 ---
