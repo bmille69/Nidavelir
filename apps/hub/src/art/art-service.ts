@@ -704,6 +704,9 @@ export class ArtService {
       const missing = !v.visible && shotVitrine;
       const retry = (missing || (!!v.visible && !v.ok)) && !a.ingame?.retried;
       a.ingame = { task, file, visible: !!v.visible, ok: !!v.visible && !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 6), retried: retry || !!a.ingame?.retried, at: this.#clock.now() };
+      // Le chantier de retouche porte l'identifiant : à sa fusion, l'asset doit repasser par « intégration ». Écrit avant
+      // le commit : un manifeste modifié sans commit bloquerait toutes les fusions du projet.
+      if (retry) a.status = "integration";
       writeManifest(gameRoot, m);
       await this.#commit(gameRoot, `art: ${id} vérifié dans le jeu (${task})`);
       this.#insert(
@@ -734,9 +737,6 @@ export class ArtService {
             : `Lance un chantier dont le titre commence par « ${id} » pour corriger l'intégration (taille, orientation, éclairage, fond…), sans changer le fichier validé.`,
         ].join("\n");
         void this.#conversations.send(project, thread.id, text).catch(() => {});
-        // Le chantier de retouche porte l'identifiant : à sa fusion, l'asset doit repasser par « intégration ».
-        a.status = "integration";
-        writeManifest(gameRoot, m);
       }
     } catch (err) {
       this.#insert(project, "art", `Le validateur n'a pas pu regarder ${id} dans le jeu : ${(err as Error).message.slice(0, 300)}.`, null);
