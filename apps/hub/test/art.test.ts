@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
 import { PENDING_VISUALS } from "../src/art/manifest.ts";
 import { fluxWorkflow, kontextWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
-import { VIEWS, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
+import { VIEWS, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
 import { parseArtDirectives, parseFormat, parseModel3D, parseRef } from "../src/art/prompts.ts";
 import { assertPublic, pageImage, privateAddress, type WebRefsPort } from "../src/art/web-refs.ts";
 import type { CheckerPort } from "../src/quality/checks.ts";
@@ -134,6 +134,8 @@ class FakeModel3D implements Model3DPort {
     for (const p of photos) writeFileSync(p, PNG);
     return { photos, mesures: { triangles: 1200 } };
   }
+  /** Le contrôle géométrique rendu à chaque export (ADR-63), dans l'ordre. */
+  geometry: Geometry[] = [];
   async export(req: { dir: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }) {
     this.exports.push({ output: req.output, prefix: req.prefix });
     writeFileSync(req.output, "glTF");
@@ -142,7 +144,8 @@ class FakeModel3D implements Model3DPort {
     const animations = req.spec.animations.filter((a) => a !== "slash");
     const bandes = this.bandes ? animations.map((a) => join(req.rendersDir, `${req.prefix}-anim-${a}.png`)) : [];
     for (const b of bandes) writeFileSync(b, PNG);
-    return { renders, bandes, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations, durees: animations.map((nom) => ({ nom, duree_s: nom === "hurt" ? 13.8 : 1.2 })) };
+    const controle = this.geometry.shift() ?? null;
+    return { renders, bandes, tris: Math.min(req.spec.tris, 7000), dims: [2.1, 12, 3.4], animations, durees: animations.map((nom) => ({ nom, duree_s: nom === "hurt" ? 13.8 : 1.2 })), controle };
   }
 }
 
@@ -916,9 +919,11 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
   }, 30_000);
 
   it("atelier 3D sous Opus : si la finition résiste deux passes, Fable vient en renfort pour une dernière (ADR-62)", async () => {
-    const { sb, fake, art } = await setupLocal();
+    const { sb, fake, m3d, art } = await setupLocal();
     art.installBlender(sb.human());
     art.workshopModel = () => "opus";
+    m3d.geometry.push({ faces_retournees: 3, petits_morceaux: 1, faces_nulles: 0, aretes_ouvertes: 12, objets: [{ nom: "Muret" }] });
+    m3d.geometry.push({ faces_retournees: 0, petits_morceaux: 0, faces_nulles: 0, aretes_ouvertes: 0, objets: [] }, { faces_retournees: 0, petits_morceaux: 0, faces_nulles: 0, aretes_ouvertes: 0, objets: [] });
     const roles: (string | undefined)[] = [];
     const structured = fake.structured.bind(fake);
     fake.structured = async (input) => {
@@ -932,6 +937,12 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     await art.idle();
     expect([...new Set(roles)]).toEqual(["artisan", "artisan_renfort"]);
     expect(roles.filter((r) => r === "artisan_renfort")).toHaveLength(2);
+    // Le validateur lit le contrôle géométrique : ce que les photos ne montrent pas (ADR-63).
+    const judged = fake.calls.filter((c) => /VALIDATEUR ARTISTIQUE/.test(c.systemPrompt) && /MODÈLE 3D/.test(c.systemPrompt));
+    expect(judged[0]!.prompt).toMatch(/Contrôle géométrique : 3 face\(s\) à l'envers, 1 petit\(s\) morceau\(x\) détaché\(s\) \(Muret\)/);
+    expect(judged.at(-1)!.prompt).toMatch(/Contrôle géométrique : aucune face à l'envers/);
+    expect(judged[0]!.systemPrompt).toMatch(/CONTRÔLE GÉOMÉTRIQUE/);
+    expect(fake.calls.find((c) => /ARTISAN 3D/.test(c.systemPrompt))!.systemPrompt).toMatch(/Blender 4\.5 LTS[\s\S]*reparer\(\)/);
     const texts = art.state("bordee").messages.map((m) => m.text);
     expect(texts.some((t) => /passe 2 sur 3\)[\s\S]*Fable, le modèle le plus fin, reprend la scène en renfort/.test(t))).toBe(true);
     expect(texts.some((t) => /conforme\*\* \(passe 3\)[\s\S]*px × /.test(t))).toBe(true);

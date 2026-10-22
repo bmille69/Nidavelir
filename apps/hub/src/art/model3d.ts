@@ -37,7 +37,9 @@ export type ViewEdit = { view: View; prompt: string };
 /** Le jugement de la planche : les retouches à faire (aucune si elle est cohérente). `round` 2 : après retouche, pour information. */
 export type ViewsReview = (views: ViewImage[], round: number) => Promise<ViewEdit[]>;
 /** `bandes` : une bande d'images par animation (ADR-56), pour juger le mouvement ; `durees` en secondes. */
-export type FinishResult = { renders: string[]; bandes: string[]; tris: number; dims: number[]; animations: string[]; durees: { nom: string; duree_s: number }[] };
+/** Les défauts invisibles sur une photo, mesurés par Blender (ADR-63). */
+export type Geometry = { faces_retournees: number; petits_morceaux: number; faces_nulles: number; aretes_ouvertes: number; objets: { nom: string }[] };
+export type FinishResult = { renders: string[]; bandes: string[]; tris: number; dims: number[]; animations: string[]; durees: { nom: string; duree_s: number }[]; controle?: Geometry | null };
 /** Un pas de l'artisan dans Blender : ce que son code a affiché, ou son erreur. */
 export type CodeResult = { ok: boolean; sortie: string; erreur: string | null };
 /** Les photos de travail (chemins absolus, dans le dossier de l'atelier) et les mesures de la scène. */
@@ -205,8 +207,8 @@ export class RealModel3D implements Model3DPort {
       size: req.spec.size,
       max_tris: req.spec.tris,
       max_texture: maxTexture(req.spec),
-    })) as { renders: string[]; bandes?: string[]; tris_after: number; dims: number[]; animations: string[]; durees?: { nom: string; duree_s: number }[] };
-    return { renders: s.renders, bandes: s.bandes ?? [], tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations, durees: s.durees ?? [] };
+    })) as { renders: string[]; bandes?: string[]; tris_after: number; dims: number[]; animations: string[]; durees?: { nom: string; duree_s: number }[]; controle?: Geometry };
+    return { renders: s.renders, bandes: s.bandes ?? [], tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations, durees: s.durees ?? [], controle: s.controle ?? null };
   }
 
   async addAnimations(req: { dir: string; extras: string[]; animations: string[]; keep: string[] }): Promise<unknown> {

@@ -14,7 +14,7 @@ import { ART_DIR, artRoot, nextAssetId, PENDING_VISUALS, readManifest, writeAtom
 import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
-import { rigAnimations, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
+import { rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
   BOARD_MARK,
@@ -1925,7 +1925,7 @@ export class ArtService {
     source: string | null,
     planche: string[],
     renders: string[],
-    done: { dims: number[]; tris: number; animations: string[] },
+    done: { dims: number[]; tris: number; animations: string[]; controle?: Geometry | null },
     spec: Model3DSpec,
   ): Promise<{ ok: boolean; forme_ok: boolean; mineur: boolean; summary: string; points: string[] }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
@@ -1940,6 +1940,7 @@ export class ArtService {
           planche.length ? `Planche dont la 3D est tirée (face, gauche, dos, droite) : ${planche.join(", ")}` : "",
           `Photos (face, trois-quarts, profil, dos, poses d'animation, vue de jeu) : ${renders.join(", ")}`,
           `Mesures : ${done.dims.map((d) => `${d} ${unitOf(a)}`).join(" × ")} (demandé : ${spec.size} ${unitOf(a)} pour la plus grande dimension), ${done.tris} triangles (budget ${spec.tris})${done.animations.length ? `, animations : ${done.animations.join(", ")}` : ""}.`,
+          geometryLine(done.controle),
         ].join("\n"),
         jsonSchema: MODEL_SCHEMA,
         readDir: artRoot(this.#projects.get(project).root),
@@ -2123,6 +2124,18 @@ export function safeRel(rel: string): boolean {
 }
 
 /** La question des croquis, et la réponse que l'interface renvoie quand vous cliquez un croquis (« question → option »). */
+/** Le contrôle géométrique en clair, pour le validateur (ADR-63). */
+export function geometryLine(c: Geometry | null | undefined): string {
+  if (!c) return "";
+  const bad = [
+    c.faces_retournees ? `${c.faces_retournees} face(s) à l'envers` : "",
+    c.petits_morceaux ? `${c.petits_morceaux} petit(s) morceau(x) détaché(s)` : "",
+    c.faces_nulles ? `${c.faces_nulles} face(s) nulle(s)` : "",
+  ].filter(Boolean);
+  const where = c.objets.length ? ` (${c.objets.map((o) => o.nom).slice(0, 6).join(", ")})` : "";
+  return `Contrôle géométrique : ${bad.length ? `${bad.join(", ")}${where}` : "aucune face à l'envers, aucun morceau détaché, aucune face nulle"}${c.aretes_ouvertes ? ` ; ${c.aretes_ouvertes} arête(s) ouverte(s), sans gravité pour un jeu` : ""}.`;
+}
+
 /** Une fiche en pixels (jeu vu de haut) : les mesures du modèle sont en pixels du jeu, pas en mètres. */
 const unitOf = (a: { specs: string }) => (/\bpx\b/.test(a.specs) ? "px" : "m");
 

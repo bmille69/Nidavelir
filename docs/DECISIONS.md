@@ -680,6 +680,15 @@ Mesures :
 - **« Mettre de côté »** : un visuel pas encore validé prend le statut `ecarte` (« Mis de côté »). Il sort de la file. La DA sait qu'elle ne doit pas y toucher, et ni ses balises ni la fabrication ne le relancent. **« Remettre dans la file »** le rend « proposé ».
 - Au passage : les mesures d'une fiche en pixels sont dites en pixels au validateur 3D et dans la discussion, plus en mètres.
 
+### ADR-63 : l'atelier 3D connaît sa version de Blender et mesure ce que les photos cachent
+**Statut** : Retenue le 22/10/2026, inspirée de l'article « Opus 5.5 Writes Blender Python for the Wrong Blender » (@0xCodio, 11/10/2026).
+- L'article fait deux constats. D'abord, une IA écrit souvent pour une autre version de Blender que celle installée. Ensuite, un rendu ne montre pas tous les défauts : faces à l'envers, morceaux détachés, faces nulles. Les règles d'impression 3D de l'article ne nous concernent pas.
+- **Version** : l'artisan sait qu'il travaille sous **Blender 4.5 LTS (Python 3.11)**, la version que le hub installe, et pas sous Blender 5.
+- **Contrôle géométrique** (`controle()` dans workshop.py) : il compte, par objet, les faces à l'envers (seulement sur les morceaux fermés), les petits morceaux détachés (moins de 2 % de la diagonale, quand un objet en a plusieurs), les faces nulles et les arêtes ouvertes.
+  - `mesures()` le rend à chaque pas de l'artisan. `reparer()` remet les faces à l'endroit, supprime les petits morceaux détachés et les faces nulles.
+  - L'export le transmet au validateur. Faces à l'envers ou débris : le modèle n'est pas « ok », mais « forme_ok », donc réparable dans Blender. Des arêtes ouvertes seules sont sans gravité pour un jeu.
+  - Vérifié sur Blender 4.5.14 : 2 faces retournées et un débris détectés, puis réparés.
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)

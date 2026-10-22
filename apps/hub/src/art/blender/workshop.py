@@ -75,6 +75,81 @@ def materials():
     return sorted({s.material for o in meshes() for s in o.material_slots if s.material}, key=lambda m: m.name)
 
 
+def _parts(bm):
+    """Les morceaux d'un maillage : listes de faces reliees par leurs aretes."""
+    seen, parts = set(), []
+    for f in bm.faces:
+        if f.index in seen:
+            continue
+        seen.add(f.index)
+        part, stack = [], [f]
+        while stack:
+            g = stack.pop()
+            part.append(g)
+            for e in g.edges:
+                for h in e.link_faces:
+                    if h.index not in seen:
+                        seen.add(h.index)
+                        stack.append(h)
+        parts.append(part)
+    return parts
+
+
+def _check(o, fix=False):
+    deps = bpy.context.evaluated_depsgraph_get()
+    bm = bmesh.new()
+    if fix:
+        bm.from_mesh(o.data)
+    else:
+        bm.from_object(o, deps)
+    bm.faces.ensure_lookup_table()
+    nulles = [f for f in bm.faces if f.calc_area() < 1e-10]
+    ouvertes = sum(1 for e in bm.edges if e.link_faces and not e.is_manifold)
+    parts = _parts(bm)
+    lo, hi = bounds()
+    diag = max((hi - lo).length, 1e-6)
+    retournees, petits = 0, []
+    for part in parts:
+        vs = {v for f in part for v in f.verts}
+        plo = Vector((min(v.co.x for v in vs), min(v.co.y for v in vs), min(v.co.z for v in vs)))
+        phi = Vector((max(v.co.x for v in vs), max(v.co.y for v in vs), max(v.co.z for v in vs)))
+        if len(parts) > 1 and (phi - plo).length * max(o.scale) < 0.02 * diag:
+            petits.append(part)
+            continue
+        # Faces a l'envers : seulement sur un morceau ferme, ou « dedans » et « dehors » ont un sens.
+        if all(e.is_manifold for f in part for e in f.edges):
+            before = [f.normal.copy() for f in part]
+            bmesh.ops.recalc_face_normals(bm, faces=part)
+            retournees += sum(1 for f, n in zip(part, before) if f.normal.dot(n) < 0)
+    if fix:
+        if petits:
+            bmesh.ops.delete(bm, geom=list({f for p in petits for f in p}), context="FACES")
+        bmesh.ops.dissolve_degenerate(bm, edges=bm.edges[:], dist=1e-6)
+        bm.to_mesh(o.data)
+        o.data.update()
+    bm.free()
+    return {"faces_retournees": retournees, "petits_morceaux": len(petits), "faces_nulles": len(nulles), "aretes_ouvertes": ouvertes, "morceaux": len(parts)}
+
+
+def controle():
+    """Les defauts invisibles sur une photo (ADR-63) : faces a l'envers, petits morceaux detaches, faces nulles, aretes ouvertes."""
+    out = {"faces_retournees": 0, "petits_morceaux": 0, "faces_nulles": 0, "aretes_ouvertes": 0, "objets": []}
+    for o in meshes():
+        c = _check(o)
+        for k in ("faces_retournees", "petits_morceaux", "faces_nulles", "aretes_ouvertes"):
+            out[k] += c[k]
+        if c["faces_retournees"] or c["petits_morceaux"] or c["faces_nulles"]:
+            out["objets"].append({"nom": o.name, **c})
+    return out
+
+
+def reparer():
+    """Remet les faces a l'endroit, supprime les petits morceaux detaches et les faces nulles ; rend le controle d'apres."""
+    for o in meshes():
+        _check(o, fix=True)
+    return controle()
+
+
 def summary():
     lo, hi = bounds()
     mats = []
@@ -91,6 +166,7 @@ def summary():
         "objets": [o.name + " (" + o.type + ")" for o in scene.objects if o.type in ("MESH", "ARMATURE", "EMPTY") and not any(c.name.startswith("glTF_not_exported") for c in o.users_collection)],
         "materiaux": mats,
         "animations": [{"nom": a.name, "images": [int(a.frame_range[0]), int(a.frame_range[1])]} for a in bpy.data.actions],
+        "controle": controle(),
     }
 
 
@@ -790,6 +866,8 @@ def run_code(code):
     for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "animations", "couper", "vitesse", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
         env[k] = globals()[k]
     env["mesures"] = summary
+    env["controle"] = controle
+    env["reparer"] = reparer
     env["palette"] = job.get("palette", [])
     # Les pieces se posent et s'accrochent en pose de repos : c'est elle que les animations deforment ensuite.
     arm = armature()
@@ -911,4 +989,4 @@ elif mode == "export":
     lo, hi = bounds()
     renders = photos(job["out_dir"], job["prefix"])
     strips = bandes(job["out_dir"], job["prefix"])
-    done({"renders": renders, "bandes": strips, "tris_before": before, "tris_after": s["triangles"], "dims": list(hi - lo), "animations": [a.name for a in bpy.data.actions], "durees": animations(), "materiaux": s["materiaux"]})
+    done({"renders": renders, "bandes": strips, "tris_before": before, "tris_after": s["triangles"], "dims": list(hi - lo), "animations": [a.name for a in bpy.data.actions], "durees": animations(), "materiaux": s["materiaux"], "controle": s["controle"]})
