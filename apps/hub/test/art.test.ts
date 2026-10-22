@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
+import { PENDING_VISUALS } from "../src/art/manifest.ts";
 import { fluxWorkflow, kontextWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
 import { VIEWS, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
 import { parseArtDirectives, parseFormat, parseModel3D, parseRef } from "../src/art/prompts.ts";
@@ -292,6 +293,74 @@ describe("Directeur artistique (ADR-43)", () => {
     // Sans vérifications du hub, pas de capture : on le dit.
     expect(art.state("bordee").messages.at(-1)!.text).toMatch(/A-0001 est dans le jeu \(T-0001\)\. Pas de capture/);
     await expect(art.integrate(sb.human(), "bordee", "A-0001")).rejects.toThrow(/Seul un asset validé/);
+  }, 30_000);
+
+  it("un visuel validé attend que son chantier ait posé sa place, puis son intégration passe devant la file (ADR-60)", async () => {
+    const { sb, fake, repo, art } = await setup();
+    sb.hub.projects.setAutonomy(sb.human(), "bordee", "workshop");
+    fake.replies.push('[[ASSET]] {"name": "Icône de poudre", "type": "icône", "usage": "pastilles de poudre du HUD", "specs": "PNG 64×64"} [[/ASSET]]');
+    art.send(sb.human(), "bordee", "Il me faut une icône de poudre");
+    await art.idle();
+
+    // Deux chantiers de la conception posent un provisoire pour A-0001 ; ils attendent leur tour.
+    const thread = sb.hub.conversations.createThread("bordee", "Refonte du HUD").id;
+    const pending = `${PENDING_VISUALS} :\n- A-0001 « Icône de poudre » (icône) : pastilles de poudre du HUD`;
+    const hud = sb.hub.tasks.createFromConversation("bordee", { title: "HUD de poudre", goal: `Objectif : le HUD.\n\n${pending}` }, thread);
+    const shop = sb.hub.tasks.createFromConversation("bordee", { title: "Boutique", goal: `Objectif : la boutique.\n\n${pending}` }, thread);
+    const set = (id: string, patch: Record<string, string>) => {
+      for (const [k, v] of Object.entries(patch)) sb.hub.db.prepare(`UPDATE tasks SET data_json = json_set(data_json, '$.${k}', ?)${k === "status" ? ", status = ?" : ""} WHERE id = ?`).run(...(k === "status" ? [v, v, id] : [v, id]));
+      return sb.hub.tasks.get("bordee", id);
+    };
+    set(hud.id, { queued_at: "2026-10-22T10:00:00.000Z" });
+    set(shop.id, { queued_at: "2026-10-22T10:00:01.000Z" });
+
+    // Validé avant que le jeu ait sa place : il attend le premier chantier, sans rien envoyer au directeur.
+    fake.extractions.push({ ok: true, summary: "Lisible.", points: [], prompt: null } as never);
+    await art.upload(sb.human(), "bordee", "A-0001", PNG, "image/png", "essai.png");
+    await art.idle();
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "valide", waitsFor: hud.id });
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(new RegExp(`dès que le chantier ${hud.id} « HUD de poudre » aura posé sa place`));
+    expect(sb.hub.conversations.listThreads("bordee").filter((t) => t.title.startsWith("Intégrer A-0001"))).toHaveLength(0);
+
+    // Le chantier fusionné : le provisoire est en place, l'intégration part, sans compter ce chantier comme l'intégration.
+    art.onTaskStatus(set(hud.id, { status: "merged" }));
+    await art.idle();
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", waitsFor: null });
+    const integ = sb.hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Icône de poudre")!;
+    expect(sb.hub.conversations.messages("bordee", integ.id)[0]!.text).toMatch(new RegExp(`Sa place existe déjà : ${hud.id} « HUD de poudre » y a posé un provisoire`));
+    expect(log(repo)).toMatch(new RegExp(`art: A-0001 validé, intégré après ${hud.id}`));
+
+    // Le chantier d'intégration passe devant ceux qui attendaient déjà.
+    const branch = sb.hub.tasks.createFromConversation("bordee", { title: "A-0001 : brancher l'icône de poudre", goal: "Objectif : brancher A-0001." }, integ.id);
+    set(branch.id, { queued_at: "2026-10-22T11:00:00.000Z" });
+    expect(sb.hub.tasks.queued("bordee").map((t) => t.id)).toEqual([branch.id, shop.id]);
+
+    // Un autre chantier qui cite le visuel n'est pas l'intégration ; celui « A-0001 … », si.
+    art.onTaskStatus(set(shop.id, { status: "merged" }));
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    art.onTaskStatus(set(branch.id, { status: "merged" }));
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integre");
+  }, 30_000);
+
+  it("un visuel validé dont les chantiers ont tous été annulés part dans le jeu sans attendre (ADR-60)", async () => {
+    const { sb, fake, art } = await setup();
+    sb.hub.projects.setAutonomy(sb.human(), "bordee", "workshop");
+    fake.replies.push('[[ASSET]] {"name": "Icône de poudre", "type": "icône", "usage": "HUD", "specs": ""} [[/ASSET]]');
+    art.send(sb.human(), "bordee", "Il me faut une icône de poudre");
+    await art.idle();
+    const thread = sb.hub.conversations.createThread("bordee", "Refonte du HUD").id;
+    const hud = sb.hub.tasks.createFromConversation("bordee", { title: "HUD de poudre", goal: `Objectif : le HUD.\n\n${PENDING_VISUALS} :\n- A-0001 « Icône de poudre » (icône) : HUD` }, thread);
+    fake.extractions.push({ ok: true, summary: "Lisible.", points: [], prompt: null } as never);
+    await art.upload(sb.human(), "bordee", "A-0001", PNG, "image/png", "essai.png");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.waitsFor).toBe(hud.id);
+    sb.hub.db.prepare("UPDATE tasks SET status = 'cancelled', data_json = json_set(data_json, '$.status', 'cancelled') WHERE id = ?").run(hud.id);
+    art.onTaskStatus(sb.hub.tasks.get("bordee", hud.id));
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(sb.hub.conversations.messages("bordee", sb.hub.conversations.listThreads("bordee").find((t) => t.title.startsWith("Intégrer A-0001"))!.id)[0]!.text).not.toMatch(/Sa place existe déjà/);
   }, 30_000);
 
   it("une réponse en échec reste visible et se relance en renvoyant un message", async () => {

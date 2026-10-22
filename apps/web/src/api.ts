@@ -103,7 +103,7 @@ export type ExpressGame = {
 };
 export type AssetStatus = "propose" | "production" | "a_valider" | "valide" | "integration" | "integre";
 export type ArtVerdict = { ok: boolean; summary: string; points: string[]; prompt: string | null; file: string; by: "validator" | "human"; at: string };
-export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; model3d?: ArtModelSpec | null; model?: ArtModel | null; ingame?: ArtInGame | null; sketches?: ArtSketch[] | null; direction?: ArtSketch | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
+export type ArtAsset = { id: string; name: string; type: string; usage: string; specs: string; status: AssetStatus; prompts: string[]; refs: string[]; format?: string | null; model3d?: ArtModelSpec | null; model?: ArtModel | null; ingame?: ArtInGame | null; waitsFor?: string | null; sketches?: ArtSketch[] | null; direction?: ArtSketch | null; renders: string[]; verdict: ArtVerdict | null; created_at: string; updated_at: string };
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
 export type ArtModelSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
 export type ArtSketch = { file: string; label: string; prompt: string };

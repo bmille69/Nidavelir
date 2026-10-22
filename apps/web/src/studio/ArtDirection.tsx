@@ -664,6 +664,7 @@ function AssetCard({
           )}
         </div>
       )}
+      {a.status === "valide" && a.waitsFor && <p className="small muted">Il attend que le chantier {a.waitsFor} ait posé sa place dans le jeu, puis part en intégration, avant les chantiers suivants.</p>}
       {a.ingame && (
         <div className={`art-verdict ${a.ingame.ok ? "ok" : "ko"}`}>
           <p className="small">

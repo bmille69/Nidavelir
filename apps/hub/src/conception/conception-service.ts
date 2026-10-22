@@ -14,6 +14,7 @@ import type { VcsPort } from "../vcs/git.ts";
 import type { VisionService } from "../vision/vision-service.ts";
 import { WEB_TOOLS } from "../llm/claude-cli.ts";
 import { CONCEPT_SCHEMA, ConceptTurn, conceptSystemPrompt } from "./prompts.ts";
+import { PENDING_VISUALS } from "../art/manifest.ts";
 
 export class ConceptionError extends Error {
   constructor(message: string) {
@@ -342,7 +343,7 @@ export class ConceptionService {
               // La fin (visuels, dossier) passe toujours : c'est le corps de la consigne qui est raccourci si besoin (4 000 caractères).
               const tail = [
                 visualsOf(ch).length
-                  ? `Visuels confiés au Directeur artistique, pas encore faits :\n${visualsOf(ch).join("\n").slice(0, 900)}\nN'en fabrique aucun et ne les attends pas : pose un visuel provisoire simple (forme ou couleur unie) au bon endroit, facile à remplacer (un seul point de chargement par visuel, au nom de son identifiant). Le vrai visuel arrivera par un chantier d'intégration séparé.`
+                  ? `${PENDING_VISUALS} :\n${visualsOf(ch).join("\n").slice(0, 900)}\nN'en fabrique aucun et ne les attends pas : pose un visuel provisoire simple (forme ou couleur unie) au bon endroit, facile à remplacer (un seul point de chargement par visuel, au nom de son identifiant). Le vrai visuel arrivera par un chantier d'intégration séparé ; s'il est déjà branché quand tu commences (statut « integre » dans studio/art/assets.json), sers-toi de lui plutôt que d'un provisoire.`
                   : "",
                 `Dossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`,
               ]

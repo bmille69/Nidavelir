@@ -10,7 +10,7 @@ import type { Journal } from "../journal/journal.ts";
 import type { OrchestratorPort } from "../orchestrator/port.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
-import { ART_DIR, artRoot, nextAssetId, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
+import { ART_DIR, artRoot, nextAssetId, PENDING_VISUALS, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
@@ -95,6 +95,8 @@ const TRIPO_STEPS = 4;
 
 const MAX_IMAGE = 15 * 1024 * 1024;
 const HISTORY = 30;
+/** Chantiers qui ne bougeront plus : fusionnés ou abandonnés d'une façon ou d'une autre. */
+const OVER: Task["status"][] = ["merged", "cancelled", "abandoned", "rejected", "failed"];
 const IMAGE_TYPES: Record<string, { ext: string; magic: (b: Buffer) => boolean }> = {
   "image/png": { ext: ".png", magic: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
   "image/jpeg": { ext: ".jpg", magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
@@ -129,6 +131,8 @@ export class ArtService {
   readonly #webRefs: WebRefsPort;
   /** Planches, duels et vignettes en cours, par projet : clé → ce qui se passe, en clair (ADR-58). */
   readonly #exploring = new Map<string, Map<string, string>>();
+  /** Les chantiers du projet, pour savoir quand un visuel validé a sa place dans le jeu (ADR-60). */
+  tasks: { list(project: string): Task[] } | null = null;
 
   constructor(deps: {
     db: Db;
@@ -524,10 +528,53 @@ export class ArtService {
   /** L'intégration lancée en arrière-plan : un échec s'affiche dans la discussion au lieu de se perdre. */
   async #autoIntegrate(project: string, id: string, by: "human" | "system"): Promise<void> {
     try {
+      if (await this.#holdForPlaceholder(project, id)) return;
       await this.#requestIntegration(project, id, by);
     } catch (err) {
       this.#insert(project, "art", `Je n'ai pas pu envoyer ${id} au directeur pour l'intégrer : ${(err as Error).message.slice(0, 300)}. Utilisez « Faire intégrer » sur sa fiche.`, null);
     }
+  }
+
+  /** Les chantiers d'une conception qui posent un provisoire pour cet asset (ADR-59), le premier à passer d'abord. */
+  #dependents(project: string, id: string): Task[] {
+    const cited = new RegExp(`\\n- ${id} «`);
+    const rank = (t: Task) => (t.status === "draft" ? (t.queued_at ? 1 : 2) : 0);
+    return (this.tasks?.list(project) ?? [])
+      .filter((t) => t.goal.includes(PENDING_VISUALS) && cited.test(t.goal))
+      .sort((a, b) => rank(a) - rank(b) || (a.queued_at ?? "").localeCompare(b.queued_at ?? "") || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Un visuel validé avant que le jeu ait sa place (ADR-60) : l'intégration attend la fusion du premier chantier qui en
+   * pose le provisoire, sinon le développeur le brancherait dans un jeu qui n'a pas encore l'endroit prévu.
+   */
+  async #holdForPlaceholder(project: string, id: string): Promise<boolean> {
+    const deps = this.#dependents(project, id);
+    if (deps.some((t) => t.status === "merged")) return false;
+    const first = deps.find((t) => !OVER.includes(t.status));
+    if (!first) return false;
+    const gameRoot = this.#projects.get(project).root;
+    const m = readManifest(gameRoot);
+    const asset = m.assets.find((a) => a.id === id);
+    if (!asset || asset.status !== "valide") return false;
+    if (asset.waitsFor === first.id) return true;
+    asset.waitsFor = first.id;
+    writeManifest(gameRoot, m);
+    await this.#commit(gameRoot, `art: ${id} validé, intégré après ${first.id}`);
+    this.#journal.append({ project, actor: { kind: "system" }, type: "art.integration_deferred", subject: id, payload: { task: first.id } });
+    this.#insert(project, "art", `${id} « ${asset.name} » est validé. Il partira dans le jeu dès que le chantier ${first.id} « ${first.title} » aura posé sa place (un provisoire) ; son intégration passera alors avant les chantiers suivants.`, null);
+    return true;
+  }
+
+  /** Un chantier terminé : les visuels qui attendaient leur place partent, ou attendent le chantier suivant qui la pose. */
+  async #release(project: string): Promise<void> {
+    let waiting: Asset[];
+    try {
+      waiting = readManifest(this.#projects.get(project).root).assets.filter((a) => a.status === "valide" && a.waitsFor);
+    } catch {
+      return;
+    }
+    for (const a of waiting) await this.#autoIntegrate(project, a.id, "system");
   }
 
   /** La demande au directeur. Un visuel validé (par le validateur ou par vous) y part tout seul (ADR-48). */
@@ -538,11 +585,13 @@ export class ArtService {
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
     if (asset.status !== "valide" && asset.status !== "integration") throw new ArtError("Seul un asset validé peut être intégré");
     const file = asset.model?.file ?? asset.verdict?.file ?? asset.renders.at(-1);
+    asset.waitsFor = null;
     this.#setStatus(asset, "integration");
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: intégration demandée pour ${id}`);
     const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80));
     const model = asset.model;
+    const placed = this.#dependents(project, id).filter((t) => t.status === "merged");
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
@@ -554,6 +603,9 @@ export class ArtService {
         : "",
       `- Usage : ${asset.usage}`,
       asset.specs ? `- Spécifications : ${asset.specs}` : "",
+      placed.length
+        ? `- Sa place existe déjà : ${placed.map((t) => `${t.id} « ${t.title} »`).join(", ")} y a posé un provisoire. Remplace ce provisoire par le vrai visuel à son point de chargement, sans refaire le reste.`
+        : "",
       "- La bible visuelle (studio/art/bible.md) et le manifeste (studio/art/assets.json) disent le reste.",
       `Lance un chantier dont le titre commence par « ${id} » : le développeur copie le fichier depuis studio/art/ vers les ressources du jeu (sans rien télécharger), le branche à l'endroit prévu, et l'ajoute aux crédits.`,
       `Scène vitrine : si le jeu ne l'a pas encore, le même chantier l'ajoute, une fois pour toutes (vérifie-la avant de finir). ${vitrineScene(id)}`,
@@ -568,8 +620,10 @@ export class ArtService {
 
   /** Un chantier fusionné dont le titre ou la consigne cite un asset en cours d'intégration : il est intégré. */
   onTaskStatus(task: Task): void {
+    if (OVER.includes(task.status)) this.#track(this.#release(task.project));
     if (task.status !== "merged") return;
-    const ids = new Set(`${task.title} ${task.goal}`.match(/A-\d{4,}/g) ?? []);
+    // Un chantier qui pose un provisoire cite les visuels attendus sans les brancher (ADR-60) : seul son titre compte.
+    const ids = new Set(`${task.title} ${task.goal.includes(PENDING_VISUALS) ? "" : task.goal}`.match(/A-\d{4,}/g) ?? []);
     if (!ids.size) return;
     let gameRoot: string;
     try {

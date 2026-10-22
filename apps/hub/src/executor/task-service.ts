@@ -460,10 +460,12 @@ export class TaskService {
     return this.list(project).find((t) => t.id !== except && (ACTIVE.includes(t.status) || this.#starting.has(`${project}/${t.id}`))) ?? null;
   }
 
+  /** La file, dans l'ordre. Un chantier d'intégration de visuel (« A-0012 … ») passe devant : sa place est déjà prête (ADR-60). */
   queued(project: string): Task[] {
+    const art = (t: Task) => (/^A-\d{4,}/.test(t.title) ? 0 : 1);
     return this.list(project)
       .filter((t) => t.status === "draft" && t.queued_at)
-      .sort((a, b) => a.queued_at!.localeCompare(b.queued_at!) || a.id.localeCompare(b.id));
+      .sort((a, b) => art(a) - art(b) || a.queued_at!.localeCompare(b.queued_at!) || a.id.localeCompare(b.id));
   }
 
   /**

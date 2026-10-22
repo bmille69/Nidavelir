@@ -272,6 +272,8 @@ export function createHub(options: HubOptions): Hub {
   });
   // Le Concepteur confie les visuels de ses conceptions au Directeur artistique, et sait ce qui existe déjà (ADR-59).
   conceptions.art = art;
+  // Un visuel validé attend que son chantier ait posé sa place dans le jeu (ADR-60).
+  art.tasks = tasks;
   conceptions.artState = (project) => {
     const assets = readManifest(projects.get(project).root).assets;
     return assets.length ? assets.slice(-40).map((a) => `- ${a.id} ${a.name} (${a.type}) : ${a.status}`).join("\n") : null;

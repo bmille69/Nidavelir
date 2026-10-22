@@ -47,6 +47,8 @@ export type Asset = {
   model?: ModelInfo | null;
   /** Vérification dans le jeu, après la fusion du chantier d'intégration (capture du hub). */
   ingame?: InGame | null;
+  /** Validé, mais son intégration attend que ce chantier ait posé sa place dans le jeu (ADR-60). */
+  waitsFor?: string | null;
   /** Croquis du cadrage (ADR-49) : plusieurs directions, dont le directeur créatif choisit une. */
   sketches?: Sketch[] | null;
   /** Référence de style (Flux Kontext, ADR-51) : l'image dans le style de laquelle cet asset est dessiné. */
@@ -90,6 +92,9 @@ export type ModelInfo = {
 export type InGame = { task: string; file: string; visible: boolean; ok: boolean; summary: string; points: string[]; retried: boolean; at: string };
 
 export type Manifest = { version: 1; assets: Asset[] };
+
+/** En tête de la section des chantiers qui posent un provisoire en attendant des visuels (ADR-59, ADR-60). */
+export const PENDING_VISUALS = "Visuels confiés au Directeur artistique, pas encore faits";
 
 export const ART_DIR = join("studio", "art");
 export const artRoot = (gameRoot: string) => join(gameRoot, ART_DIR);
