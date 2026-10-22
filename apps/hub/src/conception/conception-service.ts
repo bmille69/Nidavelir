@@ -128,6 +128,17 @@ export class ConceptionService {
       .map((c) => ({ id: c.id, title: c.title, project: c.project, since: c.updated_at }));
   }
 
+  /**
+   * Au démarrage (ADR-61) : une conception restée « le Concepteur travaille » quand le hub s'est arrêté vous revient,
+   * avec un mot. Elle ne repart pas seule : une transmission coupée en route ne doit pas créer les chantiers deux fois.
+   */
+  recoverInterrupted(): void {
+    for (const c of this.list().filter((x) => x.status === "thinking")) {
+      this.#insert(c.id, "concepteur", "Le hub a redémarré pendant que je travaillais. Renvoyez votre dernier message pour que je reprenne. Si je transmettais, regardez d'abord « Chantiers » : une partie est peut-être déjà créée.", null, null);
+      this.#update(c.id, { status: "open" });
+    }
+  }
+
   /** Démarre une conception à partir de votre idée, même en vrac. Le premier tour part en arrière-plan. */
   start(session: HumanSession, input: { kind: "project" | "feature"; project?: string; idea: string; thread?: string }): Conception {
     assertHumanSession(session);

@@ -361,6 +361,16 @@ const MIGRATIONS: string[] = [
     events_json TEXT NOT NULL DEFAULT '[]'
   );
   `,
+  `
+  -- ADR-61 : les travaux longs du Directeur artistique en cours, repris après un redémarrage du hub.
+  CREATE TABLE art_jobs (
+    key TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    started_at TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

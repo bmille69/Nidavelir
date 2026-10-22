@@ -718,18 +718,33 @@ export class TaskService {
   }
 
   /** Au démarrage : les runs interrompus par un arrêt du hub sont marqués en échec. */
-  recoverInterrupted(): void {
+  /**
+   * Au démarrage, après un arrêt du hub (ADR-61) : la file d'attente est gardée. Un chantier d'atelier coupé en plein
+   * travail est annulé et repart de zéro sous un nouveau numéro, en tête de file ; les autres coupés sont en échec.
+   */
+  recoverInterrupted(): { project: string; id: string; again: string; thread: string | null }[] {
     const now = this.#clock.now();
     this.#db.prepare("UPDATE runs SET status = 'failed', finished_at = ?, error = 'interrompu par l''arrêt du hub' WHERE status = 'running'").run(now);
     this.#db.prepare("UPDATE escalations SET status = 'expired', decided_at = ? WHERE status = 'pending'").run(now);
-    // Après un arrêt du hub, rien ne repart tout seul : les chantiers en file redeviennent des brouillons à lancer.
-    for (const row of this.#db.prepare("SELECT project, id FROM tasks WHERE status = 'draft'").all() as { project: string; id: string }[]) {
-      const t = this.get(row.project, row.id);
-      if (t.queued_at) this.#update(t, { queued_at: null });
-    }
+    const restarted: { project: string; id: string; again: string; thread: string | null }[] = [];
     for (const row of this.#db.prepare("SELECT project, id FROM tasks WHERE status IN ('planning', 'running')").all() as { project: string; id: string }[]) {
-      this.#update(this.get(row.project, row.id), { status: "failed" });
+      const t = this.get(row.project, row.id);
+      const workshop = t.direct && t.origin && this.#projects.get(t.project).autonomy === "workshop";
+      this.#update(t, { status: workshop ? "cancelled" : "failed" });
+      if (!workshop) continue;
+      const again = this.#create(t.project, { decisions: t.authorized_by, title: t.title, goal: t.goal, reworks: t.reworks }, { restarted: t.id }, t.origin);
+      // Avant tout le reste de la file (seule une intégration de visuel passe devant).
+      this.#update(again, { queued_at: "0000-00-00T00:00:00.000Z" });
+      this.#log(t.project, "task.restarted", again.id, { interrupted: t.id });
+      restarted.push({ project: t.project, id: t.id, again: again.id, thread: t.origin?.thread ?? null });
     }
+    return restarted;
+  }
+
+  /** Au démarrage, une fois le hub prêt : chaque projet qui a une file reprend son chantier suivant. */
+  resumeQueues(): void {
+    const projects = this.#db.prepare("SELECT DISTINCT project FROM tasks WHERE status = 'draft'").all() as { project: string }[];
+    for (const { project } of projects) if (this.queued(project).length) this.#track(this.#pump(project));
   }
 
   async idle(): Promise<void> {

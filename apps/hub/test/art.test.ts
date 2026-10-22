@@ -363,6 +363,41 @@ describe("Directeur artistique (ADR-43)", () => {
     expect(sb.hub.conversations.messages("bordee", sb.hub.conversations.listThreads("bordee").find((t) => t.title.startsWith("Intégrer A-0001"))!.id)[0]!.text).not.toMatch(/Sa place existe déjà/);
   }, 30_000);
 
+  it("redémarrage du hub en plein travail : la file est gardée, le chantier coupé repart en tête, le DA reprend (ADR-61)", async () => {
+    const { sb, fake, art } = await setup();
+    sb.hub.projects.setAutonomy(sb.human(), "bordee", "workshop");
+    fake.replies.push('[[ASSET]] {"name": "Grouillot", "type": "modèle 3D", "usage": "ennemi", "specs": ""} [[/ASSET]]');
+    art.send(sb.human(), "bordee", "Il me faut un ennemi");
+    await art.idle();
+
+    // L'état laissé par un hub arrêté net : un chantier en cours, deux en file, une 3D en route, un message sans réponse.
+    const thread = sb.hub.conversations.createThread("bordee", "Carte").id;
+    const make = (title: string) => sb.hub.tasks.createFromConversation("bordee", { title, goal: `Objectif : ${title}.` }, thread);
+    const [running, next, last] = [make("Relief"), make("Forêt"), make("Ciel")];
+    const set = (id: string, json: string, status?: string) =>
+      sb.hub.db.prepare(`UPDATE tasks SET data_json = json_patch(data_json, ?)${status ? ", status = ?" : ""} WHERE id = ?`).run(...(status ? [json, status, id] : [json, id]));
+    set(running.id, JSON.stringify({ status: "running", direct: true }), "running");
+    set(next.id, JSON.stringify({ queued_at: "2026-10-22T10:00:00.000Z" }));
+    set(last.id, JSON.stringify({ queued_at: "2026-10-22T10:00:01.000Z" }));
+    sb.hub.db.prepare("INSERT INTO art_jobs (key, project, kind, payload_json, started_at) VALUES ('k', 'bordee', 'model', '{\"id\":\"A-0001\"}', 'x')").run();
+    sb.hub.db.prepare("INSERT INTO art_messages (id, project, seq, role, text, at) VALUES ('m', 'bordee', 99, 'human', 'Et ses couleurs ?', 'x')").run();
+
+    const restarted = sb.hub.tasks.recoverInterrupted();
+    expect(restarted).toEqual([{ project: "bordee", id: running.id, again: expect.any(String), thread }]);
+    expect(sb.hub.tasks.get("bordee", running.id).status).toBe("cancelled");
+    const again = sb.hub.tasks.get("bordee", restarted[0]!.again);
+    expect(again).toMatchObject({ title: "Relief", goal: "Objectif : Relief.", status: "draft", origin: { thread } });
+    expect(sb.hub.tasks.queued("bordee").map((t) => t.id)).toEqual([again.id, next.id, last.id]);
+
+    fake.replies.push("Des teintes de chitine sombre.");
+    art.resume();
+    await art.idle();
+    const texts = art.state("bordee").messages.map((m) => m.text);
+    expect(texts.some((t) => /La 3D de A-0001 a été interrompue[\s\S]*Fabriquer la 3D/.test(t))).toBe(true);
+    expect(texts.slice(-2)[0]).toMatch(/chitine sombre/);
+    expect(sb.hub.db.prepare("SELECT COUNT(*) AS n FROM art_jobs").get()).toEqual({ n: 0 });
+  }, 30_000);
+
   it("une réponse en échec reste visible et se relance en renvoyant un message", async () => {
     const { sb, fake, art } = await setup();
     fake.reply = async () => {

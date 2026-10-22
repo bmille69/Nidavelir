@@ -731,6 +731,47 @@ export class ArtService {
 
   // ── Tours du Directeur artistique ──
 
+  // ── Redémarrage du hub (ADR-61) ──
+
+  /** Un travail long noté en base le temps qu'il dure : s'il est encore là au démarrage, le hub s'est arrêté pendant. */
+  #jobStart(project: string, kind: "sketch" | "produce" | "model" | "board" | "duel", payload: object, key = `${project}/${kind}/${randomUUID()}`): string {
+    this.#db.prepare("INSERT OR REPLACE INTO art_jobs (key, project, kind, payload_json, started_at) VALUES (?, ?, ?, ?, ?)").run(key, project, kind, JSON.stringify(payload), this.#clock.now());
+    return key;
+  }
+
+  #jobEnd(key: string): void {
+    this.#db.prepare("DELETE FROM art_jobs WHERE key = ?").run(key);
+  }
+
+  /**
+   * Au démarrage : ce que le Directeur artistique faisait quand le hub s'est arrêté repart (croquis, fabrication, planches,
+   * duels), et un message resté sans réponse en reçoit une. La 3D ne repart pas seule : Tripo se paie, vous la relancez.
+   */
+  resume(): void {
+    const jobs = this.#db.prepare("SELECT * FROM art_jobs ORDER BY started_at").all() as { key: string; project: string; kind: string; payload_json: string }[];
+    this.#db.prepare("DELETE FROM art_jobs").run();
+    const models: { project: string; id: string }[] = [];
+    for (const j of jobs) {
+      const p = JSON.parse(j.payload_json);
+      try {
+        this.#projects.get(j.project);
+        if (j.kind === "sketch") this.#startSketches(j.project, p.id);
+        else if (j.kind === "produce") this.#startProduce(j.project, p.id);
+        else if (j.kind === "board") this.#startBoard(j.project, p);
+        else if (j.kind === "duel") this.#startDuel(j.project, p);
+        else if (j.kind === "model") models.push({ project: j.project, id: p.id });
+      } catch {
+        /* projet retiré entre-temps */
+      }
+    }
+    for (const project of this.#projects.list()) this.#turn(project.slug);
+    // Après la réponse en attente, sinon ce mot passerait pour elle.
+    for (const m of models) {
+      const after = (this.#queue.get(m.project) ?? Promise.resolve()).catch(() => {});
+      this.#track(after.then(() => void this.#insert(m.project, "art", `La 3D de ${m.id} a été interrompue par le redémarrage du hub. Je ne la relance pas seule, car Tripo se paie : « Fabriquer la 3D » sur sa fiche la reprend.`, null)));
+    }
+  }
+
   #turn(project: string): void {
     const previous = this.#queue.get(project) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(() => this.#reply(project));
@@ -930,7 +971,8 @@ export class ArtService {
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: 1, step: "Croquis en attente de la carte graphique" });
     this.#generating.set(project, gens);
-    this.#track(this.#sketch(project, id).finally(() => gens.delete(id)));
+    const job = this.#jobStart(project, "sketch", { id }, `${project}/sketch/${id}`);
+    this.#track(this.#sketch(project, id).finally(() => (gens.delete(id), this.#jobEnd(job))));
   }
 
   async #sketch(project: string, id: string): Promise<void> {
@@ -1058,7 +1100,8 @@ export class ArtService {
   }
 
   #startBoard(project: string, b: ArtDirectives["references"][number]): void {
-    this.#track(this.#explore(project, `planche-${randomUUID()}`, `Planche « ${b.theme} » : recherche des images`, (say) => this.#board(project, b, say)));
+    const job = this.#jobStart(project, "board", b);
+    this.#track(this.#explore(project, `planche-${randomUUID()}`, `Planche « ${b.theme} » : recherche des images`, (say) => this.#board(project, b, say)).finally(() => this.#jobEnd(job)));
   }
 
   /**
@@ -1119,7 +1162,8 @@ export class ArtService {
       this.#insert(project, "art", `Le duel de styles « ${s.subject} » attend le générateur d'images local (onglet Visuels, « Installer le générateur »). En attendant, je peux vous montrer des références.`, null);
       return;
     }
-    this.#track(this.#explore(project, `duel-${randomUUID()}`, `Duel de styles « ${s.subject} » : en attente de la carte graphique`, (say) => this.#duel(project, s, say)));
+    const job = this.#jobStart(project, "duel", s);
+    this.#track(this.#explore(project, `duel-${randomUUID()}`, `Duel de styles « ${s.subject} » : en attente de la carte graphique`, (say) => this.#duel(project, s, say)).finally(() => this.#jobEnd(job)));
   }
 
   /** Un duel de styles (ADR-58) : un même sujet dessiné dans chaque style, que vous départagez d'un clic. */
@@ -1181,9 +1225,10 @@ export class ArtService {
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: ROUNDS, step: "En attente de la carte graphique" });
     this.#generating.set(project, gens);
+    const job = this.#jobStart(project, "produce", { id }, `${project}/produce/${id}`);
     this.#track(
       this.#produce(project, id)
-        .finally(() => gens.delete(id))
+        .finally(() => (gens.delete(id), this.#jobEnd(job)))
         .then((next) => {
           if (next === "model") this.#startModel(project, id);
           if (next === "integrate") return this.#autoIntegrate(project, id, "system");
@@ -1329,9 +1374,10 @@ export class ArtService {
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: retouch ? "Reprise de la scène de l'atelier" : "Préparation de la 3D" });
     this.#generating.set(project, gens);
+    const job = this.#jobStart(project, "model", { id }, `${project}/model/${id}`);
     this.#track(
       this.#produceModel(project, id, retouch)
-        .finally(() => gens.delete(id))
+        .finally(() => (gens.delete(id), this.#jobEnd(job)))
         .then((ok) => (ok ? this.#autoIntegrate(project, id, "system") : undefined)),
     );
   }

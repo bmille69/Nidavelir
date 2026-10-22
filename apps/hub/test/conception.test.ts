@@ -149,6 +149,18 @@ describe("Concepteur", () => {
     expect(sb.hub.conversations.messages("destiny", thread)[0]!.text).toMatch(/Visuels confiés au Directeur artistique[\s\S]*A-0001 Texture de roche stratifiée, A-0002 Arbre de la forêt/);
   });
 
+  it("un redémarrage du hub pendant que le Concepteur travaille vous rend la main, avec un mot (ADR-61)", async () => {
+    const fake = new FakeOrchestrator();
+    const sb = sandbox(fake);
+    fake.extractions.push(() => turn() as never);
+    const c = sb.hub.conceptions.start(sb.human(), { kind: "project", idea: "un jeu de course" });
+    await sb.hub.conceptions.idle();
+    sb.hub.db.prepare("UPDATE conceptions SET status = 'thinking' WHERE id = ?").run(c.id);
+    sb.hub.conceptions.recoverInterrupted();
+    expect(sb.hub.conceptions.get(c.id).status).toBe("open");
+    expect(sb.hub.conceptions.messages(c.id).at(-1)!.text).toMatch(/Le hub a redémarré pendant que je travaillais/);
+  });
+
   it("une erreur du Concepteur est dite clairement et on peut réessayer", async () => {
     const fake = new FakeOrchestrator();
     const sb = sandbox(fake);

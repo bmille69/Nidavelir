@@ -46,8 +46,9 @@ const hub = createHub({
   },
 });
 cli.observer = (e) => hub.usage.record(e);
-// Un run ne survit pas à un arrêt du hub : on le signale plutôt que de le laisser « en cours ».
-hub.tasks.recoverInterrupted();
+// Un run ne survit pas à un arrêt du hub : le chantier coupé repart de zéro en tête de file, la file est gardée (ADR-61).
+const restarted = hub.tasks.recoverInterrupted();
+hub.conceptions.recoverInterrupted();
 
 // Les fichiers studio/ font foi : on réaligne l'index à chaque démarrage (ADR-05).
 for (const p of hub.projects.list()) {
@@ -67,6 +68,12 @@ const server = await buildServer(hub, {
   webDist: join(hubRoot, "apps", "web", "dist"),
 });
 await server.listen({ host: "127.0.0.1", port });
+// Le hub prêt, le travail interrompu reprend : chantiers en file, travaux du Directeur artistique (ADR-61).
+for (const r of restarted) {
+  if (r.thread) hub.conversations.notify(r.project, r.thread, `↻ Le hub a redémarré pendant le chantier ${r.id} : il repart de zéro sous ${r.again}, avant le reste de la file.`);
+}
+hub.tasks.resumeQueues();
+hub.art.resume();
 // Si le hub est déjà publié dans Tailscale, son adresse est acceptée dès le démarrage.
 void hub.remote?.status().then((s) => s.url && console.log(`Depuis le téléphone : ${s.url}`), () => {});
 
