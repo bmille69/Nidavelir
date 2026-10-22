@@ -657,7 +657,7 @@ Mesures :
 - Constat : un visuel validé partait aussitôt chez le directeur, et son chantier d'intégration se mettait **au bout** de la file. Deux défauts en découlaient. D'abord, il passait après tous les chantiers de la conception, y compris les « corrections finales ». Ensuite, il pouvait arriver avant que le jeu ait la place prévue. Dernier piège : un chantier qui posait un provisoire citait le numéro du visuel, et sa fusion faisait passer le visuel pour « intégré ».
 - **Trop tôt** : si des chantiers de la conception posent un provisoire pour ce visuel (section « Visuels confiés au Directeur artistique, pas encore faits ») et qu'aucun n'est encore fusionné, l'intégration attend le premier dans l'ordre de la file. L'attente est notée sur la fiche (`waitsFor`) et annoncée par le DA. Une fois ce chantier fusionné, la demande part et dit au développeur quel chantier a posé le provisoire à remplacer. Si tous ces chantiers sont annulés ou échouent, le visuel part sans attendre. « Faire intégrer » à la main n'attend jamais.
 - **Trop tard** : un chantier dont le titre commence par « A-xxxx » passe devant la file d'attente. Le chantier en cours n'est jamais interrompu. Les chantiers suivants trouvent le vrai visuel déjà branché, et leur consigne leur dit de s'en servir plutôt que d'un provisoire.
-- Seuls le titre d'un chantier qui pose un provisoire et la consigne d'un chantier d'intégration font passer un visuel en « intégré ».
+- La fusion d'un chantier qui pose un provisoire ne fait plus passer un visuel en « intégré » : pour ce chantier, seul son titre compte, pas sa consigne.
 
 ---
 
