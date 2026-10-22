@@ -29,9 +29,27 @@ export const ConceptTurn = z.object({
         etape: z.string().max(80).default(""),
         title: z.string().min(1).max(120),
         goal: z.string().min(1).max(3000),
+        /** Clés des visuels (« V1 ») dont ce chantier a besoin (ADR-59). */
+        visuels: z.array(z.string().max(10)).max(10).default([]),
       }),
     )
     .max(40),
+  /**
+   * Les visuels à confier au Directeur artistique (ADR-59) : ce que le projet demande comme images, textures, modèles 3D
+   * ou interface. Ils deviennent des fiches chez lui quand vous dites « transmets ».
+   */
+  visuels: z
+    .array(
+      z.object({
+        cle: z.string().min(1).max(10),
+        nom: z.string().min(1).max(120),
+        type: z.string().max(60),
+        usage: z.string().max(600),
+        specs: z.string().max(600),
+      }),
+    )
+    .max(25)
+    .default([]),
   /** Prêt à démarrer : les questions bloquantes sont tranchées. */
   ready: z.boolean(),
   /** CLAUDE.md du nouveau projet (vide tant que ready est faux, ou pour une fonctionnalité). */
@@ -79,9 +97,19 @@ Chantiers ("chantiers") : les chantiers de TOUTES les étapes de la section « �
 Tant que "ready" est faux, un "goal" d'une ou deux phrases suffit (le plan se voit, sans coûter cher) ; dès que "ready" est vrai, rédige chaque consigne en entier, concise (800 caractères environ, 3 000 au plus). 40 chantiers au plus : si le projet en demande davantage, regroupe ou réduis le périmètre et dis-le.
 Taille : vise une demi-heure de travail d'agent au plus, quelques fichiers. Le développeur relit tout ce qu'il a déjà lu à chaque action : un chantier deux fois plus long coûte bien plus que deux fois plus. Découpe plutôt que de grossir. Ajoute « (gros) » à la fin du titre seulement si le travail est vraiment indivisible ou délicat (architecture, refonte) : le hub lui donne alors le modèle le plus capable, environ 10 fois plus cher.
 
+Visuels ("visuels") : le studio a un DIRECTEUR ARTISTIQUE (DA) qui tient la bible visuelle, fabrique les images (générateur
+local), les textures et les modèles 3D, et les fait intégrer au jeu. Dès que le projet change ce qu'on VOIT (nouveau jeu,
+refonte d'une carte, nouveaux ennemis, nouvelle interface), liste les visuels à lui confier, chacun avec une clé (V1, V2…),
+un nom, un type (texture, décor, modèle 3D, personnage, icône, interface, illustration…), son usage dans le jeu et ses
+contraintes (taille, budget, ce qui doit se lire). Pas de pixel près : le DA cadre le style avec le directeur créatif.
+Ne liste pas ce que le code fait très bien seul (formes simples, effets, couleurs par programme) ni ce qui existe déjà
+(visuels intégrés du projet ci-dessous). Dans chaque chantier qui en dépend, mets leurs clés dans "visuels" : le
+développeur posera un visuel provisoire, et le vrai arrivera par un chantier d'intégration séparé quand le DA l'aura fait
+valider. Le travail du développeur ne doit donc jamais attendre un visuel. Aucun visuel : liste vide.
+
 Comment ton travail arrive à l'équipe (c'est le hub qui le fait, pas toi) :
 - Ton dossier s'affiche en direct dans le panneau à droite de votre conversation, et chaque chantier y est listé. Tu n'écris aucun fichier toi-même.
-- Quand le directeur créatif te dit de transmettre (« c'est bon », « transmets », « envoie à l'équipe », « lance les chantiers »), et que "ready" est vrai, mets "transmettre" à true. Vérifie d'abord que les chantiers couvrent toutes les étapes et que chaque consigne est complète. Le hub enregistre alors le dossier dans le jeu (studio/conceptions/…), crée tous les chantiers, toutes étapes confondues, dans l'ordre et les confie au directeur et au développeur, qui recevront chacun le dossier complet. Dis-le simplement dans ta réponse.
+- Quand le directeur créatif te dit de transmettre (« c'est bon », « transmets », « envoie à l'équipe », « lance les chantiers »), et que "ready" est vrai, mets "transmettre" à true. Vérifie d'abord que les chantiers couvrent toutes les étapes et que chaque consigne est complète. Le hub enregistre alors le dossier dans le jeu (studio/conceptions/…), crée tous les chantiers, toutes étapes confondues, dans l'ordre et les confie au directeur et au développeur, qui recevront chacun le dossier complet, et confie les visuels au Directeur artistique (avec le dossier). Dis-le simplement dans ta réponse.
 - Ne lui demande JAMAIS de copier-coller quoi que ce soit, ni de chercher un fichier : c'est le rôle du hub.
 - Si une partie est déjà faite (voir les chantiers existants ci-dessous, s'il y en a), retire-la de tes chantiers avant de transmettre, ou adapte-la.
 - Sinon, "transmettre" reste false.

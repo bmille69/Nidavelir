@@ -367,6 +367,49 @@ export class ArtService {
   }
 
   /**
+   * Le Concepteur confie les visuels d'une conception (ADR-59) : une fiche « proposé » par visuel (numéro A-xxxx rendu au
+   * Concepteur pour les consignes des chantiers), puis un tour du Directeur artistique, qui lit le dossier, relie les
+   * fiches à la bible et cadre le style avec vous (questions illustrées, croquis) avant toute fabrication.
+   */
+  async brief(project: string, input: { conception: string; dossier: string; visuels: { cle: string; nom: string; type: string; usage: string; specs: string }[] }): Promise<Record<string, string>> {
+    const gameRoot = this.#projects.get(project).root;
+    const m = readManifest(gameRoot);
+    const now = this.#clock.now();
+    const ids: Record<string, string> = {};
+    for (const v of input.visuels.slice(0, 25)) {
+      const a: Asset = {
+        id: nextAssetId(m),
+        name: v.nom.slice(0, 120),
+        type: v.type || "visuel",
+        usage: v.usage.slice(0, 2000),
+        specs: v.specs.slice(0, 2000),
+        status: "propose",
+        prompts: [],
+        refs: [],
+        renders: [],
+        verdict: null,
+        created_at: now,
+        updated_at: now,
+      };
+      m.assets.push(a);
+      ids[v.cle] = a.id;
+    }
+    writeManifest(gameRoot, m);
+    await this.#commit(gameRoot, `art: ${Object.keys(ids).length} visuel(s) demandés par la conception « ${input.conception} »`.slice(0, 200));
+    const list = input.visuels.map((v) => `- ${ids[v.cle]} « ${v.nom} » (${v.type}) : ${v.usage}${v.specs ? ` — ${v.specs}` : ""}`).join("\n");
+    const text = [
+      `(Demande transmise par le Concepteur, conception « ${input.conception} »)`,
+      `Le dossier de conception est dans le dépôt du jeu : ${input.dossier} (lis-le : piliers, périmètre, étapes). Les chantiers de développement partent de leur côté avec des visuels provisoires ; chacun de ces visuels entrera dans le jeu par son propre chantier d'intégration une fois validé.`,
+      `Fiches créées pour toi (modifie-les avec [[ASSET]] et leur id, regroupe ou écarte ce qui n'a pas lieu d'être) :\n${list}`,
+      "Commence par cadrer avec moi ce qui doit l'être (direction, questions illustrées), dans l'ordre où le jeu en a besoin.",
+    ].join("\n\n");
+    const human = this.#insert(project, "human", text, null);
+    this.#journal.append({ project, actor: { kind: "system" }, type: "art.briefed", subject: human.id, payload: { assets: Object.values(ids) } });
+    this.#turn(project);
+    return ids;
+  }
+
+  /**
    * Votre avis sur les références (ADR-58) : « aime », « evite », ou null pour le retirer. `tell` : le Directeur
    * artistique le reçoit en message et en tient compte tout de suite ; sinon il le lira à son prochain tour.
    */

@@ -81,7 +81,7 @@ export function ConceptionView({ id }: { id: string }) {
   const [c, setC] = useState<Conception | null>(null);
   const [messages, setMessages] = useState<ConceptionMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"dossier" | "chantiers" | "sources">("dossier");
+  const [tab, setTab] = useState<"dossier" | "chantiers" | "visuels" | "sources">("dossier");
   const [busy, setBusy] = useState(false);
   const refreshStudio = useStudioRefresh();
 
@@ -184,6 +184,9 @@ export function ConceptionView({ id }: { id: string }) {
             <button className={tab === "chantiers" ? "tab active" : "tab"} onClick={() => setTab("chantiers")}>
               Chantiers ({c.data.chantiers.length})
             </button>
+            <button className={tab === "visuels" ? "tab active" : "tab"} onClick={() => setTab("visuels")}>
+              Visuels ({c.data.visuels?.length ?? 0})
+            </button>
             <button className={tab === "sources" ? "tab active" : "tab"} onClick={() => setTab("sources")}>
               Sources ({c.data.sources.length})
             </button>
@@ -198,6 +201,7 @@ export function ConceptionView({ id }: { id: string }) {
                 <li key={`${k}-${ch.title}`}>
                   {ch.etape && ch.etape !== all[k - 1]?.etape && <div className="concept-step small">{ch.etape}</div>}
                   <strong>{ch.title}</strong>
+                  {!!ch.visuels?.length && <span className="muted small"> · visuels {ch.visuels.join(", ")}</span>}
                   <details>
                     <summary className="small">Consigne pour le développeur</summary>
                     <div className="text small">{ch.goal}</div>
@@ -206,6 +210,22 @@ export function ConceptionView({ id }: { id: string }) {
               ))}
               {!c.data.chantiers.length && <p className="muted">Pas encore de chantiers.</p>}
             </ol>
+          )}
+          {tab === "visuels" && (
+            <ul className="concept-chantiers">
+              <p className="muted small">Confiés au Directeur artistique quand vous direz « transmets » : il cadre le style avec vous, puis chaque visuel validé entre dans le jeu par son propre chantier.</p>
+              {(c.data.visuels ?? []).map((v) => (
+                <li key={v.cle}>
+                  <strong>
+                    {v.cle} · {v.nom}
+                  </strong>{" "}
+                  <span className="muted small">({v.type})</span>
+                  <div className="small">{v.usage}</div>
+                  {v.specs && <div className="muted small">{v.specs}</div>}
+                </li>
+              ))}
+              {!c.data.visuels?.length && <p className="muted">Aucun visuel à confier pour l'instant.</p>}
+            </ul>
           )}
           {tab === "sources" && (
             <ul className="concept-sources">

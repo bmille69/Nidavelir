@@ -22,6 +22,7 @@ import { ArtService } from "./art/art-service.ts";
 import { ComfyImageGen, type ImageGenPort } from "./art/imagegen.ts";
 import { RealModel3D, type Model3DPort } from "./art/model3d.ts";
 import type { WebRefsPort } from "./art/web-refs.ts";
+import { readManifest } from "./art/manifest.ts";
 import { ExpressService } from "./express/express-service.ts";
 import { RealExpressChecker, type ExpressChecker } from "./express/checker.ts";
 import { RealReverseTools, type ReverseToolsPort } from "./reverse/tools.ts";
@@ -269,6 +270,12 @@ export function createHub(options: HubOptions): Hub {
       return r.screenshot ?? null;
     },
   });
+  // Le Concepteur confie les visuels de ses conceptions au Directeur artistique, et sait ce qui existe déjà (ADR-59).
+  conceptions.art = art;
+  conceptions.artState = (project) => {
+    const assets = readManifest(projects.get(project).root).assets;
+    return assets.length ? assets.slice(-40).map((a) => `- ${a.id} ${a.name} (${a.type}) : ${a.status}`).join("\n") : null;
+  };
   const artHook = tasks.onStatus;
   tasks.onStatus = (task) => {
     artHook?.(task);

@@ -111,6 +111,44 @@ describe("Concepteur", () => {
     expect(sb.hub.conversations.messages("destiny", thread)[0]!.text).toMatch(/1\. Base jouable\n1\. Recettes\n2\. Établi\n\n2\. Profondeur\n3\. Raretés/);
   });
 
+  it("une refonte : les visuels partent chez le Directeur artistique, les chantiers savent lesquels arriveront", async () => {
+    const fake = new FakeOrchestrator();
+    const sb = sandbox(fake);
+    const root = sb.makeGameRepo("games/destiny", { "README.md": "# D\n" });
+    await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny" });
+    const chantiers = [
+      { etape: "1. Relief", title: "Falaises en strates", goal: "Objectif : les falaises.", visuels: ["V1"] },
+      { etape: "1. Relief", title: "Collisions des terrasses", goal: "Objectif : les collisions.", visuels: [] },
+    ];
+    const visuels = [
+      { cle: "V1", nom: "Texture de roche stratifiée", type: "texture", usage: "faces des falaises", specs: "512x512, raccordable" },
+      { cle: "V2", nom: "Arbre de la forêt", type: "modèle 3D", usage: "forêt de pins", specs: "3000 triangles" },
+    ];
+    fake.extractions.push(() => turn({ title: "Refonte de la carte", engine: "", ready: true, questions: [], chantiers, visuels, transmettre: true }) as never);
+    const c = sb.hub.conceptions.start(sb.human(), { kind: "feature", project: "destiny", idea: "refaire la map" });
+    await sb.hub.conceptions.idle();
+    await sb.hub.art.idle();
+    expect(fake.calls[0]!.systemPrompt).toMatch(/DIRECTEUR ARTISTIQUE/);
+
+    // Chez le Directeur artistique : une fiche par visuel, et la demande avec le dossier ; il a pris la main.
+    const art = sb.hub.art.state("destiny");
+    expect(art.assets.map((a) => [a.id, a.name, a.status])).toEqual([
+      ["A-0001", "Texture de roche stratifiée", "propose"],
+      ["A-0002", "Arbre de la forêt", "propose"],
+    ]);
+    expect(art.messages[0]!.text).toMatch(/Demande transmise par le Concepteur, conception « Refonte de la carte »[\s\S]*studio\/conceptions\/refonte-de-la-carte\.md[\s\S]*A-0001 « Texture de roche stratifiée »/);
+    expect(art.messages.at(-1)!.role).toBe("art");
+
+    // Les chantiers : celui qui en dépend sait quel visuel arrivera et pose un provisoire ; l'autre n'en parle pas.
+    const tasks = sb.hub.tasks.list("destiny");
+    const cliffs = tasks.find((t) => t.title === "Falaises en strates")!;
+    expect(cliffs.goal).toMatch(/Visuels confiés au Directeur artistique, pas encore faits :\n- A-0001 « Texture de roche stratifiée » \(texture\)[\s\S]*visuel provisoire[\s\S]*Dossier de conception complet/);
+    expect(tasks.find((t) => t.title === "Collisions des terrasses")!.goal).not.toMatch(/Directeur artistique/);
+    expect(sb.hub.conceptions.messages(c.id).at(-1)!.text).toMatch(/Les 2 visuel\(s\) prévus partent chez le Directeur artistique/);
+    const thread = cliffs.origin!.thread;
+    expect(sb.hub.conversations.messages("destiny", thread)[0]!.text).toMatch(/Visuels confiés au Directeur artistique[\s\S]*A-0001 Texture de roche stratifiée, A-0002 Arbre de la forêt/);
+  });
+
   it("une erreur du Concepteur est dite clairement et on peut réessayer", async () => {
     const fake = new FakeOrchestrator();
     const sb = sandbox(fake);

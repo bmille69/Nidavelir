@@ -37,7 +37,12 @@ export type Conception = {
 };
 export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
 
-const EMPTY: ConceptionData = { title: "Nouvelle conception", engine: "", dossier: "", chantiers: [], ready: false, claude_md: "", sources: [], questions: [] };
+const EMPTY: ConceptionData = { title: "Nouvelle conception", engine: "", dossier: "", chantiers: [], visuels: [], ready: false, claude_md: "", sources: [], questions: [] };
+
+/** Ce que le Concepteur confie au Directeur artistique (ADR-59) : des fiches de visuels, rattachées à la conception. */
+export type ArtBriefPort = {
+  brief(project: string, input: { conception: string; dossier: string; visuels: ConceptTurn["visuels"] }): Promise<Record<string, string>>;
+};
 const HISTORY = 12;
 
 /**
@@ -65,6 +70,9 @@ export class ConceptionService {
   gamesRoot: string | null = null;
   /** État du jeu et chantiers du projet, pour une fonctionnalité d'un jeu existant (ADR-34). */
   projectState: ((project: string) => string) | null = null;
+  /** Le Directeur artistique, qui reçoit les visuels de la conception (ADR-59) ; et ce qu'il a déjà, pour ne pas le redemander. */
+  art: ArtBriefPort | null = null;
+  artState: ((project: string) => string | null) | null = null;
 
   constructor(deps: {
     db: Db;
@@ -264,8 +272,13 @@ export class ConceptionService {
           auto
             ? "Ils partent un par un, dans l'ordre ; le développeur reçoit pour chacun la consigne complète et le dossier de conception, sans résumé."
             : "Ils attendent dans « Chantiers » : lancez-les quand vous voulez.",
+          c.data.visuels?.length
+            ? `Les ${c.data.visuels.length} visuel(s) prévus partent chez le Directeur artistique, avec le dossier : il cadre le style avec vous sur sa page (« Direction artistique » du projet), puis chaque visuel validé entre dans le jeu par son propre chantier. En attendant, le développeur pose des visuels provisoires.`
+            : "",
           r.thread ? `Suivez-les dans la discussion du projet : #/p/${project}/t/${r.thread}` : `Suivez-les dans le projet : #/p/${project}`,
-        ].join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
       );
     } catch (err) {
       say(`Je n'ai pas pu transmettre : ${(err as Error).message.slice(0, 300)}`);
@@ -292,6 +305,22 @@ export class ConceptionService {
     }
     thread ??= this.#conversations.createThread(project, `Conception : ${c.data.title}`).id;
     const launch = opts.launch && p.autonomy === "workshop";
+    // Les visuels partent d'abord chez le Directeur artistique : leurs numéros (A-xxxx) entrent dans les consignes.
+    let ids: Record<string, string> = {};
+    let artNote = "";
+    if (c.data.visuels?.length && this.art) {
+      try {
+        ids = await this.art.brief(project, { conception: c.data.title, dossier: opts.dossier, visuels: c.data.visuels });
+        artNote = `\n\nVisuels confiés au Directeur artistique (il cadre le style avec vous, sur sa page) : ${c.data.visuels.map((v) => `${ids[v.cle] ?? v.cle} ${v.nom}`).join(", ")}. Chacun arrivera dans le jeu par son propre chantier d'intégration une fois validé.`;
+      } catch (err) {
+        artNote = `\n\nLes visuels n'ont pas pu être confiés au Directeur artistique (${(err as Error).message.slice(0, 200)}) : demandez-les-lui sur sa page.`;
+      }
+    }
+    const visualsOf = (ch: ConceptionData["chantiers"][number]) =>
+      (ch.visuels ?? [])
+        .map((k) => c.data.visuels?.find((v) => v.cle === k))
+        .filter((v): v is NonNullable<typeof v> => !!v)
+        .map((v) => `- ${ids[v.cle] ?? v.cle} « ${v.nom} » (${v.type}) : ${v.usage}`);
     const list = c.data.chantiers
       .map((ch, k, all) => `${ch.etape && ch.etape !== all[k - 1]?.etape ? `\n${ch.etape}\n` : ""}${k + 1}. ${ch.title}`)
       .join("\n")
@@ -300,14 +329,29 @@ export class ConceptionService {
       project,
       thread,
       launch
-        ? `Conception « ${c.data.title} » transmise par le Concepteur. Le dossier est dans ${opts.dossier}.\n\nChantiers, réalisés un par un dans cet ordre (chacun reçoit sa consigne complète et le dossier) :\n${list || "(aucun)"}\n\nParlez-moi ici pour ajuster ou arrêter quoi que ce soit.`
-        : `Conception « ${c.data.title} » terminée. Le dossier est dans ${opts.dossier}.\n\nChantiers de toutes les étapes, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
+        ? `Conception « ${c.data.title} » transmise par le Concepteur. Le dossier est dans ${opts.dossier}.\n\nChantiers, réalisés un par un dans cet ordre (chacun reçoit sa consigne complète et le dossier) :\n${list || "(aucun)"}${artNote}\n\nParlez-moi ici pour ajuster ou arrêter quoi que ce soit.`
+        : `Conception « ${c.data.title} » terminée. Le dossier est dans ${opts.dossier}.\n\nChantiers de toutes les étapes, prêts à lancer dans l'ordre (bouton « ▶ Lancer » à droite) :\n${list || "(aucun)"}${artNote}\n\nVous pouvez aussi me parler ici pour ajuster quoi que ce soit avant de lancer.`,
     );
     const tasks = c.data.chantiers.map(
       (ch) =>
         this.#tasks.createFromConversation(
           project,
-          { title: ch.title, goal: `${ch.etape ? `Étape : ${ch.etape}\n\n` : ""}${ch.goal.trim()}\n\nDossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`.slice(0, 4000) },
+          {
+            title: ch.title,
+            goal: (() => {
+              // La fin (visuels, dossier) passe toujours : c'est le corps de la consigne qui est raccourci si besoin (4 000 caractères).
+              const tail = [
+                visualsOf(ch).length
+                  ? `Visuels confiés au Directeur artistique, pas encore faits :\n${visualsOf(ch).join("\n").slice(0, 900)}\nN'en fabrique aucun et ne les attends pas : pose un visuel provisoire simple (forme ou couleur unie) au bon endroit, facile à remplacer (un seul point de chargement par visuel, au nom de son identifiant). Le vrai visuel arrivera par un chantier d'intégration séparé.`
+                  : "",
+                `Dossier de conception complet : ${opts.dossier} (« ${c.data.title} »). Consultes-y les sections utiles à ce chantier (piliers, choix faits, contraintes) plutôt que de tout relire.`,
+              ]
+                .filter(Boolean)
+                .join("\n\n");
+              const body = `${ch.etape ? `Étape : ${ch.etape}\n\n` : ""}${ch.goal.trim()}`;
+              return `${body.slice(0, 4000 - tail.length - 2)}\n\n${tail}`;
+            })(),
+          },
           thread!,
         ).id,
     );
@@ -368,6 +412,10 @@ export class ConceptionService {
       code.files.length ? `<fichiers_du_jeu total="${code.totalFiles}">\n${code.files.join("\n")}\n</fichiers_du_jeu>` : "",
       bible ? `<bible_du_jeu>\n${esc(bible)}\n</bible_du_jeu>` : "",
       this.projectState?.(project) ?? "",
+      (() => {
+        const visuals = this.artState?.(project);
+        return visuals ? `<visuels_du_projet source="Directeur artistique">\n${esc(visuals)}\n</visuels_du_projet>` : "";
+      })(),
     ]
       .filter(Boolean)
       .join("\n\n");

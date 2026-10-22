@@ -646,6 +646,12 @@ Mesures :
 - **Onglet « Direction »** (remplace « Bible ») : les étapes, le style du jeu, la palette en pastilles (codes de la bible), vos choix en vignettes, « On s'en inspire » et « On évite », les visuels validés, puis le texte de la bible. Le moodboard montre la source des images du web et l'avis, modifiable. L'onglet ouvert au départ est choisi une fois (Direction tant que rien n'est posé, sinon Visuels) et ne change plus tout seul.
 - Les croquis d'un visuel (ADR-49) deviennent eux aussi une question illustrée.
 
+### ADR-59 : le Concepteur confie aussi le travail visuel au Directeur artistique
+**Statut** : Retenue le 22/10/2026 (« si je demande au concepteur de refaire la map, il faut aussi des assets graphiques : qu'il donne également le travail au directeur artistique »).
+- Le Concepteur liste les **visuels** du projet (`visuels` : clé V1…, nom, type, usage, contraintes ; 25 au plus) quand le projet change ce qu'on voit, sans redemander ce qui existe : il reçoit la liste des visuels du projet. Chaque chantier cite les clés dont il dépend. La page de conception a un onglet « Visuels ».
+- À « transmets », avant les chantiers : une fiche « proposé » par visuel chez le DA (numéros A-xxxx), et un message au DA (dossier de conception, fiches) qui déclenche son tour : il cadre le style avec vous (questions illustrées, croquis, ADR-58) avant toute fabrication.
+- Le développement **n'attend jamais** un visuel : chaque chantier concerné reçoit les numéros des visuels à venir et la consigne de poser un visuel provisoire facile à remplacer. Le vrai visuel entre dans le jeu par son propre chantier d'intégration une fois validé (circuit existant, ADR-48).
+
 ---
 
 ## Constats de la phase 2 (essai réel avec Claude Code, 14/10/2026)
