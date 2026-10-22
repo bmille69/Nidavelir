@@ -98,6 +98,9 @@ export class ClaudeCodeExecutor implements ExecutorPort {
       let limits: RateLimits | null = null;
       const onAbort = () => killTree(child.pid);
       req.signal.addEventListener("abort", onAbort, { once: true });
+      // Le résultat est rendu mais Claude Code ne se ferme pas : un serveur lancé en arrière-plan (« npx vite ») le
+      // retient. Après un délai de grâce, le hub ferme tout l'arbre et garde le résultat (constat T-0057 : 1 h 15 d'attente).
+      let linger: NodeJS.Timeout | null = null;
 
       child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
         buffer += chunk;
@@ -109,7 +112,10 @@ export class ClaudeCodeExecutor implements ExecutorPort {
           appendFileSync(stream, line + "\n");
           try {
             const msg = JSON.parse(line) as Record<string, unknown>;
-            if (msg.type === "result") final = msg;
+            if (msg.type === "result") {
+              final = msg;
+              linger ??= setTimeout(() => killTree(child.pid), RESULT_GRACE_MS);
+            }
             else if (msg.type === "rate_limit_event") limits = parseRateLimit(msg) ?? limits;
             else relay(msg, req.onEvent);
           } catch {
@@ -121,6 +127,9 @@ export class ClaudeCodeExecutor implements ExecutorPort {
       child.on("error", (e) => reject(new ExecutorError(`Impossible de lancer Claude Code : ${e.message}`)));
       child.on("close", (code) => {
         req.signal.removeEventListener("abort", onAbort);
+        if (linger) clearTimeout(linger);
+        // Les serveurs que le développeur a lancés et laissés tourner dans sa copie du jeu (T-0055, T-0056) : éteints.
+        killStragglers(req.cwd);
         if (req.signal.aborted) return reject(new ExecutorError("Exécution arrêtée"));
         const result = final as Record<string, unknown> | null;
         if (!result) return reject(new ExecutorError(`Claude Code s'est arrêté sans résultat (code ${code}) : ${stderr.slice(0, 300)}`));
@@ -175,6 +184,25 @@ export function describeTool(name: string, input: Record<string, unknown>): stri
     default:
       return `${name}`;
   }
+}
+
+/** Délai entre le résultat de Claude Code et la fermeture forcée de ce qu'il a laissé tourner. */
+const RESULT_GRACE_MS = 60_000;
+
+/**
+ * Les processus orphelins (leur parent n'existe plus) dont la ligne de commande désigne la copie de travail du
+ * chantier (dossier propre au hub, sous .data/worktrees), avec leurs descendants : une fois Claude Code fermé, ils
+ * gardent des ports et des fichiers ouverts. Les aperçus du hub (« Essayer ») ont le hub pour parent : épargnés.
+ */
+export function killStragglers(cwd: string): void {
+  if (process.platform !== "win32" || !/[\\/]worktrees[\\/]/i.test(cwd)) return;
+  const path = cwd.replace(/'/g, "''");
+  const script = [
+    "$all = Get-CimInstance Win32_Process",
+    "$alive = @{}; foreach ($p in $all) { $alive[[int]$p.ProcessId] = $true }",
+    `$all | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${path}') -and -not $alive[[int]$_.ParentProcessId] } | ForEach-Object { taskkill /PID $_.ProcessId /T /F | Out-Null }`,
+  ].join("; ");
+  execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true }, () => {});
 }
 
 function killTree(pid: number | undefined): void {
