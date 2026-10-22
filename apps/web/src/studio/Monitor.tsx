@@ -49,7 +49,8 @@ export function MonitorBar({ slug }: { slug?: string }) {
   const max = Math.max(1, ...m.tokens.buckets.map((b) => b.tokens));
   const g = m.machine.gpu;
   return (
-    <section className="monitor" aria-label="Moniteur du studio">
+    <section className={`monitor ${queues.some((q) => q.paused) ? "paused" : ""}`} aria-label="Moniteur du studio">
+      {queues.length === 0 && <div className="mon-queue muted">Aucun chantier en cours ni en file.</div>}
       {queues.map((q) => (
         <div key={q.project} className={`mon-queue ${q.paused ? "paused" : ""}`}>
           {q.paused ? (

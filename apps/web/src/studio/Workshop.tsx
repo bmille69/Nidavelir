@@ -5,7 +5,6 @@ import { RatingBox } from "./Rating.tsx";
 import { StatusBadge } from "../pages/TasksView.tsx";
 import { ago } from "./agents.ts";
 import { useNow } from "./context.tsx";
-import { MonitorBar } from "./Monitor.tsx";
 
 const ACTIVE = new Set(["draft", "planning", "plan_review", "approved", "running", "review", "changes_requested"]);
 
@@ -57,7 +56,6 @@ export function WorkshopPanel({ slug }: { slug: string }) {
         <h2 className="grow">Chantiers</h2>
         <TryButton slug={slug} label="▶ Lancer le jeu" small />
       </div>
-      <MonitorBar slug={slug} />
       {error && <p className="error small">{error}</p>}
       {active.length === 0 && <p className="muted small">Aucun chantier en cours. Quand une proposition du directeur vous va, dites « go ».</p>}
       <ul className="workshop-list">

@@ -91,7 +91,8 @@ describe("chaîne de production (ADR-64)", () => {
   it("la file dans son vrai ordre, les visuels attendus, « à vous de jouer » et le moniteur", async () => {
     await page.goto(`${BASE}/#/p/${P}`);
     const panel = page.locator(".workshop-panel");
-    await panel.locator(".monitor .mon-tiles").waitFor({ timeout: 15_000 });
+    await page.locator(".project-monitor .monitor .mon-tile").first().waitFor({ timeout: 15_000 });
+    await panel.locator(".workshop-list li").first().waitFor();
     const titles = await panel.locator(".workshop-list li strong").allTextContents();
     expect(titles).toEqual(["Marqueurs du Village", "A-0006 Kit béton", "Habillage du Village", "Ciel : dôme et horizon"]);
     await expect(panel.locator(".workshop-list li").first().textContent()).resolves.toMatch(/repris après un redémarrage \(ancien T-0001\)/);
@@ -108,7 +109,7 @@ describe("chaîne de production (ADR-64)", () => {
 
     // Le moniteur du studio en direct.
     await page.goto(`${BASE}/#/direct`);
-    await page.locator(".monitor .mon-tiles").waitFor();
+    await page.locator(".monitor .mon-tile").first().waitFor();
     await page.screenshot({ path: join(shots, "prod-3-direct.png") });
 
     // Téléphone : la cloche dans la barre du haut.

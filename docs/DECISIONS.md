@@ -697,7 +697,7 @@ Mesures :
   - un croquis à choisir ;
   - une 3D ou une image à trancher, et un rendu à valider (`ArtService.waiting`).
 - **La chaîne de production** (panneau « Chantiers ») : la file s'affiche dans son vrai ordre (l'intégration de visuel passe devant), avec « n° k dans la file ». Un chantier repris après un redémarrage porte la mention « ancien T-xxxx ». Sous chaque chantier, les visuels qu'il attend ont une étiquette d'état : provisoire, chez le DA, validé, en intégration, dans le jeu, mis de côté.
-- **Le moniteur** (en tête des chantiers et dans « En direct », `GET /studio/monitor`, interrogé toutes les 5 s) :
+- **Le moniteur** (un seul bandeau en haut de la page du projet, et dans « En direct », `GET /studio/monitor`, interrogé toutes les 5 s) :
   - la file : en cours, en attente de votre mot, ou « ⏸ en pause, jauge à n %, repart seule à HH:MM » ;
   - qui travaille ;
   - processeur et mémoire ; carte graphique (via nvidia-smi : charge et mémoire) ;

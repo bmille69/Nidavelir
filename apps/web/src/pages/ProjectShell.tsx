@@ -6,6 +6,7 @@ import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
 import { Icon, type IconName } from "../studio/Icon.tsx";
+import { MonitorBar } from "../studio/Monitor.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
 import { TasksView } from "./TasksView.tsx";
@@ -82,6 +83,9 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
           )}
         </div>
       </header>
+      <div className="project-monitor">
+        <MonitorBar slug={slug} />
+      </div>
       <nav className="project-tabs">
         {TABS.filter((t) => !t.supervisedOnly || project?.autonomy === "supervised" || view === t.view).map((t) => (
           <a key={t.view} className={t.view === view ? "active" : ""} href={t.view === "discussion" ? `#/p/${slug}` : `#/p/${slug}/${t.view}`}>
