@@ -194,7 +194,7 @@ export function parseArtDirectives(text: string): { text: string; directives: Ar
   take(/\[\[\s*CHOIX\s*:([^\]]*)\]\]([\s\S]*?)\[\[\s*\/\s*CHOIX\s*\]\]/gi, (m) => {
     const options = m[2]!
       .split("|")
-      .map((o) => o.trim().replace(/\s+/g, " "))
+      .map((o) => o.replace(/§[A-Z]+§/g, "").trim().replace(/\s+/g, " "))
       .filter(Boolean)
       .slice(0, 4);
     return options.length >= 2 ? `\n${CHOICE_MARK}${m[1]!.trim()} || ${options.join(" || ")}\n` : "";

@@ -894,6 +894,10 @@ describe("balises du Directeur artistique", () => {
     expect(text).toBe("Bonjour");
     expect(directives.assets).toEqual([]);
   });
+  it("une marque égarée dans une option de question n'apparaît pas sur le bouton", () => {
+    const { text } = parseArtDirectives("[[CHOIX: Quelle suite ?]] Le Chasseur | Je veux d'abord voir le Titan §CHOIX§ [[/CHOIX]]");
+    expect(text).toBe("§CHOIX§ Quelle suite ? || Le Chasseur || Je veux d'abord voir le Titan");
+  });
   it("chemins de studio/art : ni absolus ni remontées", () => {
     for (const ok of ["moodboard/a.png", "production/a-0001.png"]) expect(safeRel(ok), ok).toBe(true);
     for (const bad of ["../a.png", "moodboard/../../a.png", "/etc/a.png", "C:/a.png", "", "a//b.png"]) expect(safeRel(bad), bad).toBe(false);

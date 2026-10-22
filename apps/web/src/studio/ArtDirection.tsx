@@ -154,7 +154,7 @@ export function ArtDirection({ slug }: { slug: string }) {
                 text={m.text}
                 slug={slug}
                 choices={m.id === lastArt?.id && lastIsArt && !state.busy.replying}
-                onChoose={(q, o) => void send(`${q} → ${o}`)}
+                onChoose={(answer) => void send(answer)}
               />
             </div>
           ))}
@@ -264,10 +264,18 @@ export function ArtDirection({ slug }: { slug: string }) {
 }
 
 /** Message du Directeur artistique : texte, images citées, et ses questions de goût en boutons. */
-function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string; choices: boolean; onChoose: (q: string, o: string) => void }) {
+function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string; choices: boolean; onChoose: (answer: string) => void }) {
+  // Plusieurs questions : chaque clic choisit, un seul envoi pour toutes ; une seule question : le clic envoie.
+  const [picked, setPicked] = useState<Record<number, string>>({});
   const lines = text.split("\n");
   const images = lines.filter((l) => l.startsWith(IMAGE_MARK)).map((l) => l.slice(IMAGE_MARK.length).trim());
   const questions = lines.filter((l) => l.startsWith(CHOICE_MARK)).map((l) => l.slice(CHOICE_MARK.length).split(" || "));
+  const pick = (k: number, o: string) => {
+    if (questions.length === 1) return onChoose(`${questions[0]![0]} → ${o}`);
+    setPicked((p) => (p[k] === o ? Object.fromEntries(Object.entries(p).filter(([i]) => Number(i) !== k)) : { ...p, [k]: o }));
+  };
+  const sendAll = () => onChoose(questions.map(([q], k) => `${q} → ${picked[k] ?? "je te laisse choisir"}`).join("\n"));
+  const answered = Object.keys(picked).length;
   const done = lines.filter((l) => l.startsWith(DONE_MARK)).map((l) => l.slice(DONE_MARK.length));
   const body = lines.filter((l) => !l.startsWith(IMAGE_MARK) && !l.startsWith(CHOICE_MARK) && !l.startsWith(DONE_MARK)).join("\n").trim();
   return (
@@ -298,13 +306,21 @@ function ArtText({ text, slug, choices, onChoose }: { text: string; slug: string
           </p>
           <div className="art-choice-options">
             {options.map((o) => (
-              <button key={o} className="secondary small" disabled={!choices} onClick={() => onChoose(q!, o)}>
+              <button key={o} className={picked[k] === o ? "small" : "secondary small"} aria-pressed={picked[k] === o} disabled={!choices} onClick={() => pick(k, o)}>
                 {o}
               </button>
             ))}
           </div>
         </div>
       ))}
+      {questions.length > 1 && choices && (
+        <div className="art-choice-send">
+          <button className="small" disabled={!answered} onClick={sendAll}>
+            Envoyer mes choix ({answered}/{questions.length})
+          </button>
+          {answered > 0 && answered < questions.length && <span className="muted small">Les questions sans réponse : il choisira pour vous.</span>}
+        </div>
+      )}
     </>
   );
 }
