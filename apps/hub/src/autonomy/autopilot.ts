@@ -38,6 +38,9 @@ export type AutopilotOptions = {
 };
 
 /** Pilote automatique : regroupe après les échanges, décide ce qui peut l'être, lance les plans sans risque. */
+/** Vérifications du testeur avant de vous demander votre mot : deux corrections automatiques (choix du 23/10/2026). */
+const VERIFY_ROUNDS = 3;
+
 export class Autopilot {
   readonly #projects: ProjectRegistry;
   readonly #vision: VisionService;
@@ -153,7 +156,7 @@ export class Autopilot {
   /**
    * Fin de la vérification (résultats enregistrés). En atelier ou en autonomie (ADR-31) :
    * - le testeur valide → le hub fusionne tout seul ;
-   * - il trouve des problèmes → le développeur corrige une fois, dans la même copie ;
+   * - il trouve des problèmes → le développeur corrige, dans la même copie, jusqu'à deux fois (trois vérifications, 23/10/2026) ;
    * - toujours des problèmes (ou pas d'avis du testeur) → le chantier attend votre mot dans la discussion.
    */
   onRunFinished(task: { id: string; project: string; title: string; status: string; direct?: boolean; origin: { thread: string } | null }, kind: string): Promise<void> | void {
@@ -180,7 +183,7 @@ export class Autopilot {
         const check = this.checks?.get(project, id) ?? null;
         if (check?.regression) {
           this.#journal.append({ project, actor: { kind: "system" }, type: "tester.missed", subject: id, payload: { tests: check.tests.status, launch: check.launch.status } });
-          if (task.direct && rounds < 2) {
+          if (task.direct && rounds < VERIFY_ROUNDS) {
             say(`↻ Chantier ${id} « ${title} » : le testeur était d'accord, mais le hub a vérifié lui-même et quelque chose ne marche plus (${describeChecks(check)}). Le développeur corrige. Rien à faire de votre côté.`);
             await this.#tasks.correct(project, id, regressionFeedback(check), "tester");
           } else {
@@ -199,7 +202,7 @@ export class Autopilot {
       }
       return;
     }
-    if (verdict && task.direct && rounds < 2) {
+    if (verdict && task.direct && rounds < VERIFY_ROUNDS) {
       const problems = [...verdict.checks.filter((c) => c.result === "fail").map((c) => `${c.criterion} : ${c.evidence}`), ...verdict.regressions.map((r) => `Régression : ${r}`)];
       say(`↻ Chantier ${id} « ${title} » : le testeur a trouvé des problèmes (${verdict.summary_simple}). Le développeur corrige, puis le testeur revérifie. Rien à faire de votre côté.`);
       const check = this.checks?.get(project, id);

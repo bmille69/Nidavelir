@@ -163,8 +163,8 @@ describe("notifications", () => {
     await hub.projects.register(sb.human(), { path: root, slug: "d", name: "Destiny" });
     hub.notifications.subscribe(sb.human(), { endpoint: "https://fcm.googleapis.com/fcm/send/xyz", keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: auth.toString("base64url") } }, null);
 
-    // Le testeur refuse deux fois (correction automatique comprise) : le chantier attend votre avis, le téléphone est prévenu.
-    for (const k of [1, 2]) {
+    // Le testeur refuse trois fois (deux corrections automatiques comprises) : le chantier attend votre avis, le téléphone est prévenu.
+    for (const k of [1, 2, 3]) {
       exec.scripts.execute.push(async (t) => {
         await t.write("src/a.ts", `export const v = ${k};\n`);
         return REPORT;

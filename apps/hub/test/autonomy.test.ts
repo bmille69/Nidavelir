@@ -295,12 +295,14 @@ describe("atelier (par défaut)", () => {
     });
     const failed = { ...VERIFIED, verdict: "fail", summary_simple: "Le test de la scène échoue (polices bloquées).", checks: [{ criterion: "La scène se lance", result: "fail", evidence: "polices bloquées" }] };
     exec.scripts.verify.push(() => failed);
-    // Correction automatique d'après le testeur, qui refuse encore : le chantier attend votre avis.
-    exec.scripts.execute.push(async (t) => {
-      await t.write("src/boss.ts", "export const balles = 'lumineuses v2';\n");
-      return { ...REPORT, how_to_test: ["Lancez une partie avec ?seed=1", "Tirez au fusil auto : les balles laissent un sillage"] };
-    });
-    exec.scripts.verify.push(() => failed);
+    // Deux corrections automatiques d'après le testeur, qui refuse encore : le chantier attend votre avis.
+    for (const v of ["v2", "v3"]) {
+      exec.scripts.execute.push(async (t) => {
+        await t.write("src/boss.ts", `export const balles = 'lumineuses ${v}';\n`);
+        return { ...REPORT, how_to_test: ["Lancez une partie avec ?seed=1", "Tirez au fusil auto : les balles laissent un sillage"] };
+      });
+      exec.scripts.verify.push(() => failed);
+    }
     fake.replies.push(BRIEF);
     const t = hub.conversations.createThread(P, "Tirs");
     const { human, director } = await hub.conversations.send(P, t.id, "Les balles du perso font cheap. go");
@@ -319,7 +321,7 @@ describe("atelier (par défaut)", () => {
     const notes = hub.conversations.messages(P, t.id).slice(2).map((m) => m.text);
     expect(notes[0]).toMatch(/Chantier T-0001 « Balles lumineuses » lancé/);
     expect(notes[1]).toMatch(/↻ Chantier T-0001 « Balles lumineuses » : le testeur a trouvé des problèmes .* Le développeur corrige/);
-    expect(exec.requests.map((r) => r.kind)).toEqual(["execute", "verify", "execute", "verify"]);
+    expect(exec.requests.map((r) => r.kind)).toEqual(["execute", "verify", "execute", "verify", "execute", "verify"]);
     expect(exec.requests[2]!.prompt).toMatch(/Le testeur a relevé : Le test de la scène échoue[\s\S]*La scène se lance : polices bloquées/);
     expect(hub.tasks.escalations(P)).toEqual([]);
     const report = notes.at(-1)!;
@@ -336,9 +338,9 @@ describe("atelier (par défaut)", () => {
     expect(fake.calls.filter((c) => c.kind === "reply").at(-1)!.systemPrompt).toMatch(/<chantiers>\n- T-0001 « Balles lumineuses » : à relire : attend le directeur créatif/);
     expect(hub.tasks.get(P, "T-0001").status).toBe("merged");
     expect(hub.conversations.messages(P, t.id).at(-1)!.text).toBe("✓ T-0001 fusionné dans votre jeu.");
-    expect(git(hub.projects.get(P).root, "show", "HEAD:src/boss.ts")).toMatch(/lumineuses v2/);
+    expect(git(hub.projects.get(P).root, "show", "HEAD:src/boss.ts")).toMatch(/lumineuses v3/);
     // La qualité distingue la correction d'office (testeur) d'une intervention de votre part.
-    expect((await hub.quality.report(P)).chantiers[0]).toMatchObject({ first_try: false, corrections: 1, interventions: 0 });
+    expect((await hub.quality.report(P)).chantiers[0]).toMatchObject({ first_try: false, corrections: 2, interventions: 0 });
   });
 
   it("exécution directe : pas de phase de plan, la consigne va droit au développeur, fusion dès que le testeur valide", async () => {
@@ -431,7 +433,7 @@ describe("atelier (par défaut)", () => {
   it("vos corrections dites dans la discussion repartent au développeur, dans la même copie", async () => {
     const { sb, hub, fake, exec } = await setup();
     hub.projects.setAutonomy(sb.human(), P, "workshop");
-    for (const v of ["1", "2"]) {
+    for (const v of ["1", "2", "2.5"]) {
       exec.scripts.execute.push(async (t) => {
         await t.write("src/boss.ts", `export const v = ${v};\n`);
         return REPORT;
@@ -454,7 +456,7 @@ describe("atelier (par défaut)", () => {
     expect(exec.requests.at(-2)!.prompt).toMatch(/Le sillage doit durer 0,2 s/);
     expect(hub.tasks.get(P, "T-0001").status).toBe("merged");
     expect(hub.conversations.messages(P, t.id).map((m) => m.text).join("\n")).toMatch(/↻ T-0001 : le développeur corrige selon vos remarques/);
-    expect((await hub.quality.report(P)).chantiers[0]).toMatchObject({ corrections: 2, interventions: 1 });
+    expect((await hub.quality.report(P)).chantiers[0]).toMatchObject({ corrections: 3, interventions: 1 });
   });
 
   it("séance autonome : le directeur planifie, le hub enchaîne et lui redonne la main, puis bilan", async () => {
