@@ -176,11 +176,34 @@ def animations():
     return [{"nom": a.name, "debut_s": round(a.frame_range[0] / fps, 2), "fin_s": round(a.frame_range[1] / fps, 2), "duree_s": round((a.frame_range[1] - a.frame_range[0]) / fps, 2)} for a in bpy.data.actions]
 
 
+def box(o):
+    pts = [o.matrix_world @ Vector(c) for c in o.bound_box]
+    return Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))), Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+
+
+def kit_pieces():
+    """Un kit : plusieurs pieces sans squelette, ecartees cote a cote (boites disjointes vues de dessus). Sinon []."""
+    if armature():
+        return []
+    bpy.context.view_layer.update()
+    boxes = [box(o) for o in meshes()]
+    if len(boxes) < 2:
+        return []
+    for i, (alo, ahi) in enumerate(boxes):
+        for blo, bhi in boxes[i + 1:]:
+            if alo.x < bhi.x and blo.x < ahi.x and alo.y < bhi.y and blo.y < ahi.y:
+                return []
+    return boxes
+
+
 def normalize(size):
-    """Plus grande dimension = size metres, pose au sol (z = 0), centre en x et y."""
+    """Plus grande dimension = size metres, pose au sol (z = 0), centre en x et y. Pour un kit, c'est la plus grande PIECE
+    qui mesure size : la rangee des pieces ecartees pour les photos n'est pas un objet du jeu."""
     lo, hi = bounds()
-    if size > 0 and max(hi - lo) > 0:
-        f = size / max(hi - lo)
+    pieces = kit_pieces()
+    longest = max(max(phi - plo) for plo, phi in pieces) if pieces else max(hi - lo)
+    if size > 0 and longest > 0:
+        f = size / longest
         for o in roots():
             o.scale = o.scale * f
             o.location = o.location * f
