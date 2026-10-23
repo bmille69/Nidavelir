@@ -14,7 +14,7 @@ import { ART_DIR, artRoot, nextAssetId, PENDING_VISUALS, readManifest, writeAtom
 import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
-import { rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
+import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
   BOARD_MARK,
@@ -1582,6 +1582,7 @@ export class ArtService {
       let animations: string[] = [];
       let rigType: string | null = null;
       let rigTask: string | null = null;
+      let rigModel: string | null = null;
       // La planche jugée (ADR-50) : ses fichiers dans production/, la dernière version gardée.
       const planche: string[] = [];
       const previous = retouch ? asset.model : null;
@@ -1589,6 +1590,7 @@ export class ArtService {
         animations = previous.animations;
         rigType = previous.rigType ?? null;
         rigTask = previous.rigTask ?? null;
+        rigModel = previous.rigModel ?? null;
         planche.push(...(previous.views ?? []).filter((f) => existsSync(join(root, f))));
         // Le modèle déjà branché dans le jeu sera remplacé par la version retouchée.
         if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
@@ -1599,7 +1601,9 @@ export class ArtService {
       let onlyAnimations = false;
       if (kept) {
         try {
-          const want = rigAnimations(kept.rigType ?? "biped", spec.animations);
+          const want = rigAnimations(kept.rigType ?? "biped", spec.animations, kept.rigModel ?? RIG_V1);
+          // Le squelette v3.0 ne porte pas la bibliothèque des bipèdes : une animation qui en vient demande de refaire le squelette.
+          if (kept.rigModel === RIG_V3 && rigAnimations("biped", spec.animations).some((n) => n.startsWith("biped:"))) throw new Error("ces animations demandent l'ancien squelette des bipèdes");
           const keep = want.map(shortName);
           const add = want.filter((w) => !kept.animations.includes(shortName(w)));
           progress.stage = "tripo";
@@ -1618,6 +1622,7 @@ export class ArtService {
           animations = keep;
           rigType = kept.rigType ?? null;
           rigTask = kept.rigTask ?? null;
+          rigModel = kept.rigModel ?? null;
           planche.push(...(kept.views ?? []).filter((f) => existsSync(join(root, f))));
           onlyAnimations = true;
           if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
@@ -1647,6 +1652,7 @@ export class ArtService {
         animations = t.animations ?? [];
         rigType = t.rigType ?? null;
         rigTask = t.rigTask ?? null;
+        rigModel = t.rigModel ?? null;
         mkdirSync(join(dir, ".."), { recursive: true });
         for (const [i, b] of [t.glb, ...(t.extras ?? [])].entries()) {
           const f = `${dir}-brut${i ? `-${i + 1}` : ""}.glb`;
@@ -1695,7 +1701,7 @@ export class ArtService {
         let a = m.assets.find((x) => x.id === id);
         if (!a) return false;
         const bandes = done.bandes.map((r) => relative(root, r).replace(/\\/g, "/"));
-        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, bandes, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, rigTask, missingAnimations, verdict: null };
+        a.model = { file, source, ...(planche.length ? { views: [...planche] } : {}), renders, bandes, tris: done.tris, dims: done.dims, animations: done.animations, workshop, rigType, rigTask, ...(rigModel ? { rigModel } : {}), missingAnimations, verdict: null };
         this.#setStatus(a, "a_valider");
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} (atelier, passe ${pass}${credits && pass === 1 ? `, ${credits} crédits Tripo` : ""})`);

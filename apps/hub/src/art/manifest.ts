@@ -81,6 +81,8 @@ export type ModelInfo = {
   missingAnimations?: string[];
   /** La tâche Tripo du squelette : d'autres animations s'y posent pour 10 crédits chacune, sans refaire le modèle (ADR-56). */
   rigTask?: string | null;
+  /** La version du squelette Tripo (absente : v1.0) ; le v3.0 ne connaît que les animations de base. */
+  rigModel?: string | null;
   /** Une bande d'images par animation, pour juger le mouvement (ADR-56). */
   bandes?: string[];
   /** Photos sous quatre angles, pour le validateur et pour vous. */

@@ -27,7 +27,7 @@ export type Model3DSpec = { size: number; tris: number; rig: boolean; animations
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
 /** `rigTask` : la tâche Tripo du squelette, pour lui poser d'autres animations plus tard sans refaire le modèle (ADR-56). */
-export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string; rigTask?: string; views?: ViewImage[] };
+export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; animations?: string[]; rigType?: string; rigTask?: string; rigModel?: string; views?: ViewImage[] };
 /** Les quatre vues de la planche (ADR-50), dans l'ordre que Tripo attend. */
 export const VIEWS = ["front", "left", "back", "right"] as const;
 export type View = (typeof VIEWS)[number];
@@ -93,6 +93,11 @@ export const TRIPO_BIPED = [
   "shovel", "sing_01", "sing_02", "sing_03", "sing_04", "sit", "slash", "sob", "standing_relax", "surf",
   "swagger", "swim", "turn", "victory_celebration", "volleyball", "wait", "walk", "warm_up", "wave_goodbye_01", "wave_goodbye_02",
 ];
+/** Les animations de base, les seules que connaît le squelette humanoïde v3.0 (« preset:walk »). */
+const BASIC = TRIPO_ANIMATIONS.filter((a) => !a.includes(":"));
+/** Le squelette humanoïde d'octobre 2026, meilleur que le v1.0 mais sans sa bibliothèque ; même prix en crédits. */
+export const RIG_V3 = "v3.0-20260909";
+export const RIG_V1 = "v1.0-20240301";
 /** Animations au plus par modèle (une tâche Tripo chacune). */
 export const MAX_ANIMATIONS = 8;
 /** Une animation que Tripo sait poser : générique, à forme (« quadruped:walk ») ou de la bibliothèque des bipèdes. */
@@ -365,16 +370,19 @@ export class RealModel3D implements Model3DPort {
       let names: string[] = [];
       let rigType: string | undefined;
       let rigTask: string | undefined;
+      let rigModel: string | undefined;
       if (req.spec.rig) {
         const check = await run("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input: model.task_id });
         if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
         const type = String(check.output?.rig_type ?? "biped").toLowerCase();
         rigType = type;
-        // L'ancien squelette (v1.0) ne connaît que les bipèdes : quatre pattes, ailes, serpents… passent par le v2.5.
-        const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: type === "biped" ? "v1.0-20240301" : "v2.5-20260210", rig_type: type });
+        names = rigAnimations(type, req.spec.animations);
+        // Quatre pattes, ailes, serpents… passent par le v2.5 ; un bipède prend le v3.0 si ses animations sont toutes de base,
+        // sinon le v1.0, seul à porter la bibliothèque des bipèdes.
+        rigModel = type !== "biped" ? "v2.5-20260210" : names.some((n) => n.startsWith("biped:")) ? RIG_V1 : RIG_V3;
+        const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: rigModel, rig_type: type });
         last = rig;
         rigTask = rig.task_id;
-        names = rigAnimations(type, req.spec.animations);
         // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
         for (const [i, name] of names.entries()) {
           const anim = await run(`Tripo applique l'animation « ${name} » (${i + 1}/${names.length})`, "/v3/animations/retarget", {
@@ -391,7 +399,7 @@ export class RealModel3D implements Model3DPort {
       const glb = await this.#fetchModel(last, req.step);
       this.#setPending(null);
       // Les noms montrés au jeu, sans le préfixe de la bibliothèque : « walk », pas « biped:walk ».
-      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, rigTask, views };
+      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, rigTask, rigModel, views };
     } catch (err) {
       // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
       if (reused) this.#setPending(null);
@@ -531,16 +539,19 @@ function maxTexture(spec: Model3DSpec): number {
  * Les animations demandées que ce squelette sait jouer (noms des préréglages Tripo, sans « preset: »). Le type de
  * squelette est celui que Tripo reconnaît sur le modèle, pas celui que la fiche espérait : une marche « à quatre pattes »
  * demandée pour un modèle que Tripo voit à huit pattes devient la marche à huit pattes, au lieu de disparaître. Un bipède
- * prend la version de la bibliothèque des bipèdes quand elle existe (« biped:walk »), sinon l'animation générique.
+ * prend le squelette v3.0 quand toutes ses animations sont de base (noms nus, « walk »), sinon le v1.0 et sa bibliothèque
+ * (« biped:walk ») ; `rig` impose le squelette déjà posé.
  */
-export function rigAnimations(type: string, wanted: string[]): string[] {
+export function rigAnimations(type: string, wanted: string[], rig?: string | null): string[] {
   const out = new Set<string>();
   // La seule façon de se déplacer que Tripo connaît pour chaque squelette non bipède.
   const gait = TRIPO_ANIMATIONS.find((a) => a.startsWith(`${type}:`));
-  for (const w of wanted) {
-    const move = w.includes(":") ? w.split(":")[1]! : w;
+  const moves = wanted.map((w) => (w.includes(":") ? w.split(":")[1]! : w));
+  const modern = rig ? rig === RIG_V3 : moves.filter((m) => TRIPO_BIPED.includes(m) || BASIC.includes(m)).every((m) => BASIC.includes(m));
+  for (const move of moves) {
     let name: string | null;
-    if (type === "biped") name = TRIPO_BIPED.includes(move) ? `biped:${move}` : TRIPO_ANIMATIONS.includes(move) ? move : null;
+    if (type === "biped" && modern) name = BASIC.includes(move) ? move : null;
+    else if (type === "biped") name = TRIPO_BIPED.includes(move) ? `biped:${move}` : TRIPO_ANIMATIONS.includes(move) ? move : null;
     else if (TRIPO_ANIMATIONS.includes(`${type}:${move}`)) name = `${type}:${move}`;
     else name = ["walk", "run", "march"].includes(move) ? (gait ?? null) : null;
     if (name && knownAnimation(name)) out.add(name);

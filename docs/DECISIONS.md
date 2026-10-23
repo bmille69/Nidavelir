@@ -790,3 +790,12 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
 ### Recommandations non bloquantes
 - Mettre à jour Git (2.40 date de 2023) et VS Code (1.38). Ce n'est pas nécessaire au hub.
 - Ajouter Godot au PATH, ou le placer dans un dossier fixe (par exemple `C:\Tools\Godot\`), plutôt que de le laisser sur le Bureau.
+
+### ADR-66 : le squelette humanoïde v3.0 de Tripo quand les animations le permettent
+**Statut** : Retenue le 23/10/2026 (annonce Tripo d'octobre 2026 : « comment profiter de la mise à jour ? »).
+- Tripo propose un squelette humanoïde **v3.0** (`v3.0-20260909`), mieux ajusté aux articulations, au même prix. Il n'est pas activé par défaut : il faut le demander. Mais il ne connaît que les **11 animations de base** (idle, walk, run, dive, climb, jump, slash, shoot, hurt, fall, turn, noms nus `preset:walk`). La bibliothèque des 90+ animations (`preset:biped:…`) reste réservée au v1.0.
+- **Choix automatique** (`rigAnimations`, `model3d.ts`) : un bipède dont toutes les animations sont de base prend le v3.0. Une seule animation de la bibliothèque (hit_to_body_01, chop…) fait prendre le v1.0. Les autres formes restent en v2.5.
+- La version est gardée dans la fiche (`model.rigModel` ; absente = v1.0). Une animation ajoutée plus tard sur un squelette gardé (ADR-56) suit ce squelette. Une animation de la bibliothèque demandée sur un v3.0 fait refaire le modèle avec le v1.0 (Tripo repayé, c'est rare).
+- La consigne du DA le dit : choisir la bibliothèque quand le sens l'exige, pas par défaut.
+- Rien à faire de plus pour le reste de l'annonce. Le nouvel algorithme d'application des animations sert déjà, sans changement de requête. L'animation générée à partir d'un texte n'existe que sur leur site, pas encore pour les programmes : à surveiller, elle remplacerait l'essai Meshy (ADR-56).
+- Pas encore essayé contre le vrai Tripo : le prochain humanoïde aux animations de base sera le test.

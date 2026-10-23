@@ -123,6 +123,9 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   5000 pour un objet ou un décor (trop peu écrase les détails) ; « squelette » s'il doit être animé ; « animations » : 8 au
   plus, choisies dans le CATALOGUE ci-dessous par leur SENS (pense au minimum du jeu : attente, marche ou course, coup
   donné, coup reçu) ; pour les autres formes : quadruped:walk, hexapod:walk, octopod:walk, serpentine:march, aquatic:march.
+  Un humanoïde dont les animations sont TOUTES de base (idle, walk, run, dive, climb, jump, slash, shoot, hurt, fall, turn)
+  reçoit le squelette Tripo le plus récent, mieux ajusté aux articulations ; une seule animation de la bibliothèque
+  (hit_to_body_01, chop…) fait prendre l'ancien squelette. Choisis la bibliothèque quand le sens l'exige, pas par défaut.
   Un objet rigide (navire, caisse, arme) n'a ni squelette ni animation. Les animations arrivent brutes : l'atelier les
   coupe et les ralentit, le validateur les juge sur des bandes d'images. Changer les animations d'un modèle déjà fait
   (nouvelle directive MODELE3D avec la liste voulue) coûte 10 crédits Tripo par animation ajoutée, sans refaire le modèle.

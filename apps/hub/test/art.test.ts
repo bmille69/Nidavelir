@@ -69,6 +69,7 @@ class FakeModel3D implements Model3DPort {
   blender = false;
   key = false;
   rigType: string | undefined = undefined;
+  rigModel: string | undefined = undefined;
   tripoCalls: { spec: Model3DSpec; bytes: number }[] = [];
   prepares: { dir: string; input: string | null; palette: string[] }[] = [];
   codes: string[] = [];
@@ -101,7 +102,7 @@ class FakeModel3D implements Model3DPort {
       this.viewEdits.push(...edits);
       if (edits.length) await req.views(sheet, 2);
     }
-    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(this.rigType ? { rigTask: "rig-1" } : {}), ...(req.views ? { views: sheet } : {}) };
+    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(this.rigType ? { rigTask: "rig-1" } : {}), ...(this.rigModel ? { rigModel: this.rigModel } : {}), ...(req.views ? { views: sheet } : {}) };
   }
   /** Les bandes d'animation ne sont rendues que si un test le demande (ADR-56). */
   bandes = false;
@@ -862,6 +863,37 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     a = art.state("bordee").assets[0]!;
     expect(a).toMatchObject({ status: "integration", model: { animations: ["idle", "run", "hit_to_body_01"], rigTask: "rig-1", verdict: { ok: true } } });
     expect(art.state("bordee").messages.some((m) => /en 3D : conforme\*\* \(passe 1\)[\s\S]*10 crédits Tripo/.test(m.text))).toBe(true);
+  }, 60_000);
+
+  it("une animation de la bibliothèque sur un squelette v3.0 refait le modèle avec l'ancien squelette", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    m3d.rigType = "biped";
+    m3d.rigModel = "v3.0-20260909";
+    m3d.bandes = true;
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur", "specs": "Lourd"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, mineur: false, summary: "Fidèle.", points: [] } as never);
+    fake.extractions.push({ ok: false, mineur: false, summary: "Il manque un coup reçu.", points: [], remplacements: [] } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.model).toMatchObject({ rigModel: "v3.0-20260909", rigTask: "rig-1" });
+
+    m3d.rigModel = "v1.0-20240301";
+    fake.replies.push("Un vrai coup reçu.\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run, hit_to_body_01]]");
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, mineur: false, summary: "Fidèle.", points: [] } as never);
+    fake.extractions.push({ ok: true, mineur: false, summary: "Bien.", points: [], remplacements: [] } as never);
+    art.send(sb.human(), "bordee", "Remplace par hit_to_body_01");
+    await art.idle();
+    expect(m3d.animates).toEqual([]);
+    expect(m3d.tripoCalls).toHaveLength(2);
+    expect(art.state("bordee").assets[0]!.model).toMatchObject({ rigModel: "v1.0-20240301" });
   }, 60_000);
 
   it("modèle de Tripo : l'artisan le range en quatre pas au plus, sans le repeindre, et un pas trop long est rattrapé (ADR-54)", async () => {

@@ -68,13 +68,13 @@ describe("Tripo (atelier 3D)", () => {
     expect(r!.extras).toEqual([]);
   });
 
-  it("bipède : squelette v1.0 et plusieurs animations fusionnables", async () => {
+  it("bipède avec une animation de la bibliothèque : squelette v1.0 et plusieurs animations fusionnables", async () => {
     const t = fakeTripo({ rigType: "biped" });
     vi.stubGlobal("fetch", t.fetch);
-    const { r } = await run(new RealModel3D(dir), ["walk", "slash"]);
+    const { r } = await run(new RealModel3D(dir), ["walk", "hit_to_body_01"]);
     expect(t.calls.find((c) => c.path === "/v3/animations/rig")!.body).toMatchObject({ model: "v1.0-20240301", rig_type: "biped" });
     // La bibliothèque des bipèdes, faite pour ce squelette ; un modèle à squelette est demandé en qualité détaillée.
-    expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:biped:walk", "preset:biped:slash"]);
+    expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:biped:walk", "preset:biped:hit_to_body_01"]);
     expect(t.calls.find((c) => c.path === "/v3/generation/image-to-model")!.body).toMatchObject({
       model: "v3.1-20260211",
       geometry_quality: "detailed",
@@ -84,9 +84,20 @@ describe("Tripo (atelier 3D)", () => {
       delight: true,
       orientation: "align_image",
     });
-    expect(r!.animations).toEqual(["walk", "slash"]);
+    expect(r!.animations).toEqual(["walk", "hit_to_body_01"]);
+    expect(r!.rigModel).toBe("v1.0-20240301");
     expect(r!.extras).toHaveLength(1);
     expect(r!.credits).toBe(50);
+  });
+
+  it("bipède aux animations toutes de base : squelette v3.0 (octobre 2026) et noms nus", async () => {
+    const t = fakeTripo({ rigType: "biped" });
+    vi.stubGlobal("fetch", t.fetch);
+    const { r } = await run(new RealModel3D(dir), ["walk", "slash", "moonwalk"]);
+    expect(t.calls.find((c) => c.path === "/v3/animations/rig")!.body).toMatchObject({ model: "v3.0-20260909", rig_type: "biped" });
+    expect(t.calls.filter((c) => c.path === "/v3/animations/retarget").map((c) => c.body.animation)).toEqual(["preset:walk", "preset:slash"]);
+    expect(r!.animations).toEqual(["walk", "slash"]);
+    expect(r!.rigModel).toBe("v3.0-20260909");
   });
 
   it("un squelette raté ne fait pas repayer le modèle à la tentative suivante", async () => {
@@ -143,7 +154,10 @@ describe("Tripo (atelier 3D)", () => {
 
   it("les animations que le squelette sait jouer", () => {
     expect(rigAnimations("quadruped", ["walk", "quadruped:walk", "slash"])).toEqual(["quadruped:walk"]);
-    expect(rigAnimations("biped", ["walk", "quadruped:walk", "slash"])).toEqual(["biped:walk", "biped:slash"]);
+    // Que des animations de base : le squelette v3.0, noms nus ; le squelette v1.0 déjà posé garde la bibliothèque.
+    expect(rigAnimations("biped", ["walk", "quadruped:walk", "slash"])).toEqual(["walk", "slash"]);
+    expect(rigAnimations("biped", ["walk", "slash"], "v1.0-20240301")).toEqual(["biped:walk", "biped:slash"]);
+    expect(rigAnimations("biped", ["walk", "hit_to_body_01"], "v3.0-20260909")).toEqual(["walk"]);
     // Toute la bibliothèque des bipèdes, jusqu'à huit animations ; une animation inconnue est écartée.
     expect(rigAnimations("biped", ["idle", "walk", "run", "hit_to_body_01", "biped:fall", "cast_a_spell", "victory_celebration", "look_around", "sit", "moonwalk"])).toEqual([
       "biped:idle",
