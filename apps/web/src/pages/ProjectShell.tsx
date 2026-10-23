@@ -6,7 +6,7 @@ import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
 import { Icon, type IconName } from "../studio/Icon.tsx";
-import { MonitorBar } from "../studio/Monitor.tsx";
+import { MonitorBar, MonitorPill } from "../studio/Monitor.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
 import { TasksView } from "./TasksView.tsx";
@@ -61,6 +61,7 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
             <h1>{project?.name ?? slug}</h1>
           </div>
           <div className="project-actions">
+            <MonitorPill slug={slug} />
             {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
             <a className="concevoir-btn" href={`#/p/${slug}/concevoir${view === "discussion" && threadId ? `/${threadId}` : ""}`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
               <Icon name="sparkle" size={15} /> Concevoir

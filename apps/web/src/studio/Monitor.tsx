@@ -118,3 +118,45 @@ export function MonitorBar({ slug }: { slug?: string }) {
     </section>
   );
 }
+
+/**
+ * Sur téléphone, le moniteur tient dans une pastille de l'en-tête du projet (la discussion garde tout l'écran) : l'état de
+ * la file en quelques mots ; un toucher ouvre le moniteur complet dans une feuille du bas.
+ */
+export function MonitorPill({ slug }: { slug: string }) {
+  const [m, setM] = useState<Monitor | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.monitor().then((x) => alive && setM(x), () => {});
+    void load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  const q = m?.queues.find((x) => x.project === slug);
+  const label = q?.paused ? `Pause → ${hm(q.paused.until)}` : q?.running ? q.running.id : "Au repos";
+  return (
+    <>
+      <button className={`monitor-pill ${q?.paused ? "paused" : q?.running ? "on" : ""}`} onClick={() => setOpen(true)} aria-label="Moniteur du studio">
+        <span className={`dot ${q?.paused ? "warn" : q?.running ? "live" : ""}`} />
+        {label}
+        {q && q.queued > 0 && <span className="muted">+{q.queued}</span>}
+      </button>
+      {open && (
+        <div className="sheet" role="dialog" aria-label="Moniteur du studio">
+          <div className="sheet-backdrop" onClick={() => setOpen(false)} />
+          <div className="sheet-box">
+            <span className="sheet-grip" aria-hidden="true" />
+            <MonitorBar slug={slug} />
+            <a className="secondary-link" href="#/pilotage" onClick={() => setOpen(false)}>
+              Ouvrir le pilotage
+            </a>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

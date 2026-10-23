@@ -29,6 +29,7 @@ import { ArtError } from "../art/art-service.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
+import { median, taskProgress, touchedFiles } from "../executor/progress.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -502,14 +503,34 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         const ids = own ? [own] : t.goal.includes(PENDING_VISUALS) ? [...t.goal.matchAll(/\n- (A-\d{4,}) «/g)].map((m) => m[1]!) : [];
         return ids.map(visual).filter((v) => v !== null);
       };
-      return hub.tasks.list(slug).map((t) => ({
+      const list = hub.tasks.list(slug);
+      const runsOf = new Map(list.map((t) => [t.id, hub.tasks.runs(slug, t.id)]));
+      // La barre de progression (refonte du pilotage) : estimée par le hub, sans appel à un modèle.
+      const typicalMs = median(
+        [...runsOf.values()].flat().filter((r) => r.kind === "execute" && r.status === "done" && r.finished_at).map((r) => Date.parse(r.finished_at!) - Date.parse(r.started_at)),
+      );
+      const progressOf = (t: (typeof list)[number]) => {
+        if (!["planning", "plan_review", "approved", "running", "review"].includes(t.status)) return null;
+        const runs = runsOf.get(t.id) ?? [];
+        const exec = runs.filter((r) => r.kind === "execute").at(-1);
+        let steps: { files: string[] }[] | null = null;
+        try {
+          steps = t.plan ? hub.tasks.plan(slug, t.plan).steps : null;
+        } catch {
+          /* plan illisible */
+        }
+        const touched = exec?.status === "running" ? touchedFiles(hub.tasks.events(exec.id)) : [];
+        return taskProgress({ status: t.status, runs, steps, touched, now: Date.now(), typicalMs });
+      };
+      return list.map((t) => ({
         ...t,
+        progress: progressOf(t),
         queue_rank: queue.indexOf(t.id) >= 0 ? queue.indexOf(t.id) + 1 : null,
         restarted_from: restarted.get(t.id) || null,
         visuals: visualsOf(t),
         rating: hub.quality.rating(slug, t.id),
         pending_escalations: pending.filter((e) => e.task === t.id).length,
-        cost_usd: hub.tasks.runs(slug, t.id).reduce((n, r) => n + (r.cost_usd ?? 0), 0),
+        cost_usd: (runsOf.get(t.id) ?? []).reduce((n, r) => n + (r.cost_usd ?? 0), 0),
       }));
     });
     api.post("/projects/:slug/tasks", async (req) => {

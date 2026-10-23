@@ -12,7 +12,7 @@ const DONE_MARK = "§FAIT§ ";
 const BOARD_MARK = "§PLANCHE§ ";
 const ACCEPT = "image/png,image/jpeg,image/webp";
 
-const STATUS: Record<AssetStatus, string> = {
+export const STATUS: Record<AssetStatus, string> = {
   a_valider: "À valider",
   production: "En production",
   propose: "Proposé",

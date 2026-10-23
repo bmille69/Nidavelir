@@ -48,6 +48,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 
       <nav className="side-nav">
         {item("#/", "home", "Accueil", route.page === "dashboard", forYou > 0 ? <span className="count warn">{forYou}</span> : null)}
+        {item("#/pilotage", "chart", "Pilotage", route.page === "pilot")}
       </nav>
 
       <p className="side-title">

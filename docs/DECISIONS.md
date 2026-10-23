@@ -806,3 +806,20 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
 - **Constat depuis l'ADR-62** : Opus a validé 5 visuels en 16 passes, à ~0,70 $ la passe. Le renfort Fable n'en a sauvé qu'un sur 4 essais, à 5-8 $ la passe : 25-50 000 jetons écrits par pas, contre 1-4 000 pour Opus. Deux de ses échecs (A-0013) venaient du bug d'échelle des kits.
 - **Désormais** : la 3e passe reste. Elle se fait en **Fable** seulement pour un modèle à squelette (personnage, ennemi animé), là où un détail se voit en jeu. Pour un décor, un kit ou un objet, elle se fait avec le modèle réglé pour l'atelier (Opus).
 - La qualité de la 3D vient surtout de Tripo, de l'image validée et du validateur. L'artisan range, oriente et retouche. Les gros chantiers restent sur Fable (choix de l'utilisateur le 23/10).
+
+### ADR-68 : refonte « premium sobre », le poste de pilotage et la discussion du téléphone
+**Statut** : Retenue le 23/10/2026 (« d'un coup d'œil voir tout ce qu'il se passe… une interface plus premium, plus sobre/épurée, sans perdre de fonctions » ; le bandeau mange la discussion du téléphone, lecture pénible).
+- **Style** : tokens `:root` réécrits (`styles.css`). Fond ardoise neutre, surfaces pleines (plus de verre flou), un seul accent bleu calme, ambre pour « à vous ». Plus de lueurs ni de dégradés néon, une seule famille de lettres (Segoe UI Variable, celle de Windows, sans fichier ajouté). Ajout d'échelles d'espacement et de tailles. Les couleurs néon codées en dur sont converties. Le logo et la bannière restent, mais désaturés.
+- **Pilotage** (`#/pilotage`, `studio/Pilotage.tsx`, entrée sous « Accueil ») :
+  - une ligne d'état : file, pause jusqu'à quand, jauge des 5 h, jetons du quart d'heure ;
+  - les cartes « à vous » ;
+  - deux colonnes. **Chantiers** : celui en cours avec sa barre de progression, la file, les fusionnés récents. **Visuels** : en fabrication avec aperçu et passe, à trancher, en file, prêts en attente d'un chantier ;
+  - les liens : survoler un chantier allume ses visuels, et inversement ; un clic sur une puce y mène ;
+  - **Galerie** (`studio/Gallery.tsx`) : filtres par statut et par 3D ou image. Un visualiseur feuillette toutes les images d'un asset (croquis, image, planche, photos 3D, bandes, capture en jeu) au clavier (← →, ↑ ↓, Échap), avec le verdict, les chantiers liés, « Lancer maintenant », « Mettre de côté » et un lien vers la Direction artistique.
+- **Progression d'un chantier** (`executor/progress.ts`, champ `progress` de `GET /projects/:slug/tasks`), estimée sans appel à un modèle :
+  - plan : 5 % ;
+  - exécution : 10 à 80 %, selon les étapes du plan dont un fichier a été modifié, ou à défaut le temps écoulé face à la médiane des exécutions ;
+  - contrôles du hub : 84 % ; testeur : 90 à 96 % ; fusion : 97 %.
+  - Affichée « ≈ ».
+- **Téléphone** : le bandeau du moniteur disparaît des pages du projet. Une pastille de l'en-tête (« T-0074 +3 », « Pause → 13:40 ») ouvre le moniteur complet dans une feuille du bas, avec un lien vers le Pilotage. Les messages passent à 16 px, plus larges et plus aérés. « Concevoir » devient une icône et le nom du projet s'abrège.
+- Vérifié : `pilotage.e2e.ts` (PC 1400×900 et téléphone 390×844, captures examinées) ; les 32 autres tests navigateur sont verts. Celui du Concepteur (`conception.e2e.ts`) échouait déjà avec le site d'avant (expire au bout de 25 s) : il est à remettre à jour depuis l'ADR-57.

@@ -10,6 +10,8 @@ export type TaskRow = Task & {
   queue_rank?: number | null;
   restarted_from?: string | null;
   visuals?: { id: string; name: string; status: AssetStatus; launched: boolean }[];
+  /** Avancement estimé par le hub, sans appel à un modèle (pilotage) : absent pour un chantier fini ou en file. */
+  progress?: { pct: number; phase: "plan" | "execute" | "checks" | "verify" | "merge"; label: string } | null;
 };
 /** Le studio de modding (ADR-65). */
 export type ModToolchain = {

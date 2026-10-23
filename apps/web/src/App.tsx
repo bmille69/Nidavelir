@@ -8,6 +8,7 @@ import { StudioProvider } from "./studio/context.tsx";
 import { Sidebar, Logo } from "./studio/Sidebar.tsx";
 import { Home } from "./studio/Home.tsx";
 import { StudioLive } from "./studio/Live.tsx";
+import { Pilotage } from "./studio/Pilotage.tsx";
 import { Icon, type IconName } from "./studio/Icon.tsx";
 import { ForYou } from "./studio/ForYou.tsx";
 import { ModsHome, ModView } from "./studio/Mods.tsx";
@@ -20,6 +21,7 @@ import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
 export type Route =
   | { page: "dashboard" }
   | { page: "live" }
+  | { page: "pilot" }
   | { page: "import" }
   | { page: "quality" }
   | { page: "skills" }
@@ -38,6 +40,7 @@ function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "import") return { page: "import" };
   if (parts[0] === "direct") return { page: "live" };
+  if (parts[0] === "pilotage") return { page: "pilot" };
   if (parts[0] === "qualite") return { page: "quality" };
   if (parts[0] === "competences") return { page: "skills" };
   if (parts[0] === "telephone") return { page: "phone" };
@@ -60,6 +63,7 @@ function parse(hash: string): Route {
 export function href(route: Route): string {
   if (route.page === "import") return "#/import";
   if (route.page === "live") return "#/direct";
+  if (route.page === "pilot") return "#/pilotage";
   if (route.page === "quality") return "#/qualite";
   if (route.page === "skills") return "#/competences";
   if (route.page === "phone") return "#/telephone";
@@ -158,6 +162,7 @@ export function App() {
         <div className="main">
           {route.page === "dashboard" && <Home />}
           {route.page === "live" && <StudioLive />}
+          {route.page === "pilot" && <Pilotage />}
           {route.page === "import" && <ImportFlow gamesRoot={session.gamesRoot} />}
           {route.page === "quality" && <QualityView />}
           {route.page === "skills" && <SkillsView />}
