@@ -857,3 +857,23 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `playtest.e2e.ts` : vrai Edge sur un petit jeu lancé par `npm run dev`. Clic sur « Jouer », flèche maintenue, score, erreur vue, pont reset, téléphone, serveur arrêté à la fin. Photos examinées ;
   - un vrai run Claude Code (Haiku) avec les arguments du hub : il a vu l'outil, joué, décrit la photo (« carré bleu clair, à droite ») et lu x = 340, pour 0,0035 $.
   - Pas encore vu sur un vrai chantier de Bordée : ce sera le prochain chantier qui passe au testeur.
+
+### ADR-70 : le carnet de commandes Tripo, une commande payée n'est jamais repassée
+**Statut** : Retenue le 23/10/2026. C'est le n°2 des idées tirées d'OhMyGame (leur `model3d-journal.ts`). L'utilisateur : « ok on continue ».
+- **Le trou** : le numéro d'une commande Tripo n'était connu que pendant l'attente. Un arrêt du hub, ou un échec à l'étape suivante, faisait tout repayer. Seul le modèle d'un personnage était gardé (`pending.json`), et seulement une fois fini. Une animation ratée faisait repayer le squelette et les animations déjà posées.
+- **Le carnet** (`art/tripo-journal.ts`, fichier `tools/tripo/journal.json` dans les données du hub, sans la clé) :
+  - chaque commande payante est notée **dès que Tripo rend son numéro** : planche, retouche, modèle, contrôle du squelette, squelette, chaque animation, et les animations ajoutées sur un squelette gardé ;
+  - elle est notée sous l'**empreinte** de la demande (adresse et contenu, clés triées). Pour le modèle, l'empreinte prend l'empreinte de l'image et non le jeton d'envoi, et ni les graines : une relance retrouve la même commande ;
+  - **une demande déjà notée reprend sa commande**. En cours, on attend sa fin ; finie, on la récupère sans repayer et sans renvoyer l'image. Ses crédits ne sont comptés qu'une fois (`counted`) ;
+  - **repassée seulement** si Tripo l'a fait échouer ou ne la connaît plus (404). Une commande refusée parce qu'elle part d'une tâche reprise fait oublier celle-ci, qui sera refaite ;
+  - **une fabrication réussie vide ses commandes** : « Refaire la 3D » achète bien un nouveau modèle ;
+  - les commandes de plus de 7 jours sont oubliées ;
+  - écriture d'un bloc (fichier temporaire puis renommage).
+- Les crédits sont comptés au moment où chaque tâche réussit, plus à la fin de l'appel : un arrêt ne fait plus perdre le compte du plafond mensuel.
+- **Redémarrage (ADR-61 modifiée)** : une 3D interrompue **repart seule**, avec un mot du DA (« je la reprends, ce que Tripo avait commencé est repris, pas repayé »). Une reprise de finition reste une reprise de finition (`retouch` gardé dans `art_jobs`). Avant, elle attendait votre clic, justement pour ne pas repayer.
+- **Déjà là, rien à ajouter** : le contrôle gratuit « peut-on poser un squelette ? » avant de payer, et la fiche technique du modèle (triangles, mesures, animations, via l'export Blender).
+- **Pas repris d'OhMyGame** : le refus de repasser une commande dont l'envoi est incertain (réponse perdue en route). C'est rare, et cela demanderait votre intervention. Le risque restant : payer une étape deux fois dans ce cas précis.
+- **Vérifié** :
+  - `tripo-journal.test.ts` (6 tests), avec un faux Tripo réglable : hub coupé pendant la fabrication puis repris avec une autre graine (aucun nouvel envoi, crédits comptés une fois) ; animation ratée (seule elle est repassée) ; carnet vidé après succès ; tâche oubliée par Tripo, puis tâche échouée ; animations sur squelette gardé ; carnet lui-même ;
+  - les 8 tests Tripo existants passent, le test de redémarrage du DA est mis à jour ;
+  - 239 tests au vert. Pas encore vu contre le vrai Tripo : ce sera la prochaine 3D.

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { download, killTree } from "./imagegen.ts";
+import { orderFingerprint, TripoJournal } from "./tripo-journal.ts";
 
 /**
  * L'atelier 3D du Directeur artistique (ADR-47, ADR-49) : Tripo fabrique le modèle à partir de l'image de référence (et,
@@ -111,16 +112,35 @@ const BLENDER_SERIES = "https://download.blender.org/release/Blender4.5/";
 const UA = { "user-agent": "nidavellir-hub" };
 
 type TripoTask = { task_id: string; status: string; progress?: number; output?: Record<string, unknown>; error_msg?: string; error_message?: string; credits_consumed?: number };
+/** Les commandes d'une fabrication : crédits comptés, empreintes utilisées, tâches reprises du carnet (numéro → empreinte). */
+type Orders = { credits: number; used: string[]; reused: Map<string, string> };
+/** Passer (ou reprendre) une commande : `same` est ce qui l'identifie, `body` ce qui est envoyé à Tripo. */
+type Order = (label: string, path: string, same: Record<string, unknown>, body: () => Record<string, unknown> | Promise<Record<string, unknown>>) => Promise<TripoTask>;
+
+/** Une réponse d'erreur de Tripo, avec son code HTTP. */
+class TripoHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Tripo a fait échouer la tâche ou ne la connaît pas (plus) : rien à reprendre. */
+class TripoGone extends Error {}
 
 export class RealModel3D implements Model3DPort {
   readonly #dir: string;
   readonly #cap: number;
+  /** Le carnet de commandes (ADR-70) : une commande payée n'est jamais repassée. */
+  readonly #journal: TripoJournal;
   #installing: Model3DState["blender"]["installing"] = null;
   #error: string | null = null;
 
   constructor(dataDir: string, monthlyCredits = Number(process.env.STUDIO_TRIPO_MONTHLY_CREDITS ?? 2000)) {
     this.#dir = join(dataDir, "tools");
     this.#cap = monthlyCredits;
+    this.#journal = new TripoJournal(join(this.#dir, "tripo", "journal.json"));
   }
 
   // ── Blender ──
@@ -296,117 +316,70 @@ export class RealModel3D implements Model3DPort {
     if (!key) throw new Error("Ajoutez d'abord votre clé Tripo");
     const u = this.#usage();
     if (u.credits >= this.#cap) throw new Error(`Plafond mensuel Tripo atteint (${u.credits} crédits sur ${this.#cap}) : il repart le mois prochain`);
-    let credits = 0;
-    let reused = false;
-    const run = async (label: string, path: string, body: Record<string, unknown>): Promise<TripoTask> => {
-      req.step(label);
-      const { task_id } = (await this.#api(key, "POST", path, body)) as { task_id: string };
-      const deadline = Date.now() + 20 * 60_000;
-      for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
-        await new Promise((r) => setTimeout(r, wait));
-        const t = (await this.#api(key, "GET", `/v3/tasks/${task_id}`)) as TripoTask;
-        const status = String(t.status).toLowerCase();
-        if (status === "success") {
-          credits += Number(t.credits_consumed ?? 0);
-          return t;
-        }
-        if (["failed", "cancelled", "banned", "expired", "unknown"].includes(status)) throw new Error(`Tripo : ${label} a échoué (${t.error_msg ?? t.error_message ?? status})`);
-        if (Date.now() > deadline) throw new Error(`Tripo : ${label} a pris plus de 20 minutes`);
-        if (typeof t.progress === "number") req.step(`${label} (${t.progress} %)`);
+    const o: Orders = { credits: 0, used: [], reused: new Map() };
+    const order: Order = (label, path, same, body) => this.#order(key, o, req.step, label, path, same, body);
+    // L'image n'est envoyée que si une commande en a besoin : une fabrication reprise n'en a pas besoin.
+    const image = createHash("sha256").update(req.image).digest("hex");
+    let uploaded: Promise<string> | null = null;
+    const token = () => (uploaded ??= this.#upload(key, req.image, req.ext));
+    // La texture de Tripo porte les détails du modèle, Blender ne la repeint plus (ADR-54) : toujours détaillée. Un modèle
+    // à squelette se déforme en bougeant : géométrie détaillée aussi (ADR-52). Les graines ne font pas partie de l'empreinte :
+    // une fabrication interrompue reprend sa commande, quelle que soit la graine tirée à la relance.
+    const quality = { face_limit: Math.max(1000, req.spec.tris), texture_quality: "detailed", ...(req.spec.rig ? { geometry_quality: "detailed" } : {}) };
+    const shape = { ...quality, model_seed: req.seed, texture_seed: req.seed };
+    let model: TripoTask | null = null;
+    let views: ViewImage[] | undefined;
+    // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
+    if (req.views) {
+      try {
+        const planche = await this.#planche(order, token, image, req.views, req.step);
+        model = await order(
+          "Tripo fabrique le modèle à partir des quatre vues",
+          "/v3/generation/multiview-to-model",
+          { from: planche.tasks, model: TRIPO_MULTIVIEW_MODEL, ...quality },
+          () => ({ inputs: VIEWS.map((v) => ({ [v]: planche.urls[v] })), model: TRIPO_MULTIVIEW_MODEL, ...shape }),
+        );
+        views = planche.images;
+      } catch (err) {
+        req.step(`Planche impossible (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
       }
-    };
-    // Un modèle déjà payé dont la suite (squelette, animations) a échoué : on repart de lui au lieu de le refaire.
-    const reuse = { image: createHash("sha256").update(req.image).digest("hex"), tris: req.spec.tris };
-    const pending = this.#pending();
-    try {
-      let model: TripoTask;
-      let views: ViewImage[] | undefined;
-      if (pending && pending.image === reuse.image && pending.tris === reuse.tris) {
-        req.step("Tripo reprend le modèle déjà fabriqué");
-        model = { task_id: pending.task, status: "success" };
-        reused = true;
-      } else {
-        const token = await this.#upload(key, req.image, req.ext);
-        // La texture de Tripo porte les détails du modèle, Blender ne la repeint plus (ADR-54) : toujours détaillée. Un modèle
-        // à squelette se déforme en bougeant : géométrie détaillée aussi (ADR-52).
-        const shape = {
-          face_limit: Math.max(1000, req.spec.tris),
-          model_seed: req.seed,
-          texture_seed: req.seed,
-          texture_quality: "detailed",
-          ...(req.spec.rig ? { geometry_quality: "detailed" } : {}),
-        };
-        // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
-        let made: TripoTask | null = null;
-        if (req.views) {
-          try {
-            const planche = await this.#planche(key, run, token, req.views, req.step);
-            made = await run("Tripo fabrique le modèle à partir des quatre vues", "/v3/generation/multiview-to-model", {
-              inputs: VIEWS.map((v) => ({ [v]: planche.urls[v] })),
-              model: TRIPO_MULTIVIEW_MODEL,
-              ...shape,
-            });
-            views = planche.images;
-          } catch (err) {
-            req.step(`Planche impossible (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
-          }
-        }
-        // Depuis une seule image : la texture v3.5 retire l'éclairage peint dans l'image (des couleurs propres, sans ombres
-        // cuites), et le modèle regarde comme l'image, de face.
-        model =
-          made ??
-          (await run("Tripo fabrique le modèle", "/v3/generation/image-to-model", {
-            input: token,
-            model: TRIPO_MODEL,
-            ...shape,
-            texture_version: "v3.5-20260815",
-            delight: true,
-            orientation: "align_image",
-          }));
-        if (req.spec.rig) this.#setPending({ ...reuse, task: model.task_id });
-      }
-      let last = model;
-      const extras: Buffer[] = [];
-      let names: string[] = [];
-      let rigType: string | undefined;
-      let rigTask: string | undefined;
-      let rigModel: string | undefined;
-      if (req.spec.rig) {
-        const check = await run("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input: model.task_id });
-        if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
-        const type = String(check.output?.rig_type ?? "biped").toLowerCase();
-        rigType = type;
-        names = rigAnimations(type, req.spec.animations);
-        // Quatre pattes, ailes, serpents… passent par le v2.5 ; un bipède prend le v3.0 si ses animations sont toutes de base,
-        // sinon le v1.0, seul à porter la bibliothèque des bipèdes.
-        rigModel = type !== "biped" ? "v2.5-20260210" : names.some((n) => n.startsWith("biped:")) ? RIG_V1 : RIG_V3;
-        const rig = await run("Tripo pose le squelette", "/v3/animations/rig", { input: model.task_id, model: rigModel, rig_type: type });
-        last = rig;
-        rigTask = rig.task_id;
-        // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
-        for (const [i, name] of names.entries()) {
-          const anim = await run(`Tripo applique l'animation « ${name} » (${i + 1}/${names.length})`, "/v3/animations/retarget", {
-            input: rig.task_id,
-            animation: `preset:${name}`,
-            out_format: "glb",
-            export_with_geometry: true,
-            animate_in_place: true,
-          });
-          if (i === 0) last = anim;
-          else extras.push(await this.#fetchModel(anim, req.step));
-        }
-      }
-      const glb = await this.#fetchModel(last, req.step);
-      this.#setPending(null);
-      // Les noms montrés au jeu, sans le préfixe de la bibliothèque : « walk », pas « biped:walk ».
-      return { glb, credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, rigTask, rigModel, views };
-    } catch (err) {
-      // Le modèle repris a peut-être expiré chez Tripo : la prochaine fois, on le refait.
-      if (reused) this.#setPending(null);
-      throw err;
-    } finally {
-      if (credits) this.#spend(credits);
     }
+    // Depuis une seule image : la texture v3.5 retire l'éclairage peint dans l'image (des couleurs propres, sans ombres
+    // cuites), et le modèle regarde comme l'image, de face.
+    const single = { model: TRIPO_MODEL, texture_version: "v3.5-20260815", delight: true, orientation: "align_image" };
+    model ??= await order("Tripo fabrique le modèle", "/v3/generation/image-to-model", { image, ...single, ...quality }, async () => ({ input: await token(), ...single, ...shape }));
+    let last = model;
+    const extras: Buffer[] = [];
+    let names: string[] = [];
+    let rigType: string | undefined;
+    let rigTask: string | undefined;
+    let rigModel: string | undefined;
+    if (req.spec.rig) {
+      const input = model.task_id;
+      const check = await order("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input }, () => ({ input }));
+      if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
+      const type = String(check.output?.rig_type ?? "biped").toLowerCase();
+      rigType = type;
+      names = rigAnimations(type, req.spec.animations);
+      // Quatre pattes, ailes, serpents… passent par le v2.5 ; un bipède prend le v3.0 si ses animations sont toutes de base,
+      // sinon le v1.0, seul à porter la bibliothèque des bipèdes.
+      rigModel = type !== "biped" ? "v2.5-20260210" : names.some((n) => n.startsWith("biped:")) ? RIG_V1 : RIG_V3;
+      const rigBody = { input, model: rigModel, rig_type: type };
+      const rig = await order("Tripo pose le squelette", "/v3/animations/rig", rigBody, () => rigBody);
+      last = rig;
+      rigTask = rig.task_id;
+      // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
+      for (const [i, name] of names.entries()) {
+        const anim = await this.#retarget(order, rig.task_id, name, `Tripo applique l'animation « ${name} » (${i + 1}/${names.length})`);
+        if (i === 0) last = anim;
+        else extras.push(await this.#fetchModel(anim, req.step));
+      }
+    }
+    const glb = await this.#fetchModel(last, req.step);
+    // Fabrication réussie : ses commandes sont livrées, la prochaine fabrication en passera de nouvelles.
+    this.#journal.drop(...o.used);
+    // Les noms montrés au jeu, sans le préfixe de la bibliothèque : « walk », pas « biped:walk ».
+    return { glb, credits: o.credits, extras, animations: names.map((n) => n.replace(/^biped:/, "")), rigType, rigTask, rigModel, views };
   }
 
   /** D'autres animations sur le squelette déjà payé : si Tripo ne connaît plus la tâche (elle expire), l'appelant refait tout. */
@@ -415,55 +388,124 @@ export class RealModel3D implements Model3DPort {
     if (!key) throw new Error("Ajoutez d'abord votre clé Tripo");
     const u = this.#usage();
     if (u.credits >= this.#cap) throw new Error(`Plafond mensuel Tripo atteint (${u.credits} crédits sur ${this.#cap}) : il repart le mois prochain`);
-    let credits = 0;
+    const o: Orders = { credits: 0, used: [], reused: new Map() };
+    const order: Order = (label, path, same, body) => this.#order(key, o, req.step, label, path, same, body);
     const glbs: Buffer[] = [];
-    try {
-      for (const [i, name] of req.names.entries()) {
-        req.step(`Tripo applique l'animation « ${name} » (${i + 1}/${req.names.length})`);
-        const { task_id } = (await this.#api(key, "POST", "/v3/animations/retarget", { input: req.rigTask, animation: `preset:${name}`, out_format: "glb", export_with_geometry: true, animate_in_place: true })) as { task_id: string };
-        const deadline = Date.now() + 20 * 60_000;
-        for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
-          await new Promise((r) => setTimeout(r, wait));
-          const t = (await this.#api(key, "GET", `/v3/tasks/${task_id}`)) as TripoTask;
-          const status = String(t.status).toLowerCase();
-          if (status === "success") {
-            credits += Number(t.credits_consumed ?? 0);
-            glbs.push(await this.#fetchModel(t, req.step));
-            break;
-          }
-          if (["failed", "cancelled", "banned", "expired", "unknown"].includes(status)) throw new Error(`Tripo : l'animation « ${name} » a échoué (${t.error_msg ?? t.error_message ?? status})`);
-          if (Date.now() > deadline) throw new Error(`Tripo : l'animation « ${name} » a pris plus de 20 minutes`);
-        }
+    for (const [i, name] of req.names.entries()) {
+      const t = await this.#retarget(order, req.rigTask, name, `Tripo applique l'animation « ${name} » (${i + 1}/${req.names.length})`);
+      glbs.push(await this.#fetchModel(t, req.step));
+    }
+    this.#journal.drop(...o.used);
+    return { glbs, credits: o.credits };
+  }
+
+  #retarget(order: Order, rigTask: string, name: string, label: string): Promise<TripoTask> {
+    const body = { input: rigTask, animation: `preset:${name}`, out_format: "glb", export_with_geometry: true, animate_in_place: true };
+    return order(label, "/v3/animations/retarget", body, () => body);
+  }
+
+  /**
+   * Une commande payante, passée une seule fois (ADR-70) : son numéro est noté au carnet dès que Tripo le donne. La même
+   * demande (même empreinte `same`) reprend la commande notée : en cours, on attend sa fin ; finie, on la récupère sans
+   * repayer. Seule une commande que Tripo a oubliée ou fait échouer est repassée.
+   */
+  async #order(
+    key: string,
+    o: Orders,
+    step: (s: string) => void,
+    label: string,
+    path: string,
+    same: Record<string, unknown>,
+    body: () => Record<string, unknown> | Promise<Record<string, unknown>>,
+  ): Promise<TripoTask> {
+    const fp = orderFingerprint(path, same);
+    o.used.push(fp);
+    const known = this.#journal.get(fp);
+    if (known) {
+      step(`${label} : commande déjà passée, reprise sans repayer`);
+      try {
+        const t = await this.#poll(key, known.task, label, step);
+        if (!known.counted) this.#count(o, fp, t);
+        o.reused.set(t.task_id, fp);
+        return t;
+      } catch (err) {
+        if (!(err instanceof TripoGone)) throw err;
+        this.#journal.drop(fp);
       }
-      return { glbs, credits };
-    } finally {
-      if (credits) this.#spend(credits);
+    }
+    step(label);
+    const payload = await body();
+    let task: string;
+    try {
+      task = ((await this.#api(key, "POST", path, payload)) as { task_id: string }).task_id;
+    } catch (err) {
+      // Refusée parce qu'elle part d'une tâche reprise que Tripo a peut-être oubliée : celle-là sera refaite la prochaine fois.
+      const text = JSON.stringify(payload);
+      for (const [t, f] of o.reused) if (text.includes(t)) this.#journal.drop(f);
+      throw err;
+    }
+    this.#journal.add(fp, { task, label });
+    try {
+      const t = await this.#poll(key, task, label, step);
+      this.#count(o, fp, t);
+      return t;
+    } catch (err) {
+      // Échouée chez Tripo : rien à reprendre. Trop longue ou Tripo injoignable : la commande reste notée et sera reprise.
+      if (err instanceof TripoGone) this.#journal.drop(fp);
+      throw err;
+    }
+  }
+
+  #count(o: Orders, fp: string, t: TripoTask): void {
+    const credits = Number(t.credits_consumed ?? 0);
+    o.credits += credits;
+    if (credits) this.#spend(credits);
+    this.#journal.counted(fp);
+  }
+
+  /** Attend la fin d'une tâche ; `TripoGone` si Tripo l'a fait échouer ou ne la connaît pas (plus). */
+  async #poll(key: string, task: string, label: string, step: (s: string) => void): Promise<TripoTask> {
+    const deadline = Date.now() + 20 * 60_000;
+    for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
+      await new Promise((r) => setTimeout(r, wait));
+      let t: TripoTask;
+      try {
+        t = (await this.#api(key, "GET", `/v3/tasks/${task}`)) as TripoTask;
+      } catch (err) {
+        if (err instanceof TripoHttpError && err.status >= 400 && err.status < 500 && err.status !== 429) throw new TripoGone(`Tripo : ${label} introuvable (${err.message})`);
+        throw err;
+      }
+      const status = String(t?.status ?? "unknown").toLowerCase();
+      if (status === "success") return t;
+      if (["failed", "cancelled", "banned", "expired", "unknown"].includes(status)) throw new TripoGone(`Tripo : ${label} a échoué (${t.error_msg ?? t.error_message ?? status})`);
+      if (Date.now() > deadline) throw new Error(`Tripo : ${label} a pris plus de 20 minutes`);
+      if (typeof t.progress === "number") step(`${label} (${t.progress} %)`);
     }
   }
 
   /** La planche : Tripo dessine les quatre vues ; elles sont jugées, retouchées une fois si besoin, puis rejugées. */
   async #planche(
-    key: string,
-    run: (label: string, path: string, body: Record<string, unknown>) => Promise<TripoTask>,
-    token: string,
+    order: Order,
+    token: () => Promise<string>,
+    image: string,
     review: ViewsReview,
     step: (s: string) => void,
-  ): Promise<{ urls: Record<View, string>; images: ViewImage[] }> {
-    const task = await run("Tripo dessine la planche (face, gauche, dos, droite)", "/v3/generation/image-to-multiview", { input: token });
+  ): Promise<{ urls: Record<View, string>; images: ViewImage[]; tasks: string[] }> {
+    const task = await order("Tripo dessine la planche (face, gauche, dos, droite)", "/v3/generation/image-to-multiview", { image }, async () => ({ input: await token() }));
     let urls = viewUrls(task, null);
     let images = await this.#viewImages(urls, step);
+    const tasks = [task.task_id];
     const edits = await review(images, 1);
     if (edits.length) {
-      const edited = await run(`Tripo retouche la planche (${edits.map((e) => e.view).join(", ")})`, "/v3/generation/edit-multiview", {
-        input: task.task_id,
-        prompts: edits.map((e) => ({ view: e.view, prompt: e.prompt.slice(0, 1024) })),
-      });
+      const body = { input: task.task_id, prompts: edits.map((e) => ({ view: e.view, prompt: e.prompt.slice(0, 1024) })) };
+      const edited = await order(`Tripo retouche la planche (${edits.map((e) => e.view).join(", ")})`, "/v3/generation/edit-multiview", body, () => body);
       // Les vues non retouchées peuvent manquer dans la réponse : on garde alors celles d'avant.
       urls = viewUrls(edited, urls);
       images = await this.#viewImages(urls, step);
+      tasks.push(edited.task_id);
       await review(images, 2);
     }
-    return { urls, images };
+    return { urls, images, tasks };
   }
 
   async #viewImages(urls: Record<View, string>, step: (s: string) => void): Promise<ViewImage[]> {
@@ -485,21 +527,6 @@ export class RealModel3D implements Model3DPort {
     const res = await fetch(url, { headers: UA });
     if (!res.ok) throw new Error(`Téléchargement du modèle impossible (${res.status})`);
     return Buffer.from(await res.arrayBuffer());
-  }
-
-  #pending(): { image: string; tris: number; task: string } | null {
-    try {
-      return JSON.parse(readFileSync(join(this.#dir, "tripo", "pending.json"), "utf8")) as { image: string; tris: number; task: string };
-    } catch {
-      return null;
-    }
-  }
-
-  #setPending(p: { image: string; tris: number; task: string } | null): void {
-    const file = join(this.#dir, "tripo", "pending.json");
-    if (!p) return rmSync(file, { force: true });
-    mkdirSync(join(this.#dir, "tripo"), { recursive: true });
-    writeFileSync(file, JSON.stringify(p), "utf8");
   }
 
   async #upload(key: string, image: Buffer, ext: string): Promise<string> {
@@ -525,7 +552,7 @@ export class RealModel3D implements Model3DPort {
       /* réponse non JSON : traitée par le code HTTP */
     }
     if (res.status === 401 || res.status === 403) throw new Error("Tripo refuse la clé");
-    if (!res.ok || (payload.code !== undefined && payload.code !== 0)) throw new Error(`Tripo répond ${res.status}${payload.message ? ` : ${payload.message}` : ""}`);
+    if (!res.ok || (payload.code !== undefined && payload.code !== 0)) throw new TripoHttpError(res.status, `Tripo répond ${res.status}${payload.message ? ` : ${payload.message}` : ""}`);
     return payload.data ?? payload;
   }
 }

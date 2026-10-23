@@ -367,7 +367,7 @@ describe("Directeur artistique (ADR-43)", () => {
     expect(sb.hub.conversations.messages("bordee", sb.hub.conversations.listThreads("bordee").find((t) => t.title.startsWith("Intégrer A-0001"))!.id)[0]!.text).not.toMatch(/Sa place existe déjà/);
   }, 30_000);
 
-  it("redémarrage du hub en plein travail : la file est gardée, le chantier coupé repart en tête, le DA reprend (ADR-61)", async () => {
+  it("redémarrage du hub en plein travail : la file est gardée, le chantier coupé repart en tête, le DA reprend, la 3D aussi (ADR-61, ADR-70)", async () => {
     const { sb, fake, art } = await setup();
     sb.hub.projects.setAutonomy(sb.human(), "bordee", "workshop");
     fake.replies.push('[[ASSET]] {"name": "Grouillot", "type": "modèle 3D", "usage": "ennemi", "specs": ""} [[/ASSET]]');
@@ -397,8 +397,9 @@ describe("Directeur artistique (ADR-43)", () => {
     art.resume();
     await art.idle();
     const texts = art.state("bordee").messages.map((m) => m.text);
-    expect(texts.some((t) => /La 3D de A-0001 a été interrompue[\s\S]*Fabriquer la 3D/.test(t))).toBe(true);
-    expect(texts.slice(-2)[0]).toMatch(/chitine sombre/);
+    // La 3D repart seule : le carnet de commandes reprend ce que Tripo avait commencé, sans repayer (ADR-70).
+    expect(texts.some((t) => t.startsWith("La 3D de A-0001 a été interrompue par le redémarrage du hub : je la reprends. Ce que Tripo avait déjà fabriqué ou commencé est repris, pas repayé."))).toBe(true);
+    expect(texts.some((t) => /chitine sombre/.test(t))).toBe(true);
     expect(sb.hub.db.prepare("SELECT COUNT(*) AS n FROM art_jobs").get()).toEqual({ n: 0 });
     await Promise.all([sb.hub.tasks.idle(), sb.hub.conversations.idle()]);
   }, 30_000);

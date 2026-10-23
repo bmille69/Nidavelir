@@ -915,12 +915,13 @@ export class ArtService {
 
   /**
    * Au démarrage : ce que le Directeur artistique faisait quand le hub s'est arrêté repart (croquis, fabrication, planches,
-   * duels), et un message resté sans réponse en reçoit une. La 3D ne repart pas seule : Tripo se paie, vous la relancez.
+   * duels, 3D), et un message resté sans réponse en reçoit une. La 3D repart aussi : le carnet de commandes reprend ce que
+   * Tripo fabriquait déjà, sans le repayer (ADR-70).
    */
   resume(): void {
     const jobs = this.#db.prepare("SELECT * FROM art_jobs ORDER BY started_at").all() as { key: string; project: string; kind: string; payload_json: string }[];
     this.#db.prepare("DELETE FROM art_jobs").run();
-    const models: { project: string; id: string }[] = [];
+    const models: { project: string; id: string; retouch: boolean }[] = [];
     for (const j of jobs) {
       const p = JSON.parse(j.payload_json);
       try {
@@ -929,7 +930,7 @@ export class ArtService {
         else if (j.kind === "produce") this.#startProduce(j.project, p.id);
         else if (j.kind === "board") this.#startBoard(j.project, p);
         else if (j.kind === "duel") this.#startDuel(j.project, p);
-        else if (j.kind === "model") models.push({ project: j.project, id: p.id });
+        else if (j.kind === "model") models.push({ project: j.project, id: p.id, retouch: p.retouch === true });
       } catch {
         /* projet retiré entre-temps */
       }
@@ -941,7 +942,12 @@ export class ArtService {
     // Après la réponse en attente, sinon ce mot passerait pour elle.
     for (const m of models) {
       const after = (this.#queue.get(m.project) ?? Promise.resolve()).catch(() => {});
-      this.#track(after.then(() => void this.#insert(m.project, "art", `La 3D de ${m.id} a été interrompue par le redémarrage du hub. Je ne la relance pas seule, car Tripo se paie : « Fabriquer la 3D » sur sa fiche la reprend.`, null)));
+      this.#track(
+        after.then(() => {
+          this.#insert(m.project, "art", `La 3D de ${m.id} a été interrompue par le redémarrage du hub : je la reprends. Ce que Tripo avait déjà fabriqué ou commencé est repris, pas repayé.`, null);
+          this.#startModel(m.project, m.id, m.retouch);
+        }),
+      );
     }
   }
 
@@ -1552,7 +1558,7 @@ export class ArtService {
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: retouch ? "Reprise de la scène de l'atelier" : "Préparation de la 3D" });
     this.#generating.set(project, gens);
-    const job = this.#jobStart(project, "model", { id }, `${project}/model/${id}`);
+    const job = this.#jobStart(project, "model", { id, retouch }, `${project}/model/${id}`);
     this.#track(
       this.#produceModel(project, id, retouch)
         .finally(() => (gens.delete(id), this.#jobEnd(job)))
