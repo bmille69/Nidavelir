@@ -34,6 +34,7 @@ import { QualityService } from "./quality/quality-service.ts";
 import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
+import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
 import { SkillService } from "./skills/skill-service.ts";
 import { NotificationService } from "./remote/notifications.ts";
 import { RemoteService, type Runner } from "./remote/tailscale.ts";
@@ -64,6 +65,8 @@ export type HubOptions = {
   conceptWeb?: boolean;
   /** Vérifications du hub avant fusion : tests du jeu et lancement (ADR-32). Absent : aucune. */
   checker?: CheckerPort;
+  /** La manette du testeur : il joue au jeu du chantier dans un navigateur invisible (ADR-69). Absente : il ne joue pas. */
+  playDriver?: PlayDriver;
   /** Modèle par défaut de chaque agent, tant que vous n'en choisissez pas un dans le studio (ADR-37). */
   models?: Partial<Record<ModelRole, string | undefined>>;
   /** Outils de l'Atelier de démontage (ADR-40). Défaut : les vrais, téléchargés à votre demande. */
@@ -204,6 +207,9 @@ export function createHub(options: HubOptions): Hub {
       return { summary: checksForTester(r), screenshot: r.launch.screenshot ?? null };
     };
   }
+  // Le testeur joue au jeu de la copie avant de donner son avis (ADR-69) ; captures rangées avec celles du hub.
+  const playtest = options.playDriver ? new PlaytestService({ driver: options.playDriver, shotsDir: join(dataDir, "shots"), journal }) : null;
+  tasks.playtest = playtest;
   const quality = new QualityService({ db, clock, journal, projects, tasks, vcs, checks });
   quality.onRated = (project, task, r) => {
     // Un 👍 sans un mot n'apprend rien ; un 👎 ou un commentaire, si.
@@ -373,6 +379,7 @@ export function createHub(options: HubOptions): Hub {
       if (closed) return;
       closed = true;
       void previews.stopAll();
+      void playtest?.stopAll();
       autopilot?.close();
       imagegen.close();
       db.close();

@@ -425,6 +425,12 @@ function ReviewCard(props: {
             {{ pass: "tout est conforme", pass_with_notes: "conforme, avec remarques", fail: "problèmes trouvés" }[v.verdict]}
           </strong>
           <p className="small">{v.summary_simple}</p>
+          {v.playtest && (
+            <p className="small">
+              {v.playtest.played ? <>▶ Essayé en jouant : {v.playtest.summary}</> : <span className="muted">Le testeur n'a pas joué au jeu : vérifié par le code et les tests.</span>}
+              {v.playtest.unverified.length > 0 && <span className="muted"> — pas vérifié en jeu : {v.playtest.unverified.join(" ; ")}</span>}
+            </p>
+          )}
           <ul className="small">
             {v.checks.map((c) => (
               <li key={c.criterion}>

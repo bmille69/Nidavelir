@@ -30,6 +30,7 @@ import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
 import { median, taskProgress, touchedFiles } from "../executor/progress.ts";
+import { PlayRequest } from "../quality/playtest.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -748,6 +749,17 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
           return hub.tasks.agentPreTool(run, token(req), body.tool_name, body.tool_input, body.cwd);
         } catch (err) {
           return reply.code(403).send({ decision: "deny", reason: (err as Error).message });
+        }
+      });
+      // La manette du testeur (ADR-69) : seulement pour un run de vérification de chantier.
+      agent.post("/runs/:run/play", async (req, reply) => {
+        const { run } = req.params as { run: string };
+        const parsed = PlayRequest.safeParse(req.body);
+        if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues.map((i) => `${i.path.join(".")} : ${i.message}`).join(" ; ") });
+        try {
+          return await hub.tasks.agentPlay(run, token(req), parsed.data);
+        } catch (err) {
+          return reply.code(403).send({ error: (err as Error).message });
         }
       });
       agent.post("/runs/:run/permission", async (req, reply) => {

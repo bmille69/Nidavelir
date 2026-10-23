@@ -20,6 +20,9 @@ export type PolicyInput = {
 /** Nom du plugin qui porte les compétences fournies par le hub à un run. */
 export const STUDIO_PLUGIN = "studio-skills";
 
+/** Outil « jouer » du relais MCP du studio, tel que Claude Code le nomme (ADR-69). */
+export const PLAY_TOOL = "mcp__studio__jouer";
+
 /** Outils intégrés que l'agent peut recevoir (vérifié : ADR-15). */
 export const TOOLS_BY_MODE: Record<RunMode, string[]> = {
   plan: ["Read", "Grep", "Glob", "Bash"],
@@ -182,6 +185,8 @@ export class PolicyEngine {
     }
     // Outil interne de Claude Code pour rendre la réponse au format --json-schema : aucun effet (constaté le 14/10/2026).
     if (tool === "StructuredOutput") return allow("rendu du résultat final");
+    // La manette du testeur (ADR-69) : le hub ouvre lui-même le jeu de la copie ; aucune écriture, aucune autre adresse.
+    if (tool === PLAY_TOOL) return this.#mode === "verify" ? allow("le testeur joue au jeu") : deny("seul le testeur joue au jeu");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);
     if (WRITE_TOOLS.has(tool)) return this.#write(tool, input);
     if (tool === "Bash") return this.#bash(String(input.command ?? ""), cwd);

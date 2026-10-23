@@ -1,3 +1,4 @@
+import type { PlayRequest, PlayResult, PlaytestService } from "../quality/playtest.ts";
 import type { SkillService } from "../skills/skill-service.ts";
 import type { UsageService } from "../usage/usage-service.ts";
 import {
@@ -121,6 +122,8 @@ export class TaskService {
   gameState: ((project: string) => string | null) | null = null;
   /** Vérifications du hub entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33). */
   beforeVerify: ((task: Task) => Promise<HubChecks | null>) | null = null;
+  /** La manette du testeur (ADR-69) : absente, le testeur ne joue pas. */
+  playtest: PlaytestService | null = null;
   /** Prévenu quand le projet est libre et qu'aucun chantier n'attend son tour (séance autonome, ADR-31). */
   onQueueEmpty: ((project: string) => unknown) | null = null;
   /** Bibliothèque de compétences (ADR-29). */
@@ -574,7 +577,7 @@ export class TaskService {
         const hubChecks = await Promise.resolve(this.beforeVerify?.(this.get(project, id)) ?? null).catch(() => null);
         // Vérification QA automatique, en lecture seule.
         this.#spawn(this.get(project, id), "verify", new PolicyEngine({ mode: "verify", root: task.worktree!, plan, readable: this.#readable(task) }), {
-          systemPrompt: verificationSystemPrompt(ctx),
+          systemPrompt: verificationSystemPrompt(ctx, this.playtest !== null && hasDevScript(task.worktree!)),
           prompt: verificationPrompt(task, plan, decisions, patch, report, hubChecks),
           jsonSchema: VERIFY_SCHEMA,
           onResult: (v) => {
@@ -773,6 +776,13 @@ export class TaskService {
     return d;
   }
 
+  /** L'outil « jouer » du testeur (ADR-69) : seulement pendant sa vérification, dans la copie du chantier. */
+  async agentPlay(runId: string, token: string, req: PlayRequest): Promise<PlayResult> {
+    const run = this.#authRun(runId, token);
+    if (run.kind !== "verify" || !this.playtest) throw new TaskError("Seul le testeur peut jouer au jeu");
+    return this.playtest.handle({ id: run.id, project: run.project, task: run.task, cwd: run.root }, req);
+  }
+
   /** Appelé par le gardien pour une action hors plan : attend votre décision (refus si délai dépassé). */
   async agentPermission(runId: string, token: string, tool: string, input: Record<string, unknown>): Promise<{ behavior: "allow" | "deny"; message?: string }> {
     const run = this.#authRun(runId, token);
@@ -873,6 +883,7 @@ export class TaskService {
       let outcome: RunOutcome | null = null;
       try {
         const runDir = join(this.#opts.dataDir, "runs", id);
+        const play = kind === "verify" && this.playtest !== null && hasDevScript(task.worktree!);
         // Compétences du studio (ADR-29) : un plugin propre au run, seules ces skills sont permises.
         const plugin = this.skills?.pluginFor(kind === "verify" ? "qa" : "developer", task.project, runDir) ?? null;
         if (plugin) this.#event(run, "info", `Compétences disponibles : ${plugin.names.map((n) => n.split(":")[1]).join(", ")}`);
@@ -890,7 +901,9 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           jsonSchema: spec.jsonSchema,
           tools: plugin ? [...TOOLS_BY_MODE[kind], "Skill"] : TOOLS_BY_MODE[kind],
           pluginDir: plugin?.dir,
-          maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: 30 }[kind],
+          play,
+          // Jouer prend des tours : un paquet d'actions, puis une photo, puis un autre paquet (ADR-69).
+          maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: play ? 60 : 30 }[kind],
           big: isBigTask(task),
           bridge,
           bridgeUrl: `${this.#opts.agentBaseUrl()}/${id}`,
@@ -909,6 +922,8 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
         if (status === "failed") spec.onFailure();
       } finally {
         for (const resolve of run.waiting.values()) resolve(false);
+        // Partie laissée ouverte par le testeur : navigateur et serveur du jeu fermés.
+        await this.playtest?.closeRun(id).catch(() => {});
         this.#db
           .prepare("UPDATE runs SET status = ?, finished_at = ?, cost_usd = ?, error = ?, result_json = ? WHERE project = ? AND id = ?")
           .run(status, this.#clock.now(), cost, error, outcome ? JSON.stringify(outcome) : null, task.project, id);
@@ -1059,6 +1074,15 @@ function summarizeInput(input: Record<string, unknown>): Record<string, unknown>
     out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}…` : v;
   }
   return out;
+}
+
+/** Jeu web lançable par la manette du testeur (même condition que « ▶ Essayer »). */
+function hasDevScript(root: string): boolean {
+  try {
+    return Boolean((JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> }).scripts?.dev);
+  } catch {
+    return false;
+  }
 }
 
 /** Scripts de vérification du projet (package.json), dans l'ordre du plus rapide au plus complet. */

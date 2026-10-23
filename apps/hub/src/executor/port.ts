@@ -27,6 +27,8 @@ export type ExecRequest = {
   model?: string;
   /** Plugin portant les compétences du studio pour ce run (ADR-29), chargé par --plugin-dir. */
   pluginDir?: string;
+  /** Le testeur reçoit l'outil « jouer » du relais MCP (ADR-69). */
+  play?: boolean;
   /** Pour les exécuteurs en processus (tests). */
   bridge: AgentBridge;
   /** Pour Claude Code : URL de base des routes /api/agent/runs/:id et jeton du run. */

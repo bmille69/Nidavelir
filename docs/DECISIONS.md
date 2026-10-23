@@ -824,3 +824,36 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
 - **Téléphone** : le bandeau du moniteur disparaît des pages du projet. Une pastille de l'en-tête (« T-0074 +3 », « Pause → 13:40 ») ouvre le moniteur complet dans une feuille du bas, avec un lien vers le Pilotage. Les messages passent à 16 px, plus larges et plus aérés. « Concevoir » devient une icône et le nom du projet s'abrège.
 - Vérifié : `pilotage.e2e.ts` (PC 1400×900 et téléphone 390×844, captures examinées) ; les 32 autres tests navigateur sont verts. Celui du Concepteur (`conception.e2e.ts`) échouait déjà avec le site d'avant (expire au bout de 25 s) : il est à remettre à jour depuis l'ADR-57.
 - **Complément du 23/10/2026 (ADR-31)** : en atelier ou en autonomie, un chantier refusé par le testeur est corrigé **deux fois** automatiquement (trois vérifications, `VERIFY_ROUNDS` dans `autopilot.ts`) avant d'attendre votre mot. Avant, il s'arrêtait dès le 2e refus. Choisi par l'utilisateur : la file s'arrêtait trop souvent.
+
+### ADR-69 : la manette du testeur, il joue au jeu avant de donner son avis
+**Statut** : Retenue le 23/10/2026, après l'analyse d'OhMyGame (WhiteTowerAI/ohmygame, outil `game_use`). C'était notre plus gros manque : aucun agent ne jouait au jeu. Le lancement de 6 s et la photo de l'écran de départ ne prouvent pas que le jeu se joue. Choix de l'utilisateur : « ok vas-y » (n°1 des propositions).
+- **L'outil `jouer`** (relais MCP du studio, `bridge/gate.mjs`) existe seulement pour le testeur (`STUDIO_PLAY=1`). Il n'est donné que si la copie a un script `dev`, comme « ▶ Essayer ».
+  - Le gardien l'autorise en vérification et le refuse au développeur et au plan (`PLAY_TOOL`).
+  - La route `POST /api/agent/runs/:run/play` vérifie le jeton du run et refuse tout run qui n'est pas une vérification.
+- **Ce qu'il fait** (`quality/playtest.ts`) : le hub lance le jeu de la **copie du chantier** (`npm run dev`, instance de prévisualisation à part) dans Edge invisible, via playwright-core.
+  - `open` : écran `pc` (1280×720) ou `phone` (390×844, tactile, le jeu redémarre).
+  - `act` : jusqu'à 20 étapes d'affilée. Clic par texte, sélecteur ou coordonnées (toucher au téléphone), touche maintenue (`hold_ms` ≤ 5 s), texte, attente ≤ 5 s, pont de test.
+  - `capture` : photo JPEG, rendue en image au modèle. 15 au plus par chantier.
+  - `close` ferme la partie.
+- **Après chaque appel**, sans le demander, le testeur reçoit : le texte visible, les boutons avec leur position, les zones de jeu (canvas), les **nouvelles** erreurs de la page, les fichiers non chargés, et l'état exposé par le jeu.
+- **Pont de test** : `window.__STUDIO_TEST__ = { snapshot, reset, setSeed, step }`, seulement avec `?studioTest=1` dans l'adresse. Le développeur peut l'ajouter quand un état ne se voit pas bien à l'écran (score, vies) ; ce n'est pas obligatoire. Le testeur doit quand même jouer avec de vraies touches.
+- **Sécurité** :
+  - la manette n'ouvre que l'adresse du jeu : pas de `//`, pas de `:`, origine vérifiée ;
+  - fenêtres surgissantes fermées, et retour au jeu si la page part ailleurs ;
+  - une seule demande à la fois par run ;
+  - la partie est fermée à la fin du run, même si le testeur l'oublie, ou après 10 min sans action ;
+  - le hub ne rejoue rien : aucune écriture dans le jeu.
+- **Consignes du testeur** (`PLAYTEST_RULES`, d'après la méthode `game-playtest` d'OhMyGame) :
+  - jouer ce que la consigne change (y entrer, voir l'effet, en sortir), puis l'action principale et une défaite ou une remise à zéro ;
+  - rejouer au téléphone si l'affichage est touché ;
+  - examiner chaque photo ; 3 à 8 appels en général ;
+  - « pas de réflexes » : chaque paquet est joué d'un bloc ;
+  - **ne jamais dire avoir vérifié en jouant ce qui n'a pas été joué**.
+  - Ses tours passent de 30 à 60 quand il a la manette.
+- **Compte rendu** : le champ `playtest` du verdict (`played`, `summary`, `unverified`) donne dans la discussion « ▶ Essayé en jouant : … » et « Pas vérifié en jeu : … ». S'il n'a pas joué, le compte rendu le dit. Ces lignes figurent aussi sur la fiche du chantier. Le journal note `playtest.done` (actions, photos).
+- **Limites assumées** : comme chez OhMyGame, pas de jeu en temps réel au réflexe ; jeux web seulement ; le jugement visuel est celui du modèle. Différence avec eux : chez nous, c'est un agent **distinct** du développeur qui joue, et les contrôles du hub (ADR-32) restent des faits mesurés.
+- **Vérifié** :
+  - `playtest.test.ts` : 8 tests (service, relais MCP réel face à un faux hub, gardien, parcours en atelier) ;
+  - `playtest.e2e.ts` : vrai Edge sur un petit jeu lancé par `npm run dev`. Clic sur « Jouer », flèche maintenue, score, erreur vue, pont reset, téléphone, serveur arrêté à la fin. Photos examinées ;
+  - un vrai run Claude Code (Haiku) avec les arguments du hub : il a vu l'outil, joué, décrit la photo (« carré bleu clair, à droite ») et lu x = 340, pour 0,0035 $.
+  - Pas encore vu sur un vrai chantier de Bordée : ce sera le prochain chantier qui passe au testeur.

@@ -131,5 +131,7 @@ export const VerificationOutput = z.object({
   hidden_assumptions: z.array(z.string().max(300)).max(10),
   regressions: z.array(z.string().max(300)).max(10),
   recommendation: z.enum(["merge", "request_changes", "abandon"]),
+  /** Le testeur a-t-il joué au jeu (ADR-69) : ce qu'il a joué et vu, ce qui reste non vérifié en jeu. */
+  playtest: z.object({ played: z.boolean(), summary: z.string().max(600), unverified: z.array(z.string().max(200)).max(6).default([]) }).optional(),
 });
 export type VerificationOutput = z.infer<typeof VerificationOutput>;

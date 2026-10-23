@@ -230,6 +230,10 @@ export class Autopilot {
     if (report?.summary_simple) lines.push("", `Ce qui a changé : ${report.summary_simple}`);
     if (verdict) {
       lines.push("", `Avis du testeur : ${verdict.summary_simple}`);
+      // Ce qu'il a vérifié en jouant, et ce qu'il n'a pas pu vérifier (ADR-69) : jamais présenté comme joué s'il ne l'a pas fait.
+      if (verdict.playtest?.played) lines.push(`  ▶ Essayé en jouant : ${verdict.playtest.summary}`);
+      else if (verdict.playtest) lines.push("  Le testeur n'a pas joué au jeu cette fois : il a vérifié par le code et les tests.");
+      if (verdict.playtest?.unverified.length) lines.push(`  Pas vérifié en jeu : ${verdict.playtest.unverified.slice(0, 3).join(" ; ")}`);
       for (const c of verdict.checks.filter((c) => c.result === "fail").slice(0, 4)) lines.push(`  ✗ ${c.criterion}`);
       for (const r of verdict.regressions.slice(0, 3)) lines.push(`  ⚠ ${r}`);
     }

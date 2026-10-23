@@ -9,6 +9,7 @@ import { WindowsFolderPicker } from "./projects/folder-picker.ts";
 import { defaultRegistryOptions } from "./projects/project-registry.ts";
 import { buildServer } from "./server/http.ts";
 import { RealChecker } from "./quality/checks.ts";
+import { RealPlayDriver } from "./quality/playtest.ts";
 
 const hubRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const dataDir = process.env.STUDIO_DATA_DIR ? resolve(process.env.STUDIO_DATA_DIR) : join(hubRoot, ".data");
@@ -41,6 +42,8 @@ const hub = createHub({
   remotePort: port,
   // Avant chaque fusion automatique : tests du jeu et lancement dans un navigateur invisible (ADR-32).
   checker: new RealChecker({ workDir: dataDir }),
+  // Le testeur joue au jeu du chantier avant de donner son avis (ADR-69).
+  playDriver: new RealPlayDriver({ workDir: dataDir }),
   usageProbe: async () => {
     await cli.call({ systemPrompt: "Réponds uniquement : ok", prompt: "ok", model: "haiku", tag: { agent: "compteur" } });
   },

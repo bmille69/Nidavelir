@@ -78,7 +78,11 @@ export class ClaudeCodeExecutor implements ExecutorPort {
     );
     writeFileSync(
       mcp,
-      JSON.stringify({ mcpServers: { studio: { type: "stdio", command: node, args: [join(BRIDGE, "gate.mjs"), req.bridgeUrl], env: { STUDIO_RUN_TOKEN: req.token } } } }, null, 2),
+      JSON.stringify(
+        { mcpServers: { studio: { type: "stdio", command: node, args: [join(BRIDGE, "gate.mjs"), req.bridgeUrl], env: { STUDIO_RUN_TOKEN: req.token, ...(req.play ? { STUDIO_PLAY: "1" } : {}) } } } },
+        null,
+        2,
+      ),
     );
     writeFileSync(system, req.systemPrompt, "utf8");
     const models = this.#models();
@@ -181,9 +185,22 @@ export function describeTool(name: string, input: Record<string, unknown>): stri
       return `Liste ${String(input.pattern ?? "")}`;
     case "Bash":
       return `Commande : ${String(input.command ?? "")}`;
+    case "mcp__studio__jouer":
+      return describePlay(input);
     default:
       return `${name}`;
   }
+}
+
+/** La manette du testeur en une ligne, pour « En direct » (ADR-69). */
+function describePlay(input: Record<string, unknown>): string {
+  const screen = input.screen === "phone" ? " (téléphone)" : "";
+  if (input.action === "open") return `Lance le jeu pour y jouer${screen}`;
+  if (input.action === "capture") return "Prend une photo du jeu";
+  if (input.action === "close") return "Ferme la partie";
+  const steps = Array.isArray(input.steps) ? (input.steps as Record<string, unknown>[]) : [];
+  const keys = steps.flatMap((s) => (s.do === "press" ? [String(s.key)] : s.do === "click" ? [s.text ? `clic « ${String(s.text)} »` : "clic"] : []));
+  return `Joue au jeu${screen} : ${steps.length} action(s)${keys.length ? ` (${[...new Set(keys)].slice(0, 6).join(", ")})` : ""}`;
 }
 
 /** Délai entre le résultat de Claude Code et la fermeture forcée de ce qu'il a laissé tourner. */
