@@ -1681,13 +1681,15 @@ export class ArtService {
       // Les dernières remarques du validateur suivent la scène gardée (finition reprise, ou animations changées).
       const base = previous ?? (onlyAnimations ? kept : null);
       let remarks: string[] = base?.verdict ? (base.verdict.points.length ? base.verdict.points : [base.verdict.summary]) : [];
-      // Un atelier réglé sous Fable reçoit Fable en renfort pour une passe de plus si la finition résiste (ADR-62).
+      // Un atelier réglé sous un autre modèle que Fable a une passe de plus si la finition résiste (ADR-62). Fable n'y vient en
+      // renfort que pour un personnage animé (ADR-67) : décors, kits et objets gardent le modèle réglé, ~10 fois moins cher.
       const workshopModel = this.workshopModel?.() ?? "fable";
       const last = MODEL_ROUNDS + (workshopModel !== "fable" ? 1 : 0);
+      const hero = Boolean(spec.rig);
       progress.rounds = last;
       for (let pass = 1; pass <= last; pass++) {
         progress.round = pass;
-        const renfort = pass > MODEL_ROUNDS;
+        const renfort = pass > MODEL_ROUNDS && hero;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress, renfort);
         progress.stage = "controle";
         progress.note = null;
@@ -1755,7 +1757,9 @@ export class ArtService {
               ? "Je le fais intégrer dans le jeu."
               : retry
                 ? pass + 1 > MODEL_ROUNDS
-                  ? "La finition résiste : Fable, le modèle le plus fin, reprend la scène en renfort pour une dernière passe, sans repayer Tripo."
+                  ? !hero
+                    ? "La finition résiste : l'artisan reprend la scène pour une dernière passe, sans repayer Tripo."
+                    : "La finition résiste : Fable, le modèle le plus fin, reprend la scène en renfort pour une dernière passe, sans repayer Tripo."
                   : "La forme est bonne : l'artisan reprend la finition avec ces remarques, sans repayer Tripo."
                 : swap
                   ? "Le reste attend la bonne animation : dites-le au Directeur artistique (ci-dessus), et le modèle sera refait pour 10 crédits Tripo par animation."

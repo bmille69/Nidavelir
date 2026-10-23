@@ -950,7 +950,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model3d: { simple: true }, model: { source: null, workshop: "Caisse en bois biseautée." } });
   }, 30_000);
 
-  it("atelier 3D sous Opus : si la finition résiste deux passes, Fable vient en renfort pour une dernière (ADR-62)", async () => {
+  it("atelier 3D sous Opus : un décor dont la finition résiste deux passes a une dernière passe sous Opus, sans renfort Fable (ADR-62, ADR-67)", async () => {
     const { sb, fake, m3d, art } = await setupLocal();
     art.installBlender(sb.human());
     art.workshopModel = () => "opus";
@@ -967,8 +967,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     fake.replies.push('[[ASSET]] {"name": "Muret", "type": "décor", "usage": "bord de rampe", "specs": "1 unité = 1 px, hauteur 48 px"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 48 | triangles 500 | simple]]');
     art.send(sb.human(), "bordee", "Un muret");
     await art.idle();
-    expect([...new Set(roles)]).toEqual(["artisan", "artisan_renfort"]);
-    expect(roles.filter((r) => r === "artisan_renfort")).toHaveLength(2);
+    expect([...new Set(roles)]).toEqual(["artisan"]);
     // Le validateur lit le contrôle géométrique : ce que les photos ne montrent pas (ADR-63).
     const judged = fake.calls.filter((c) => /VALIDATEUR ARTISTIQUE/.test(c.systemPrompt) && /MODÈLE 3D/.test(c.systemPrompt));
     expect(judged[0]!.prompt).toMatch(/Contrôle géométrique : 3 face\(s\) à l'envers, 1 petit\(s\) morceau\(x\) détaché\(s\) \(Muret\)/);
@@ -976,7 +975,7 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(judged[0]!.systemPrompt).toMatch(/CONTRÔLE GÉOMÉTRIQUE/);
     expect(fake.calls.find((c) => /ARTISAN 3D/.test(c.systemPrompt))!.systemPrompt).toMatch(/Blender 4\.5 LTS[\s\S]*reparer\(\)/);
     const texts = art.state("bordee").messages.map((m) => m.text);
-    expect(texts.some((t) => /passe 2 sur 3\)[\s\S]*Fable, le modèle le plus fin, reprend la scène en renfort/.test(t))).toBe(true);
+    expect(texts.some((t) => /passe 2 sur 3\)[\s\S]*l'artisan reprend la scène pour une dernière passe/.test(t))).toBe(true);
     expect(texts.some((t) => /conforme\*\* \(passe 3\)[\s\S]*px × /.test(t))).toBe(true);
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
   }, 30_000);

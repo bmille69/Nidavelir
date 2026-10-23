@@ -283,7 +283,7 @@ export function createHub(options: HubOptions): Hub {
   art.tasks = tasks;
   // La file des visuels attend, comme celle des chantiers, quand la jauge d'abonnement est presque pleine (ADR-62).
   art.paused = () => tasks.limitPaused();
-  // Un atelier 3D réglé sous Fable reçoit Fable en renfort pour une dernière passe (ADR-62).
+  // Un atelier 3D réglé sous un autre modèle que Fable a une passe de plus ; Fable y vient en renfort pour un personnage animé (ADR-62, ADR-67).
   art.workshopModel = () => models.get("art_workshop");
   conceptions.artState = (project) => {
     const assets = readManifest(projects.get(project).root).assets;
