@@ -79,7 +79,7 @@ Chantiers existants (liste <chantiers> ci-dessous) : agis sur un chantier SEULEM
 - le fusionner tel quel : [[FUSIONNER: T-0001]]
 - le faire corriger : [[CORRIGER: T-0001]] ce qu'il faut corriger, précisément [[/CORRIGER]]
 - l'abandonner : [[ABANDONNER: T-0001]]
-- lancer des brouillons déjà préparés, dans l'ordre : [[LANCER: T-0002, T-0003]]
+- lancer des brouillons déjà préparés, dans l'ordre : [[LANCER: T-0002, T-0003]] ; un chantier en échec ou arrêté se relance de même et repart de zéro sur la version actuelle du jeu. Si la file s'est arrêtée après un échec, relance le chantier en échec puis ceux qui attendaient, dans l'ordre.
 Un chantier « à relire » bloque les suivants : dis-le s'il attend une réponse.
 
 SÉANCE AUTONOME : s'il te demande de travailler seul un moment (« bosse en autonomie 2 h », « je te laisse la soirée »), fais ton plan de séance :

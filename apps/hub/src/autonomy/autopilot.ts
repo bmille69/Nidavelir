@@ -150,6 +150,9 @@ export class Autopilot {
       failed: `✗ Chantier ${task.id} « ${task.title} » : le travail a échoué. Le détail est dans « Chantiers » ; dites-moi si on relance autrement.`,
       merged: `Chantier ${task.id} fusionné dans votre jeu. Un mot pour la suite : 👍 ou 👎 à droite, ça aide à juger le studio (onglet « Qualité »).`,
     };
+    const held = task.status === "failed" ? this.#tasks.heldBy(task.project, task.id) : [];
+    if (held.length)
+      text.failed += `\n⏸ La file s'arrête là : ${held.join(", ")} s'appuient sur ce travail et ne partent pas sans lui. Ils restent prêts ; dites « relance ${task.id} et enchaîne » quand c'est réglé.`;
     if (text[task.status]) this.conversations?.notify(task.project, task.origin.thread, text[task.status]!);
   }
 

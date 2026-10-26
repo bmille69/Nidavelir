@@ -14,7 +14,7 @@ import {
   type TaskStatus,
 } from "@studio/contracts";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ApprovalService } from "../approvals/approval-service.ts";
@@ -133,6 +133,8 @@ export class TaskService {
   usage: UsageService | null = null;
   /** File en pause jusqu'à la remise à zéro de l'abonnement, par projet. */
   readonly #paused = new Map<string, NodeJS.Timeout>();
+  /** Chantiers retirés de la file par l'échec de « projet/T-xxxx » (ADR-77). */
+  readonly #held = new Map<string, string[]>();
   readonly #finished = new Map<string, RunEvent[]>();
   readonly #background = new Set<Promise<void>>();
 
@@ -478,11 +480,22 @@ export class TaskService {
    * Si le projet est occupé, le chantier attend son tour et partira tout seul.
    */
   async launch(project: string, id: string): Promise<{ task: Task; after: Task | null }> {
-    const task = this.get(project, id);
+    let task = this.get(project, id);
+    // Relancer un chantier en échec ou arrêté : il repart de zéro, sur la version actuelle du jeu (ADR-77).
+    if (["failed", "cancelled"].includes(task.status) && ![...this.#active.values()].some((r) => r.task === id && r.project === project)) {
+      await this.#cleanup(task);
+      task = this.#update(task, { status: "draft", base_commit: null, branch: null, worktree: null, plan: null, queued_at: null });
+      this.#log(project, "task.reset", id, {});
+    }
     if (task.status !== "draft") throw new TaskError(`Impossible de lancer depuis le statut « ${task.status} »`);
     const after = this.busy(project, id) ?? this.queued(project).find((t) => t.id !== id) ?? null;
     if (after) return { task: task.queued_at ? task : this.#update(task, { queued_at: this.#clock.now() }), after };
     return { task: await this.startDirect(project, id, "workshop"), after: null };
+  }
+
+  /** Les chantiers que l'échec de celui-ci a retirés de la file. */
+  heldBy(project: string, id: string): string[] {
+    return this.#held.get(`${project}/${id}`) ?? [];
   }
 
   /** Retire un chantier de la file : il redevient un brouillon à lancer vous-même. */
@@ -567,6 +580,11 @@ export class TaskService {
         const report: ExecutionReportOutput = parsed.success
           ? parsed.data
           : { outcome: "partial", summary: r.text.slice(0, 2000), summary_simple: "Le développeur n'a pas rendu de rapport structuré.", deviations: [], open_issues: [], how_to_test: [] };
+        // Ce que Godot a écrit seul dans studio/ (copie partie d'avant le .gdignore) : ni du travail, ni une faute (ADR-77).
+        for (const line of (await this.#vcs.status(task.worktree!)).split("\n")) {
+          const path = line.startsWith("?? ") ? line.slice(3).trim() : "";
+          if (/^studio\/.*\.(import|uid)$/i.test(path)) rmSync(join(task.worktree!, path), { force: true });
+        }
         await this.#vcs.commitAll(task.worktree!, `studio: ${task.id} — ${task.title} (plan ${plan.id})`);
         const repo = this.#projects.get(project).root;
         const { files, patch } = await this.#vcs.diff(repo, task.base_commit!, task.branch!);
@@ -1006,6 +1024,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
   async #ensureWorktree(task: Task): Promise<Task> {
     if (task.worktree && existsSync(task.worktree)) return task;
     const repo = this.#projects.get(task.project).root;
+    await this.#godotIgnoresStudio(repo);
     const base = await this.#vcs.head(repo);
     const branch = `studio/${task.id}`;
     const path = join(this.#opts.dataDir, "worktrees", task.project, task.id);
@@ -1015,6 +1034,17 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
     const linked = await linkSharedDirs(repo, path, this.#vcs);
     this.#log(task.project, "worktree.created", task.id, { path, branch, base, linked });
     return this.#update(task, { base_commit: base, branch, worktree: path });
+  }
+
+  /**
+   * Jeu Godot : studio/ (images du DA, captures…) est au hub. Sans `.gdignore`, Godot importe chaque image et écrit un
+   * `.import` à côté, dans une zone interdite aux agents : le chantier échouait (T-0002 de Néon Saloon, ADR-77).
+   */
+  async #godotIgnoresStudio(repo: string): Promise<void> {
+    const marker = join(repo, "studio", ".gdignore");
+    if (!isGodot(repo) || !existsSync(join(repo, "studio")) || existsSync(marker)) return;
+    writeFileSync(marker, "", "utf8");
+    await this.#vcs.commitPaths(repo, ["studio/.gdignore"], "studio: Godot n'importe pas le dossier du studio");
   }
 
   async #cleanup(task: Task): Promise<void> {
@@ -1045,6 +1075,15 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
     const next = Task.parse({ ...task, ...patch, updated_at: this.#clock.now() });
     this.#db.prepare("UPDATE tasks SET status = ?, data_json = ?, updated_at = ? WHERE project = ? AND id = ?").run(next.status, JSON.stringify(next), next.updated_at, next.project, next.id);
     if (next.status !== task.status) {
+      // Un chantier de la file échoue : les suivants s'appuient sur lui, la file s'arrête là (ADR-77).
+      if (next.status === "failed" && ACTIVE.includes(task.status)) {
+        const held = this.queued(next.project);
+        for (const t of held) this.#update(t, { queued_at: null });
+        if (held.length) {
+          this.#held.set(`${next.project}/${next.id}`, held.map((t) => t.id));
+          this.#log(next.project, "queue.held", next.id, { tasks: held.map((t) => t.id) });
+        }
+      }
       try {
         this.onStatus?.(next);
       } catch {

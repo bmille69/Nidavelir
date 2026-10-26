@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHub, type Hub } from "../src/hub.ts";
@@ -428,6 +428,52 @@ describe("atelier (par défaut)", () => {
     expect(first!.status).toBe("merged");
     expect(second).toMatchObject({ status: "draft", queued_at: expect.any(String) });
     expect(hub.journal.list({ subject: second!.id, latest: true }).find((e) => e.type === "queue.paused")).toMatchObject({ payload: { until: "2026-10-13T14:00:00.000Z", window: "five_hour" } });
+  });
+
+  it("ADR-77 : un chantier de la file échoue, les suivants l'attendent ; un jeu Godot n'importe pas studio/", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    const root = hub.projects.get(P).root;
+    writeFileSync(join(root, "project.godot"), "config_version=5\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "godot");
+    exec.scripts.execute.push(async (t) => {
+      // Écrits par un outil (Godot) hors du contrôle des outils de l'agent. Un .import du DA : effacé sans faute.
+      mkdirSync(join(t.req.cwd, "studio", "art", "choix"), { recursive: true });
+      writeFileSync(join(t.req.cwd, "studio", "art", "choix", "m1.png.import"), "[remap]\n");
+      await t.write("src/degats.ts", "export const pv = 10;\n");
+      // Autre chose dans studio/ : le chantier échoue.
+      writeFileSync(join(t.req.cwd, "studio", "BRIEF.md"), "réécrit\n");
+      return REPORT;
+    });
+    fake.replies.push("Deux étapes.\n[[CHANTIER: Dégâts]]\nObjectif : des dégâts.\n[[/CHANTIER]]\n[[CHANTIER: Carabine]]\nObjectif : une carabine qui fait des dégâts.\n[[/CHANTIER]]");
+    const t = hub.conversations.createThread(P, "Combat");
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+
+    const [second, first] = hub.tasks.list(P);
+    expect(first!.status).toBe("failed");
+    expect(exec.requests.filter((r) => r.kind === "execute")).toHaveLength(1);
+    expect(second).toMatchObject({ status: "draft", queued_at: null });
+    expect(hub.tasks.runs(P, first!.id).at(-1)!.error).toMatch(/interdites détectées : studio\/BRIEF\.md$/);
+    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(new RegExp(`⏸ La file s'arrête là : ${second!.id} s'appuient`));
+    expect(git(root, "log", "-1", "--format=%s", "--", "studio/.gdignore")).toMatch(/Godot n'importe pas le dossier du studio/);
+
+    // Relancer le chantier en échec puis celui qui attendait : il repart de zéro, sur la version actuelle du jeu.
+    for (const file of ["src/degats.ts", "src/carabine.ts"]) {
+      exec.scripts.execute.push(async (x) => {
+        await x.write(file, "export {};\n");
+        return REPORT;
+      });
+      exec.scripts.verify.push(() => VERIFIED);
+    }
+    fake.replies.push(`Je relance.\n[[LANCER: ${first!.id}, ${second!.id}]]`);
+    await hub.conversations.send(P, t.id, `relance ${first!.id} et enchaîne`);
+    await settle(hub);
+    expect(hub.tasks.get(P, first!.id).status).toBe("merged");
+    expect(hub.tasks.get(P, second!.id).status).toBe("merged");
+    expect(existsSync(join(root, "src", "carabine.ts"))).toBe(true);
+    expect(git(root, "status", "--porcelain")).toBe("");
   });
 
   it("vos corrections dites dans la discussion repartent au développeur, dans la même copie", async () => {

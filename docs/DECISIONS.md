@@ -1016,3 +1016,13 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - un autre fichier non suivi donne un refus clair qui le nomme, sans rien toucher, au lieu de « Conflit sur : ? ».
 - **Vérifié** : `tasks.test.ts` (un .uid local cède la place, un brouillon à vous bloque avec son nom), 247 tests au vert, typecheck.
 - **Constaté au passage** : premier vrai chantier Godot réussi. Le développeur a travaillé, les tests du jeu (6) et le lancement ont été vérifiés par le hub, et le testeur a joué au vrai jeu (7 actions, 2 photos).
+
+## ADR-77 — Godot n'importe plus studio/, la file s'arrête après un échec, un chantier en échec se relance
+
+- **Contexte** : sur Néon Saloon, T-0002 puis T-0003 ont échoué avec « Modifications interdites détectées : studio/art/choix/m2-1.png.import… ». Le développeur n'avait rien fait de mal. Le DA avait ajouté ses images (moodboard, choix) dans studio/art. Godot importe toute image du projet et écrit un `.import` à côté, ici dans studio/, zone interdite aux agents. La file a continué malgré l'échec : T-0003, puis T-0004, sont partis sans le travail de T-0002, alors qu'ils s'appuient dessus. T-0003 a même refait de son côté une partie de T-0002. Enfin, un chantier en échec ne pouvait pas être relancé : seul un brouillon se lançait.
+- **Décision** :
+  - avant de créer la copie d'un chantier, le hub pose et enregistre `studio/.gdignore` dans un jeu Godot : Godot ignore ce dossier ;
+  - avant d'enregistrer le travail, les `.import` et `.uid` laissés par Godot dans studio/ sont effacés : ce n'est ni du travail, ni une faute ;
+  - un chantier de la file qui échoue arrête la file. Ceux qui attendaient redeviennent des brouillons prêts, et la discussion le dit (« ⏸ La file s'arrête là… ») ;
+  - `launch` accepte un chantier en échec ou arrêté. Il le remet à zéro (copie et branche effacées) et il repart sur la version actuelle du jeu. Le directeur le sait (`[[LANCER: …]]`).
+- **Vérifié** : `autonomy.test.ts` couvre l'échec et ce qui suit. La file s'arrête, le .gdignore est enregistré et le `.import` effacé sans faute. Le chantier en échec et le suivant, relancés, sont fusionnés. 248 tests au vert, typecheck.
