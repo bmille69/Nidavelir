@@ -1000,3 +1000,9 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - la section « Choix techniques » donne la technologie et sa version, le comparatif, les bibliothèques et ce qu'il faut installer.
   - Le contexte Godot ne dit plus « recommandé » : il ne s'applique que si Godot est retenu.
 - **Vérifié** : `conception.test.ts` (méthode présente, plus de recommandation d'office), 246 tests au vert, typecheck.
+
+## ADR-75 — Le Concepteur a 15 minutes par réponse
+
+- **Contexte** : sur « Néon Saloon » (3D, 34 chantiers, dossier de 12 500 caractères), le Concepteur s'est arrêté deux fois de suite : « Claude Code n'a pas répondu en 480 s ». Une fois le dossier prêt, il réécrit à chaque tour le dossier et toutes les consignes en entier. Le tour précédent avait déjà pris 7 minutes, et le dossier plus long de l'ADR-73 alourdit chaque tour.
+- **Décision** : le niveau « concept » a 900 s, comme l'artisan 3D, au lieu de 480 s.
+- **Vérifié** : typecheck, `conception.test.ts`. La conversation garde son dossier : il suffit de renvoyer le dernier message après le redémarrage du hub.
