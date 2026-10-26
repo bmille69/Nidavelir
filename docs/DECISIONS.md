@@ -988,3 +988,15 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `conception.test.ts` : trous du dossier, refus puis création ; socle Godot, project.godot et CLAUDE.md ; Concepteur sans Godot ;
   - `conception.e2e.ts` remis à jour : il échouait depuis l'ADR-57, à cause d'un message dont le texte avait changé ;
   - 246 tests au vert, et les 37 tests navigateur aussi.
+
+## ADR-74 — Le Concepteur propose la meilleure technologie pour le jeu
+
+- **Contexte** : le Concepteur disait « Godot, recommandé pour un jeu sur PC » d'office. Le directeur créatif veut qu'il propose la meilleure technologie pour chaque jeu.
+- **Décision** : une méthode de choix (`TECH_CHOICE`, dans le prompt d'un nouveau jeu) :
+  - partir du jeu : 2D ou 3D, genre, plateformes, besoins particuliers ;
+  - comparer 2 ou 3 candidates sur des critères fixes : adaptée au genre, plateformes et export, ce que le studio vérifie seul, maîtrise par les agents, performances, installation et licence, intégration des visuels du DA ;
+  - ce que le studio sait faire par technologie. Godot et web : tout (tests, lancement vérifié, testeur qui joue, « Essayer »), avec le téléphone pour le web seulement. Autre (Unity, Unreal…) : le code seulement, à ne recommander que si le jeu l'exige ;
+  - une candidate nette est choisie et expliquée ; sinon c'est la première question, candidates en options ;
+  - la section « Choix techniques » donne la technologie et sa version, le comparatif, les bibliothèques et ce qu'il faut installer.
+  - Le contexte Godot ne dit plus « recommandé » : il ne s'applique que si Godot est retenu.
+- **Vérifié** : `conception.test.ts` (méthode présente, plus de recommandation d'office), 246 tests au vert, typecheck.

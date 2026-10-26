@@ -65,6 +65,9 @@ describe("Concepteur", () => {
     expect(sb.hub.conceptions.messages(c.id).map((m) => m.role)).toEqual(["human", "concepteur", "human", "concepteur"]);
     // Pas de Godot sur ce PC de test : le Concepteur le sait.
     expect(fake.calls[1]!.systemPrompt).toMatch(/Godot n'est pas installé sur ce PC/);
+    // La technologie se choisit d'après le jeu, candidates comparées, avec ce que le studio vérifie pour chacune (ADR-74).
+    expect(fake.calls[1]!.systemPrompt).toMatch(/jamais par habitude[\s\S]*Compare 2 ou 3 candidates[\s\S]*· Godot : tout[\s\S]*· Web[\s\S]*· Autre \(Unity/);
+    expect(fake.calls[1]!.systemPrompt).not.toMatch(/recommandé pour un jeu sur PC/);
     // Le second tour voit le dossier du premier et les échanges.
     expect(fake.calls[1]!.prompt).toMatch(/<dossier_actuel>\n# Chats du Néant[\s\S]*Navigateur/);
 

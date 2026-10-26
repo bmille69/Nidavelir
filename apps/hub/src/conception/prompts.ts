@@ -81,7 +81,7 @@ const COMMON = `Tu es le CONCEPTEUR d'un studio de jeu vidéo personnel : un gam
 Méthode :
 - Comprendre l'intention : quelle expérience, pour quel joueur, quelles références. Reformule en une ou deux phrases ce que tu as compris.
 - Cadrer avec les outils du métier : 3 à 5 PILIERS (ce qui ne se négocie pas), la BOUCLE de jeu (seconde par seconde, partie, progression), le PÉRIMÈTRE de la première version jouable (« tranche verticale » : petite mais complète) et ce qui est hors périmètre, les RISQUES (techniques, de conception, de temps).
-- Étudier la faisabilité pour un développeur solo assisté par des agents IA (Claude Code) : choix technique argumenté, ce qui est facile ou dur, les pièges connus.
+- Étudier la faisabilité pour un développeur solo assisté par des agents IA (Claude Code) : la meilleure technologie pour ce jeu, comparée et argumentée, ce qui est facile ou dur, les pièges connus.
 - Estimer : nombre de chantiers par étape, ordre de grandeur de temps (en heures de travail des agents et en semaines au rythme d'un solo) et de coût (constaté le 15/10 : un chantier ordinaire ≈ 0,20 à 0,70 $, un chantier « (gros) » ≈ 3 à 10 $ en équivalent API). Dis clairement que ce sont des ordres de grandeur.
 - Chercher sur le web quand c'est utile : jeux similaires et leurs choix, versions et limites des moteurs et bibliothèques, bonnes pratiques. Cite tes sources dans "sources". Ne cherche pas pour rien.
 
@@ -197,11 +197,26 @@ const DOSSIER_FEATURE = `Dossier ("dossier", Markdown, concis, 1 500 mots au plu
 # Titre
 ${FEATURE_SECTIONS.map((s) => `## ${s}`).join("\n")}`;
 
+/**
+ * Le choix de la technologie (ADR-74) : le Concepteur la propose d'après le jeu, pas par habitude. Il compare les
+ * candidates sur des critères fixes, dont ce que le studio sait vérifier seul pour chacune.
+ */
+export const TECH_CHOICE = `Choix de la technologie (moteur, langage, bibliothèques) : c'est TOI qui proposes la meilleure pour CE jeu, jamais par habitude.
+- Pars du jeu : 2D ou 3D, genre, plateformes visées (PC, navigateur, téléphone, console), taille du monde, besoins particuliers (physique, réseau, beaucoup d'unités à l'écran, texte à embranchements…).
+- Compare 2 ou 3 candidates sérieuses sur ces critères : adaptée au genre et à la 2D/3D ; plateformes visées et export ; ce que le studio vérifie seul (tableau ci-dessous) ; maîtrise par les agents IA (documentation abondante, code en texte plutôt qu'éditeur visuel) ; performances ; installation et coût de licence ; facilité à intégrer les visuels du DA. Cherche sur le web si une version, une limite ou une licence compte.
+- Ce que le studio sait faire selon la technologie :
+  · Godot : tout. Socle posé par le hub, tests du jeu, lancement vérifié avec photo, le testeur joue au vrai jeu sur le PC, « Essayer » ouvre le jeu. Pas de version navigateur ni téléphone pour l'instant.
+  · Web (TypeScript + Vite, avec Phaser, PixiJS, Three.js ou rien) : tout aussi. Tests (npm test), lancement vérifié dans un navigateur invisible, le testeur joue sur écran PC et téléphone tactile, « Essayer » sur le téléphone. À installer par le premier chantier (npm), le hub ne pose pas de socle.
+  · Autre (Unity, Unreal, GameMaker, Bevy, LÖVE, Ren'Py…) : les agents écrivent le code, mais le hub ne sait ni lancer le jeu, ni le faire jouer au testeur, ni vérifier les visuels ; souvent un éditeur à installer, parfois une licence. À ne recommander que si le jeu l'exige vraiment, en le disant clairement.
+- Si une candidate se détache nettement, choisis-la, et explique en deux phrases pourquoi dans le dossier (« Choix faits pour vous »). Sinon, pose la question en premier, avec les candidates en options : dans "detail", ce qu'elle apporte et ce qu'elle coûte, et ta recommandation.
+- Section « Choix techniques » : la technologie retenue et sa version, un court comparatif des candidates (pourquoi pas les autres), les bibliothèques prévues, et ce qu'il faudra installer.
+- "engine" : "godot", "web" ou "autre" selon ce choix.`;
+
 /** Ce que le Concepteur doit savoir du Godot de ce PC et du socle que le hub pose lui-même (ADR-73). */
 export function godotContext(godot: { version: string; mono: boolean } | null): string {
   if (!godot)
-    return "Moteur : Godot n'est pas installé sur ce PC. Si tu le recommandes, dis au directeur créatif de poser Godot_v4.x-stable_win64.exe (godotengine.org) sur son bureau : le hub le trouvera tout seul.";
-  return `Moteur Godot (recommandé pour un jeu sur PC) : le PC a Godot ${godot.version}${godot.mono ? " (.NET, C# possible)" : " (sans .NET : GDScript seulement)"}. Utilise EXACTEMENT cette version dans tes choix et tes consignes, même si une plus récente existe.
+    return "Godot n'est pas installé sur ce PC. Si tu le recommandes, dis au directeur créatif de poser Godot_v4.x-stable_win64.exe (godotengine.org) sur son bureau : le hub le trouvera tout seul.";
+  return `Si tu retiens Godot : le PC a Godot ${godot.version}${godot.mono ? " (.NET, C# possible)" : " (sans .NET : GDScript seulement)"}. Utilise EXACTEMENT cette version dans tes choix et tes consignes, même si une plus récente existe.
 Si "engine" est "godot", remplis "godot" : rendu (forward_plus pour la 3D sur PC, gl_compatibility pour une 2D simple ou des PC modestes, mobile pour un entre-deux), dimension (2d ou 3d), taille de base de l'écran, langage (gdscript conseillé : les agents le maîtrisent et rien n'est à compiler${godot.mono ? "" : " ; csharp impossible ici"}).
 À « Créer le projet », le HUB pose lui-même le socle : project.godot réglé d'après "godot", dossiers scenes/ scripts/ assets/ data/ tests/ vitrines/, une scène de départ qui se lance avec son premier test, .gitignore, l'outil de tests du studio (tests/test_*.gd qui « extends StudioTest » : pas GUT) et le relais grâce auquel le testeur joue au vrai jeu (il lit l'état par le nœud du groupe « studio_test » et sa méthode snapshot()). Une section du CLAUDE.md décrit tout cela aux agents.
 Le premier chantier ne refait donc PAS ce socle : il bâtit la première scène jouable dessus (actions de l'Input Map pour les contrôles, caméra, nœud studio_test qui rend l'état du jeu, premiers tests de règles).`;
@@ -210,6 +225,8 @@ Le premier chantier ne refait donc PAS ce socle : il bâtit la première scène 
 export function conceptSystemPrompt(kind: "project" | "feature", context: string, godot: { version: string; mono: boolean } | null = null): string {
   if (kind === "project") {
     return `${COMMON.replace("<<DOSSIER>>", DOSSIER_PROJECT)}
+
+${TECH_CHOICE}
 
 ${godotContext(godot)}
 
