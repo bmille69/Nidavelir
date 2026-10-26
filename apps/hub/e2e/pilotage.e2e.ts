@@ -99,6 +99,16 @@ beforeAll(async () => {
   const village = m.assets.find((a) => a.name === "Kit village")!;
   village.status = "valide";
   village.renders = ["production/village.png"];
+  // Le bilan (ADR-71) : le modèle du Titan est copié tel quel dans le jeu ; l'horizon, donné pour intégré, n'y est pas.
+  mkdirSync(join(art, "..", "models"), { recursive: true });
+  writeFileSync(join(art, "..", "models", "titan.glb"), Buffer.from("glTF titan"));
+  mkdirSync(join(repo, "assets", "studio"), { recursive: true });
+  writeFileSync(join(repo, "assets", "studio", "guardian_titan.glb"), Buffer.from("glTF titan"));
+  writeFileSync(join(art, "horizon.png"), png(320, 120, [200, 160, 110]));
+  const horizon = m.assets.find((a) => a.name === "Horizon peint")!;
+  horizon.status = "integre";
+  horizon.renders = ["production/horizon.png"];
+  horizon.verdict = { ok: true, summary: "Bien.", points: [], prompt: null, file: "production/horizon.png", by: "validator", at: "2026-10-22T10:00:00.000Z" };
   writeManifest(repo, m);
 
   const thread = hub.conversations.createThread(P, "Refonte de la carte").id;
@@ -160,6 +170,14 @@ describe("poste de pilotage", () => {
     await page.keyboard.press("Escape");
     expect(await viewer.count()).toBe(0);
 
+    // Le bilan des visuels (ADR-71) : le problème d'abord, avec sa réparation ; le Titan copié mais pas encore prouvé.
+    await page.locator(".pilot-head .segmented button", { hasText: "Bilan" }).click();
+    await page.locator(".bilan-row").first().waitFor();
+    await expect(page.locator(".bilan-row").first().textContent()).resolves.toMatch(/Horizon peint[\s\S]*Absent du jeu[\s\S]*Faire réintégrer/);
+    await expect(page.locator(".bilan-row").nth(1).textContent()).resolves.toMatch(/Gardien Titan[\s\S]*assets\/studio\/guardian_titan\.glb[\s\S]*Pas vérifié/);
+    expect(await page.locator(".pilot-head .segmented button.on").textContent()).toBe("Bilan");
+    await page.screenshot({ path: join(shots, "pilot-9-bilan.png") });
+
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);
@@ -185,6 +203,10 @@ describe("poste de pilotage", () => {
     await phone.locator(".pilot-card.big").first().waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "pilot-8-telephone-pilotage.png"), fullPage: true });
+    await phone.locator(".pilot-head .segmented button", { hasText: "Bilan" }).tap();
+    await phone.locator(".bilan-row").first().waitFor();
+    expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.screenshot({ path: join(shots, "pilot-10-telephone-bilan.png"), fullPage: true });
     await phone.close();
     expect(errors).toEqual([]);
   }, 90_000);

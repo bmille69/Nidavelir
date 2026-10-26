@@ -277,10 +277,11 @@ export function createHub(options: HubOptions): Hub {
     // La capture prise par les vérifications avant la fusion sert à juger le visuel dans le jeu (ADR-48).
     screenshot: (project, task) => checks?.screenshotPath(project, task) ?? null,
     // La scène vitrine du jeu, photographiée sur le jeu lui-même après la fusion (ADR-49).
+    // Les fichiers qu'il charge alors servent au bilan des visuels (ADR-71).
     vitrine: async (project, id, file) => {
       if (!options.checker) return null;
       const r = await options.checker.launch(`${project}/vitrine-${id}`, projects.get(project).root, file, `?vitrine=${id}`);
-      return r.screenshot ?? null;
+      return r.status === "none" ? null : { shot: r.screenshot ?? null, loaded: r.loaded ?? null };
     },
   });
   // Le Concepteur confie les visuels de ses conceptions au Directeur artistique, et sait ce qui existe déjà (ADR-59).

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@studio/contracts";
@@ -1004,6 +1004,58 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integre", ingame: { file: "production/a-0001-vitrine-t-0003.png", ok: true } });
     expect(fake.calls.filter((c) => c.kind === "structured").at(-1)!.prompt).toMatch(/Capture de la scène vitrine du jeu \(\?vitrine=A-0001\)/);
 
+  }, 30_000);
+
+  it("bilan des visuels (ADR-71) : copie exacte dans le jeu, preuve au lancement, ancienne version, réintégration", async () => {
+    let loaded: string[] | undefined;
+    const launches: (string | undefined)[] = [];
+    const checker: CheckerPort = {
+      tests: async () => ({ status: "none", detail: "" }),
+      launch: async (_key, _cwd, screenshot, path) => {
+        launches.push(path);
+        if (screenshot) writeFileSync(screenshot, PNG);
+        return { status: "pass", detail: "", screenshot: screenshot ?? null, loaded };
+      },
+    };
+    const { sb, fake, gen, repo, art } = await setupLocal(checker);
+    gen.installed = true;
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.replies.push('[[ASSET]] {"name": "Drapeau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A flag. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un drapeau");
+    await art.idle();
+    fake.extractions.push({ visible: true, ok: true, summary: "Net et lisible.", points: [] } as never);
+    art.onTaskStatus({ id: "T-0003", project: "bordee", title: "A-0001 : brancher le drapeau", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    const source = art.state("bordee").assets[0]!.verdict!.file;
+
+    // Donné pour intégré, mais le développeur n'a rien copié : absent du jeu, à réparer.
+    expect(art.bilan("bordee").rows[0]).toMatchObject({ id: "A-0001", level: "absent", problem: true });
+    expect(() => art.verifyBilan(sb.human(), "bordee")).toThrow(/Aucun visuel copié/);
+
+    // La copie exacte est dans le dossier public du jeu ; rien ne prouve encore qu'il la charge.
+    mkdirSync(join(repo, "public"), { recursive: true });
+    copyFileSync(join(repo, "studio", "art", source), join(repo, "public", "drapeau.png"));
+    expect(art.bilan("bordee").rows[0]).toMatchObject({ level: "non_prouve", problem: false, copies: ["public/drapeau.png"] });
+
+    // Lancé sur sa scène vitrine, le jeu la charge (servie à la racine) : vérifié, le manifeste garde la preuve.
+    loaded = ["/drapeau.png", "/autre.glb"];
+    const started = art.verifyBilan(sb.human(), "bordee");
+    expect(started.checking).toMatchObject({ total: 1 });
+    await art.idle();
+    expect(launches.at(-1)).toBe("?vitrine=A-0001");
+    expect(art.bilan("bordee")).toMatchObject({ checking: null, rows: [{ level: "verifie", problem: false }] });
+    expect(art.state("bordee").assets[0]!.proof!.loaded).toEqual(["/drapeau.png", "/autre.glb"]);
+    expect(log(repo)).toMatch(/art: bilan des visuels, 1 visuel\(s\) vérifié\(s\)/);
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Bilan des visuels[\s\S]*1 visuel\(s\) chargé\(s\) par le jeu, 0 problème/);
+
+    // Une ancienne version du visuel est restée dans le jeu : reconnue, et la réintégration part au directeur.
+    writeFileSync(join(repo, "studio", "art", "production", "a-0001-ancien.png"), Buffer.concat([PNG, Buffer.from("v1")]));
+    copyFileSync(join(repo, "studio", "art", "production", "a-0001-ancien.png"), join(repo, "public", "drapeau.png"));
+    expect(art.bilan("bordee").rows[0]).toMatchObject({ level: "ancienne_version", problem: true, stale: ["public/drapeau.png"] });
+    const { thread } = await art.reintegrate(sb.human(), "bordee", "A-0001");
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(sb.hub.conversations.messages("bordee", thread)[0]!.text).toMatch(/Le bilan du hub a vérifié le jeu : Le jeu a encore une ancienne version \(public\/drapeau\.png\)/);
+    await expect(art.reintegrate(sb.human(), "bordee", "A-0001")).rejects.toThrow(/pas de problème/);
   }, 30_000);
 
   it("dans le jeu : une vitrine qui montre l'accueil au lieu de l'asset fait demander la scène vitrine, une fois", async () => {

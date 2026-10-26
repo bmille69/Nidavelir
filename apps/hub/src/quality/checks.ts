@@ -8,7 +8,16 @@ import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 
 /** Résultat d'une vérification faite par le hub lui-même ; « none » = rien à vérifier ou impossible ici. */
-export type CheckOutcome = { status: "pass" | "fail" | "none"; detail: string; /** Capture de l'écran du jeu (lancement), si prise. */ screenshot?: string | null };
+export type CheckOutcome = {
+  status: "pass" | "fail" | "none";
+  detail: string;
+  /** Capture de l'écran du jeu (lancement), si prise. */
+  screenshot?: string | null;
+  /** Les ressources (images, modèles, sons) que le jeu a chargées, par leur chemin sur son serveur (bilan, ADR-71). */
+  loaded?: string[];
+};
+
+const RESOURCE_URL = /\.(png|jpe?g|webp|avif|gif|svg|glb|gltf|bin|ktx2|hdr|mp3|ogg|wav|m4a)$/i;
 
 /** Vérifications objectives d'un chantier, avant sa fusion (ADR-32). */
 export type CheckReport = {
@@ -199,14 +208,24 @@ export class RealChecker implements CheckerPort {
         // Une icône d'onglet absente n'est pas un problème du jeu.
         if (m.type() === "error" && !/favicon/i.test(m.text() + (m.location().url ?? ""))) errors.push(m.text());
       });
+      const loaded = new Set<string>();
+      page.on("response", (r) => {
+        try {
+          const path = new URL(r.url()).pathname;
+          if (r.status() < 400 && RESOURCE_URL.test(path)) loaded.add(path);
+        } catch {
+          /* adresse illisible : ignorée */
+        }
+      });
       await page.goto(path ? `${preview.url.replace(/\/$/, "")}/${path.replace(/^\//, "")}` : preview.url, { waitUntil: "load", timeout: 60_000 });
       await page.waitForTimeout(this.#watchMs);
       const empty = (await page.evaluate("!document.body || document.body.children.length === 0")) as boolean;
       // La capture est prise même en cas d'erreur : elle montre ce qui ne va pas (ADR-33).
       const shot = screenshot ? await page.screenshot({ path: screenshot, fullPage: true }).then(() => screenshot, () => null) : null;
-      if (errors.length) return { status: "fail", detail: `erreurs dans la page : ${[...new Set(errors)].slice(0, 4).join(" | ").slice(0, 600)}`, screenshot: shot };
-      if (empty) return { status: "fail", detail: "la page reste vide", screenshot: shot };
-      return { status: "pass", detail: `lancé sans erreur (${Math.round(this.#watchMs / 1000)} s d'observation)`, screenshot: shot };
+      const files = [...loaded].sort();
+      if (errors.length) return { status: "fail", detail: `erreurs dans la page : ${[...new Set(errors)].slice(0, 4).join(" | ").slice(0, 600)}`, screenshot: shot, loaded: files };
+      if (empty) return { status: "fail", detail: "la page reste vide", screenshot: shot, loaded: files };
+      return { status: "pass", detail: `lancé sans erreur (${Math.round(this.#watchMs / 1000)} s d'observation)`, screenshot: shot, loaded: files };
     } catch (err) {
       return { status: "fail", detail: (err as Error).message.slice(0, 600) };
     } finally {

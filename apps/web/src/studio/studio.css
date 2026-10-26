@@ -1511,6 +1511,25 @@ a.pilot-row-title:hover { color: var(--accent); }
 .secondary-link:hover { border-color: var(--accent); }
 
 /* La galerie et son visualiseur */
+/* Le bilan des visuels (ADR-71) : une ligne par visuel donné pour intégré, les problèmes d'abord. */
+.bilan-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.bilan-counts { display: flex; gap: var(--space-4); flex-wrap: wrap; margin: 0; font-size: var(--fs-sm); }
+.bilan-counts > span { display: inline-flex; align-items: center; gap: 6px; }
+.bilan-help { margin: var(--space-2) 0 var(--space-4); max-width: 70ch; }
+.bilan-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.bilan-row { display: flex; align-items: center; gap: var(--space-3); padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.bilan-row.tone-bad { border-color: rgba(229, 138, 143, 0.35); }
+.bilan-title { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-sm); }
+.bilan-title b { font-weight: 600; }
+.bilan-text { color: var(--text-2); }
+.bilan-badge { flex: none; padding: 3px 10px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.bilan-badge.tone-ok { background: var(--ok-bg); color: var(--ok); }
+.bilan-badge.tone-warn { background: var(--ember-soft); color: var(--ember); }
+.bilan-badge.tone-bad { background: var(--error-bg); color: var(--error); }
+@media (max-width: 720px) {
+  .bilan-row { flex-wrap: wrap; }
+  .bilan-row .pilot-row-body { flex-basis: calc(100% - 60px); }
+}
 .gallery-tools { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--space-3); }
 .gallery-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); box-shadow: none; transform: none; }

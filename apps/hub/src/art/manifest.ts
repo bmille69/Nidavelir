@@ -48,6 +48,8 @@ export type Asset = {
   model?: ModelInfo | null;
   /** Vérification dans le jeu, après la fusion du chantier d'intégration (capture du hub). */
   ingame?: InGame | null;
+  /** Les fichiers que le jeu a chargés sur la scène vitrine de l'asset, au dernier lancement par le hub (bilan, ADR-71). */
+  proof?: { loaded: string[]; at: string } | null;
   /** Validé, mais son intégration attend que ce chantier ait posé sa place dans le jeu (ADR-60). */
   waitsFor?: string | null;
   /** Confié au Directeur artistique par la file des visuels ou par « Lancer » (ADR-62) : il est en cours tant qu'il n'est pas validé. */

@@ -878,3 +878,32 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `tripo-journal.test.ts` (6 tests), avec un faux Tripo réglable : hub coupé pendant la fabrication puis repris avec une autre graine (aucun nouvel envoi, crédits comptés une fois) ; animation ratée (seule elle est repassée) ; carnet vidé après succès ; tâche oubliée par Tripo, puis tâche échouée ; animations sur squelette gardé ; carnet lui-même ;
   - les 8 tests Tripo existants passent, le test de redémarrage du DA est mis à jour ;
   - 239 tests au vert. Pas encore vu contre le vrai Tripo : ce sera la prochaine 3D.
+
+### ADR-71 : le bilan des visuels, la liste face au jeu réel
+**Statut** : Retenue le 26/10/2026. C'est le n°3 des idées tirées d'OhMyGame (« check the asset list against actual files and runtime usage », et dire ce qui reste non vérifié). L'utilisateur : « ok on continue ».
+- **Le manque** : un visuel passait « intégré » dès la fusion d'un chantier qui citait son identifiant. Le hub regardait une photo (ADR-48/49), mais ne vérifiait jamais que le **bon fichier** était dans le jeu, ni que le jeu le **chargeait**. Une version retouchée jamais recopiée, ou un chantier suivant qui débranche le fichier, passaient inaperçus.
+- **Le bilan** (`art/bilan.ts`, sans appel à un modèle) : pour chaque visuel « intégré » ou « en intégration », le hub fait trois choses.
+  - Il cherche dans les fichiers du jeu (hors `studio/`, dépendances et sorties de construction) la **copie exacte** du fichier validé, octet pour octet. Le nom du fichier ne compte pas : le développeur renomme souvent (`a-0002-3d-8.glb` → `assets/studio/guardian_titan.glb`).
+  - Sinon, il cherche une **ancienne version** : un autre fichier `studio/art/` du même visuel retrouvé dans le jeu.
+  - Il regarde la **preuve au lancement** : les fichiers que le jeu a chargés sur la scène vitrine du visuel (`proof` dans le manifeste).
+  - Les empreintes sont gardées tant que le fichier ne bouge pas : 0,5 s la première fois sur Survivor Destiny (484 ressources), 0,08 s ensuite.
+- **Niveaux** :
+  - **vérifié** : chargé par le jeu, et le validateur l'a vu rendre bien ;
+  - **chargé par le jeu**, ou chargé mais **à retoucher** ;
+  - **pas vérifié** : copié, jamais vu chargé. Ce n'est pas forcément cassé ;
+  - **intégration en cours** ;
+  - **fichier validé perdu** ;
+  - trois **problèmes** : **absent du jeu**, **ancienne version dans le jeu**, **pas chargé** sur sa scène vitrine.
+- **La preuve au lancement** : le lancement du hub (`RealChecker.launch`) note désormais les images, modèles et sons que le jeu reçoit (`loaded`).
+  - La vitrine prise après chaque intégration l'enregistre.
+  - « **Vérifier en lançant le jeu** » relance la vitrine des visuels copiés, en arrière-plan. Un visuel déjà chargé par un lancement précédent n'en demande pas d'autre : un jeu charge souvent tout au départ, et sur Survivor Destiny un seul lancement a prouvé les 14 visuels.
+  - Le manifeste est commité une fois, à la fin, et le DA résume dans sa discussion.
+- **Réparer** : « Faire réintégrer » sur un problème remet le visuel en intégration. Le directeur reçoit ce que le bilan a vu (« le jeu a encore une ancienne version… ») et la consigne de copier ce fichier-là, tel quel, puis de vérifier qu'il est chargé. Rien n'est réparé tout seul : une copie convertie volontairement (autre format) apparaîtrait « absente ».
+- **Où** : onglet **Bilan** du Pilotage, problèmes en tête ; routes `GET /projects/:slug/art/bilan`, `POST …/art/bilan/verify`, `POST …/art/assets/:id/reintegrate`.
+- **Pas repris** : les fichiers du jeu sans fiche (Survivor Destiny en a 332, surtout des packs du commerce : trop de bruit) ; la recherche du nom dans le code, peu fiable (des jeux chargent par dossier entier).
+- **Vérifié** :
+  - `bilan.test.ts` ;
+  - un test du DA de bout en bout : absent, puis copié non prouvé, prouvé au lancement depuis `public/`, ancienne version, réintégration ;
+  - `pilotage.e2e.ts` avec l'onglet Bilan sur PC et téléphone (captures examinées) ;
+  - 242 tests au vert ; les tests navigateur aussi, sauf celui du Concepteur, déjà en échec ;
+  - essai réel, sur une copie de Survivor Destiny : bilan à blanc (14 visuels copiés, pas vérifiés) puis deux vrais lancements dans Edge, qui ont bien reçu les 14 fichiers `assets/studio/`.

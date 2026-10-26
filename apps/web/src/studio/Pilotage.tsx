@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, type ArtAsset, type ArtState, type Monitor, type TaskRow } from "../api.ts";
 import { STATUS } from "./ArtDirection.tsx";
 import { useNow, useStudio } from "./context.tsx";
+import { Bilan } from "./Bilan.tsx";
 import { Gallery } from "./Gallery.tsx";
 
 const LAST_PROJECT = "studio:last-project";
+type View = "production" | "galerie" | "bilan";
 const STAGE: Record<string, string> = { croquis: "Croquis", image: "Image", planche: "Planche 4 vues", tripo: "Tripo (3D)", atelier: "Atelier Blender", controle: "Contrôle" };
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const usd = (n: number) => `${n.toFixed(2).replace(".", ",")} $`;
@@ -35,7 +37,7 @@ function usePoll<T>(load: () => Promise<T>, ms: number, key: string): T | null {
 /**
  * Le poste de pilotage : d'un coup d'œil, ce que fait le studio sur un projet. Les chantiers (celui en cours avec sa barre
  * de progression, la file), les visuels du Directeur artistique (en fabrication, en file, en attente d'un chantier), les
- * liens entre les deux, et la galerie des assets. Rien ici n'appelle un modèle : des lectures de l'état du hub.
+ * liens entre les deux, la galerie des assets et le bilan des visuels dans le jeu (ADR-71). Rien ici n'appelle un modèle : des lectures de l'état du hub.
  */
 export function Pilotage() {
   const snap = useStudio();
@@ -48,7 +50,7 @@ export function Pilotage() {
     }
   });
   const current = projects.find((p) => p.slug === slug) ?? projects[0] ?? null;
-  const [view, setView] = useState<"production" | "galerie">("production");
+  const [view, setView] = useState<View>("production");
   if (!snap) return <div className="centered muted">Chargement…</div>;
   if (!current) return <div className="page pilot"><p className="muted">Aucun projet pour l'instant.</p></div>;
   return (
@@ -75,6 +77,9 @@ export function Pilotage() {
             <button role="tab" aria-selected={view === "galerie"} className={view === "galerie" ? "on" : ""} onClick={() => setView("galerie")}>
               Galerie
             </button>
+            <button role="tab" aria-selected={view === "bilan"} className={view === "bilan" ? "on" : ""} onClick={() => setView("bilan")}>
+              Bilan
+            </button>
           </div>
         </div>
       </header>
@@ -83,7 +88,7 @@ export function Pilotage() {
   );
 }
 
-function ProjectPilot({ slug, view }: { slug: string; view: "production" | "galerie" }) {
+function ProjectPilot({ slug, view }: { slug: string; view: View }) {
   const snap = useStudio();
   const tasks = usePoll(() => api.tasks(slug), 4000, `t-${slug}`);
   const art = usePoll(() => api.art(slug), 4000, `a-${slug}`);
@@ -101,7 +106,9 @@ function ProjectPilot({ slug, view }: { slug: string; view: "production" | "gale
           ))}
         </section>
       )}
-      {view === "galerie" ? (
+      {view === "bilan" ? (
+        <Bilan slug={slug} />
+      ) : view === "galerie" ? (
         art && tasks ? <Gallery slug={slug} art={art} tasks={tasks} /> : <p className="muted">Chargement…</p>
       ) : (
         <Production slug={slug} tasks={tasks} art={art} />

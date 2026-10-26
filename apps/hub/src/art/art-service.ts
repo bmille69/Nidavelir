@@ -14,6 +14,7 @@ import { ART_DIR, artRoot, nextAssetId, PENDING_VISUALS, readManifest, writeAtom
 import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
+import { computeBilan, wasLoaded, type BilanRow } from "./bilan.ts";
 import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
@@ -50,6 +51,12 @@ export class ArtError extends Error {
 export type ArtMessage = { id: string; project: string; seq: number; role: "human" | "art"; text: string; at: string; cost_usd: number | null };
 export type MoodImage = { file: string; note: string | null };
 export type QueuedVisual = { id: string; need: { id: string; title: string } | null };
+/** Le jeu lancé sur une scène vitrine : la capture (si demandée) et les fichiers chargés (null : inconnu). */
+export type VitrineShot = { shot: string | null; loaded: string[] | null };
+
+/** Le bilan des visuels (ADR-71) et, pendant une vérification au lancement, où elle en est. */
+export type BilanState = { rows: BilanRow[]; checking: { done: number; total: number; current: string | null } | null };
+
 export type ArtState = {
   bible: string | null;
   assets: Asset[];
@@ -130,8 +137,10 @@ export class ArtService {
   readonly #generating = new Map<string, Map<string, Generating>>();
   /** Les modèles déjà branchés dans le jeu dont une version retouchée part en intégration (ADR-55) : « project/id ». */
   readonly #replacing = new Set<string>();
-  readonly #vitrine: (project: string, id: string, file: string) => Promise<string | null>;
+  readonly #vitrine: (project: string, id: string, file?: string) => Promise<VitrineShot | null>;
   readonly #webRefs: WebRefsPort;
+  /** Les vérifications du bilan en cours, par projet (ADR-71). */
+  readonly #bilanChecks = new Map<string, { done: number; total: number; current: string | null }>();
   /** Planches, duels et vignettes en cours, par projet : clé → ce qui se passe, en clair (ADR-58). */
   readonly #exploring = new Map<string, Map<string, string>>();
   /** Les chantiers du projet, pour savoir quand un visuel validé a sa place dans le jeu (ADR-60). */
@@ -153,8 +162,11 @@ export class ArtService {
     model3d: Model3DPort;
     /** La capture du jeu prise par le hub avant la fusion d'un chantier (ADR-32), si elle existe. */
     screenshot?: (project: string, task: string) => string | null;
-    /** Une capture de la scène vitrine du jeu (« ?vitrine=A-0001 ») dans `file`, ou null si elle n'a pas pu être prise (ADR-49). */
-    vitrine?: (project: string, id: string, file: string) => Promise<string | null>;
+    /**
+     * Le jeu lancé sur la scène vitrine d'un asset (« ?vitrine=A-0001 ») : sa capture dans `file` (ADR-49) et les fichiers
+     * qu'il a chargés (bilan, ADR-71) ; null si le jeu n'a pas pu être lancé.
+     */
+    vitrine?: (project: string, id: string, file?: string) => Promise<VitrineShot | null>;
     /** Téléchargement des références trouvées sur le web (ADR-58). */
     webRefs?: WebRefsPort;
   }) {
@@ -542,6 +554,79 @@ export class ArtService {
     return this.#requestIntegration(project, id, "human");
   }
 
+  bilan(project: string): BilanState {
+    return { rows: computeBilan(this.#projects.get(project).root), checking: this.#bilanChecks.get(project) ?? null };
+  }
+
+  /**
+   * Lance le jeu sur la scène vitrine de chaque visuel copié dans le jeu et note les fichiers qu'il charge (ADR-71). Sans
+   * modèle, en arrière-plan : une dizaine de secondes par lancement, et un visuel déjà chargé par un lancement précédent
+   * (un jeu charge souvent tout au départ) n'en demande pas d'autre. Le manifeste est écrit et commité une fois, à la fin.
+   */
+  verifyBilan(session: HumanSession, project: string): BilanState {
+    assertHumanSession(session);
+    if (this.#bilanChecks.has(project)) return this.bilan(project);
+    const copied = computeBilan(this.#projects.get(project).root).filter((r) => r.copies.length);
+    const ids = copied.map((r) => r.id);
+    if (!ids.length) throw new ArtError("Aucun visuel copié dans le jeu à vérifier");
+    const state = { done: 0, total: ids.length, current: null as string | null };
+    this.#bilanChecks.set(project, state);
+    this.#track(
+      (async () => {
+        const proofs = new Map<string, string[]>();
+        try {
+          for (const row of copied) {
+            if (!proofs.has(row.id)) {
+              state.current = row.id;
+              const run = await this.#vitrine(project, row.id).catch(() => null);
+              if (run?.loaded) {
+                proofs.set(row.id, run.loaded);
+                for (const other of copied) if (!proofs.has(other.id) && other.copies.some((c) => wasLoaded(c, run.loaded!))) proofs.set(other.id, run.loaded);
+              }
+            }
+            state.done++;
+          }
+          const gameRoot = this.#projects.get(project).root;
+          const m = readManifest(gameRoot);
+          for (const a of m.assets) if (proofs.has(a.id)) a.proof = { loaded: proofs.get(a.id)!, at: this.#clock.now() };
+          if (proofs.size) {
+            writeManifest(gameRoot, m);
+            await this.#commit(gameRoot, `art: bilan des visuels, ${proofs.size} visuel(s) vérifié(s) au lancement du jeu`);
+          }
+          const rows = computeBilan(gameRoot).filter((r) => ids.includes(r.id));
+          const bad = rows.filter((r) => r.problem);
+          this.#insert(
+            project,
+            "art",
+            proofs.size
+              ? [
+                  `Bilan des visuels : j'ai lancé le jeu sur les scènes vitrine. ${rows.filter((r) => r.level === "verifie" || r.level === "charge" || r.level === "a_retoucher").length} visuel(s) chargé(s) par le jeu, ${bad.length} problème(s).`,
+                  ...bad.map((r) => `- ${r.id} « ${r.name} » : ${r.text}`),
+                ].join("\n")
+              : "Bilan des visuels : le jeu n'a pas pu être lancé (pas de script « dev », ou ni Edge ni Chrome). Rien n'a été prouvé.",
+            null,
+          );
+        } finally {
+          this.#bilanChecks.delete(project);
+        }
+      })(),
+    );
+    return this.bilan(project);
+  }
+
+  /** Un visuel que le bilan trouve absent, périmé ou pas chargé repart en intégration, avec ce que le bilan a vu (ADR-71). */
+  async reintegrate(session: HumanSession, project: string, id: string): Promise<{ thread: string }> {
+    assertHumanSession(session);
+    const gameRoot = this.#projects.get(project).root;
+    const row = computeBilan(gameRoot).find((r) => r.id === id);
+    if (!row?.problem) throw new ArtError("Le bilan ne trouve pas de problème à réparer sur ce visuel");
+    const m = readManifest(gameRoot);
+    const asset = m.assets.find((a) => a.id === id)!;
+    this.#setStatus(asset, "valide");
+    writeManifest(gameRoot, m);
+    return this.#requestIntegration(project, id, "human", row.text);
+  }
+
   /** L'intégration lancée en arrière-plan : un échec s'affiche dans la discussion au lieu de se perdre. */
   async #autoIntegrate(project: string, id: string, by: "human" | "system"): Promise<void> {
     try {
@@ -595,7 +680,7 @@ export class ArtService {
   }
 
   /** La demande au directeur. Un visuel validé (par le validateur ou par vous) y part tout seul (ADR-48). */
-  async #requestIntegration(project: string, id: string, by: "human" | "system"): Promise<{ thread: string }> {
+  async #requestIntegration(project: string, id: string, by: "human" | "system", finding?: string): Promise<{ thread: string }> {
     const gameRoot = this.#projects.get(project).root;
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === id);
@@ -613,6 +698,7 @@ export class ArtService {
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
+      finding ? `- Le bilan du hub a vérifié le jeu : ${finding} Copie ce fichier-là, tel quel, et vérifie que le jeu le charge bien sur sa scène vitrine.` : "",
       this.#replacing.delete(`${project}/${id}`)
         ? "- C'est une version retouchée d'un modèle déjà branché : remplace l'ancien fichier par celui-ci (mêmes mesures, même squelette, mêmes animations), sans rien changer d'autre au branchement."
         : "",
@@ -670,7 +756,8 @@ export class ArtService {
     const root = artRoot(gameRoot);
     mkdirSync(join(root, "production"), { recursive: true });
     const vitrine = this.#free(root, "production", `${id.toLowerCase()}-vitrine-${task.toLowerCase()}`, ".png");
-    const shotVitrine = await this.#vitrine(project, id, join(root, vitrine)).catch(() => null);
+    const run = await this.#vitrine(project, id, join(root, vitrine)).catch(() => null);
+    const shotVitrine = run?.shot ?? null;
     const shot = shotVitrine && existsSync(shotVitrine) ? null : this.#screenshot(project, task);
     if (!shotVitrine && (!shot || !existsSync(shot))) {
       this.#insert(project, "art", `${id} est dans le jeu (${task}). Pas de capture du jeu pour vérifier le rendu : regardez-le en jouant.`, null);
@@ -703,6 +790,7 @@ export class ArtService {
       // Invisible dans la vitrine : la scène manque ou ne montre pas l'asset ; une retouche la fait ajouter (une fois).
       const missing = !v.visible && shotVitrine;
       const retry = (missing || (!!v.visible && !v.ok)) && !a.ingame?.retried;
+      if (run?.loaded) a.proof = { loaded: run.loaded, at: this.#clock.now() };
       a.ingame = { task, file, visible: !!v.visible, ok: !!v.visible && !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 6), retried: retry || !!a.ingame?.retried, at: this.#clock.now() };
       // Le chantier de retouche porte l'identifiant : à sa fusion, l'asset doit repasser par « intégration ». Écrit avant
       // le commit : un manifeste modifié sans commit bloquerait toutes les fusions du projet.

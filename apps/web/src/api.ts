@@ -189,6 +189,11 @@ export type ArtGenerator = {
   size: string;
   kontext?: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
 };
+/** Le bilan des visuels (ADR-71) : chaque visuel donné pour intégré, face aux fichiers du jeu et à ce qu'il charge. */
+export type BilanLevel = "verifie" | "a_retoucher" | "charge" | "non_prouve" | "pas_charge" | "ancienne_version" | "absent" | "source_absente" | "en_cours";
+export type BilanRow = { id: string; name: string; type: string; level: BilanLevel; problem: boolean; text: string; source: string | null; copies: string[]; stale: string[]; thumb: string | null; proofAt: string | null };
+export type Bilan = { rows: BilanRow[]; checking: { done: number; total: number; current: string | null } | null };
+
 export type ArtState = {
   bible: string | null;
   assets: ArtAsset[];
@@ -442,6 +447,9 @@ export const api = {
   artAside: (slug: string, id: string, aside: boolean) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/aside`, { aside }),
   artRetouch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/retouch`, {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
+  artBilan: (slug: string) => request<Bilan>("GET", `/projects/${slug}/art/bilan`),
+  artBilanVerify: (slug: string) => request<Bilan>("POST", `/projects/${slug}/art/bilan/verify`, {}),
+  artReintegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/reintegrate`, {}),
   artAtelierFile: (slug: string, id: string, name: string) => `/api/human/projects/${slug}/art/atelier/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
