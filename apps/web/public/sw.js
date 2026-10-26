@@ -9,10 +9,10 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: "Game Studio Hub", body: event.data ? event.data.text() : "" };
+    data = { title: "Nidavellir", body: event.data ? event.data.text() : "" };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "Game Studio Hub", {
+    self.registration.showNotification(data.title || "Nidavellir", {
       body: data.body || "",
       tag: data.tag,
       renotify: Boolean(data.tag),
