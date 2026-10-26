@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertHumanSession, type HumanSession } from "../auth/human-session.ts";
 import type { Clock } from "../clock.ts";
@@ -13,7 +13,10 @@ import type { Project, ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import type { VisionService } from "../vision/vision-service.ts";
 import { WEB_TOOLS } from "../llm/claude-cli.ts";
-import { CONCEPT_SCHEMA, ConceptTurn, conceptSystemPrompt } from "./prompts.ts";
+import { CONCEPT_SCHEMA, ConceptTurn, conceptSystemPrompt, missingSections } from "./prompts.ts";
+import { godotTests } from "../godot/run.ts";
+import { claudeMdGodot, DEFAULT_SETUP, scaffoldGodot } from "../godot/scaffold.ts";
+import type { GodotInstall } from "../godot/toolchain.ts";
 import { PENDING_VISUALS } from "../art/manifest.ts";
 
 export class ConceptionError extends Error {
@@ -24,7 +27,8 @@ export class ConceptionError extends Error {
 }
 
 /** `thread` : discussion d'où le directeur a demandé la conception (ADR-34) ; les chantiers y reviendront. */
-export type ConceptionData = Omit<ConceptTurn, "reply" | "questions" | "transmettre"> & { questions: ConceptTurn["questions"]; error?: string; thread?: string };
+/** `missing` : les sections du dossier encore absentes ou vides (ADR-73), calculées par le hub à chaque lecture. */
+export type ConceptionData = Omit<ConceptTurn, "reply" | "questions" | "transmettre"> & { questions: ConceptTurn["questions"]; error?: string; thread?: string; missing?: string[] };
 export type Conception = {
   id: string;
   kind: "project" | "feature";
@@ -38,7 +42,7 @@ export type Conception = {
 };
 export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
 
-const EMPTY: ConceptionData = { title: "Nouvelle conception", engine: "", dossier: "", chantiers: [], visuels: [], ready: false, claude_md: "", sources: [], questions: [] };
+const EMPTY: ConceptionData = { title: "Nouvelle conception", engine: "", godot: null, dossier: "", chantiers: [], visuels: [], ready: false, claude_md: "", sources: [], questions: [] };
 
 /** Ce que le Concepteur confie au Directeur artistique (ADR-59) : des fiches de visuels, rattachées à la conception. */
 export type ArtBriefPort = {
@@ -69,6 +73,8 @@ export class ConceptionService {
   skills: { promptBlock(agent: "concepteur", project: string | null): string } | null = null;
   /** Racine des jeux, pour créer un projet quand vous dites « transmets » (posée par le serveur). */
   gamesRoot: string | null = null;
+  /** Le Godot du PC (ADR-73) : sa version guide le Concepteur, et « Créer le projet » pose le socle d'un jeu Godot. */
+  godot: (() => GodotInstall | null) | null = null;
   /** État du jeu et chantiers du projet, pour une fonctionnalité d'un jeu existant (ADR-34). */
   projectState: ((project: string) => string) | null = null;
   /** Le Directeur artistique, qui reçoit les visuels de la conception (ADR-59) ; et ce qu'il a déjà, pour ne pas le redemander. */
@@ -216,6 +222,7 @@ export class ConceptionService {
     const c = this.get(id);
     if (c.kind !== "project" || c.status === "done") throw new ConceptionError("Cette conception ne peut pas créer de projet");
     if (!c.data.ready) throw new ConceptionError("La conception n'est pas encore prête : répondez d'abord aux questions bloquantes");
+    if (c.data.missing?.length) throw new ConceptionError(`Le dossier a encore des trous : ${c.data.missing.join(", ")}. Demandez au Concepteur de les compléter.`);
     const slug = slugify(c.data.title);
     const root = join(gamesRoot, slug);
     if (existsSync(root) && readdirSync(root).length) throw new ConceptionError(`Le dossier ${root} existe déjà et n'est pas vide`);
@@ -224,9 +231,32 @@ export class ConceptionService {
     if (c.data.claude_md.trim()) writeFileSync(join(root, "CLAUDE.md"), c.data.claude_md.trim() + "\n", "utf8");
     writeFileSync(join(root, "studio", "conception.md"), c.data.dossier.trim() + "\n", "utf8");
     await this.#vcs.commitPaths(root, ["CLAUDE.md", "studio"].filter((p) => existsSync(join(root, p))), `conception: dossier initial de ${c.data.title}`);
+    const socle = c.data.engine === "godot" ? await this.#godotSocle(root, c) : null;
     const { tasks, thread } = await this.#seed(project.slug, c, { dossier: "studio/conception.md", launch: !!opts.launch });
+    if (socle && thread) this.#conversations.notify(project.slug, thread, socle);
     this.#finish(id, project.slug, { tasks });
     return { project, tasks, thread };
+  }
+
+  /**
+   * Le socle d'un jeu Godot (ADR-73) : projet réglé d'après la conception, outils du studio, section du CLAUDE.md, puis
+   * import et premier test avec le Godot du PC. Rend le compte rendu pour la discussion du projet.
+   */
+  async #godotSocle(root: string, c: Conception): Promise<string> {
+    const godot = this.godot?.() ?? null;
+    const version = godot?.version ?? "4.6";
+    const setup = { ...DEFAULT_SETUP, ...(c.data.godot ?? {}) };
+    if (setup.langage === "csharp" && !godot?.mono) setup.langage = "gdscript";
+    const claudeMd = join(root, "CLAUDE.md");
+    writeFileSync(claudeMd, `${existsSync(claudeMd) ? readFileSync(claudeMd, "utf8").trimEnd() + "\n" : `# ${c.data.title}\n`}${claudeMdGodot(version, setup)}`, "utf8");
+    const files = scaffoldGodot(root, c.data.title, version, setup);
+    const check = godot ? await godotTests(godot.exe, root) : null;
+    await this.#vcs.commitPaths(root, ["CLAUDE.md", ...files], `studio: socle Godot ${version} (projet, tests, relais du testeur)`);
+    const how = `Godot ${version}, rendu ${setup.rendu}, ${setup.dimension.toUpperCase()}, écran ${setup.largeur}×${setup.hauteur}, ${setup.langage === "csharp" ? "C#" : "GDScript"}`;
+    if (!check) return `Socle Godot posé (${how}) : projet, dossiers, outil de tests et relais du testeur. Godot n'est pas sur ce PC : rien n'a pu être lancé.`;
+    return check.status === "pass"
+      ? `Socle Godot posé et vérifié (${how}) : le projet s'importe, la scène de départ se lance et son premier test passe. Le premier chantier part de là.`
+      : `Socle Godot posé (${how}), mais sa vérification a échoué : ${check.detail.slice(0, 400)}`;
   }
 
   /** « Ajouter les chantiers » : dossier dans studio/conceptions/, discussion et chantiers en attente dans le projet. */
@@ -387,7 +417,7 @@ export class ConceptionService {
         "Réponds au dernier message du directeur créatif, mets le dossier à jour, puis pose les questions les plus utiles (ou aucune).",
       ].join("\n\n");
       const { data, costUsd } = await this.#orchestrator.structured({
-        systemPrompt: [conceptSystemPrompt(c.kind, context), this.skills?.promptBlock("concepteur", c.project) ?? ""].filter(Boolean).join("\n\n"),
+        systemPrompt: [conceptSystemPrompt(c.kind, context, c.kind === "project" ? (this.godot?.() ?? null) : null), this.skills?.promptBlock("concepteur", c.project) ?? ""].filter(Boolean).join("\n\n"),
         prompt,
         jsonSchema: CONCEPT_SCHEMA,
         meta: { project: c.project, agent: "concepteur" },
@@ -462,10 +492,15 @@ function toConception(r: Row): Conception {
     project: (r.project as string | null) ?? null,
     title: String(r.title),
     status: r.status as Conception["status"],
-    data: { ...EMPTY, ...(JSON.parse(String(r.data_json)) as Partial<ConceptionData>) },
+    data: withMissing(r.kind as Conception["kind"], { ...EMPTY, ...(JSON.parse(String(r.data_json)) as Partial<ConceptionData>) }),
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
+}
+
+/** Les trous du dossier, seulement une fois qu'il existe (ADR-73). */
+function withMissing(kind: Conception["kind"], data: ConceptionData): ConceptionData {
+  return { ...data, missing: data.dossier.trim() ? missingSections(data.dossier, kind) : [] };
 }
 
 const steps = (c: Conception) => new Set(c.data.chantiers.map((ch) => ch.etape).filter(Boolean)).size;

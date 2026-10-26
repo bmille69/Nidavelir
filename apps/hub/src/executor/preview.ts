@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFi
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { godotImport } from "../godot/run.ts";
+import { isGodot, type GodotInstall } from "../godot/toolchain.ts";
 
 export class PreviewError extends Error {
   constructor(message: string) {
@@ -11,7 +13,8 @@ export class PreviewError extends Error {
   }
 }
 
-export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
+/** `desktop` : un jeu Godot (ADR-73), ouvert dans sa propre fenêtre sur le PC ; il n'a pas d'adresse. */
+export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string; desktop?: boolean };
 
 type Running = Preview & { child: ChildProcess };
 
@@ -26,9 +29,12 @@ export class PreviewService {
 
   readonly #workDir: string | null;
 
-  constructor(options: { startTimeoutMs?: number; workDir?: string } = {}) {
+  readonly #godot: () => GodotInstall | null;
+
+  constructor(options: { startTimeoutMs?: number; workDir?: string; godot?: () => GodotInstall | null } = {}) {
     this.#startTimeoutMs = options.startTimeoutMs ?? 90_000;
     this.#workDir = options.workDir ?? null;
+    this.#godot = options.godot ?? (() => null);
   }
 
   list(project?: string): Preview[] {
@@ -42,6 +48,7 @@ export class PreviewService {
     // Un seul essai à la fois par projet : deux serveurs de jeu se gêneraient.
     for (const p of this.list(project)) this.stop(p.key);
 
+    if (isGodot(cwd)) return this.#startGodot(key, project, task, cwd);
     const pkg = join(cwd, "package.json");
     if (!existsSync(pkg)) throw new PreviewError("Ce jeu n'a pas de package.json : je ne sais pas encore le lancer (jeux web uniquement pour l'instant).");
     const scripts = (JSON.parse(readFileSync(pkg, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
@@ -94,6 +101,26 @@ export class PreviewService {
     });
 
     const preview: Running = { key, project, task, url, started_at: new Date().toISOString(), child };
+    this.#running.set(key, preview);
+    child.on("exit", () => this.#running.delete(key));
+    return this.list().find((p) => p.key === key)!;
+  }
+
+  /** Jeu Godot (ADR-73) : import, puis le jeu dans sa fenêtre, sur le PC, pour que vous y jouiez. */
+  async #startGodot(key: string, project: string, task: string | null, cwd: string): Promise<Preview> {
+    const godot = this.#godot();
+    if (!godot) throw new PreviewError("Godot est introuvable sur ce PC : posez Godot_v4.x-stable_win64.exe sur le bureau, ou indiquez son chemin dans STUDIO_GODOT.");
+    const imported = await godotImport(godot.exe, cwd);
+    if (imported.status === "fail") throw new PreviewError(`Le projet ne s'importe pas : ${imported.detail.slice(0, 400)}`);
+    const child = spawn(godot.exe, ["--path", cwd], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 2500);
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        reject(new PreviewError(`Le jeu s'est fermé au lancement (code ${code}).`));
+      });
+    });
+    const preview: Running = { key, project, task, url: "", started_at: new Date().toISOString(), desktop: true, child };
     this.#running.set(key, preview);
     child.on("exit", () => this.#running.delete(key));
     return this.list().find((p) => p.key === key)!;

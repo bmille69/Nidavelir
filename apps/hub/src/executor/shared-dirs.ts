@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import type { VcsPort } from "../vcs/git.ts";
 
@@ -24,6 +24,12 @@ export async function linkSharedDirs(repo: string, worktree: string, vcs: VcsPor
     if (dir === "node_modules" && hasWorkspaceLinks(target, repo)) mirrorModules(target, link, repo, worktree);
     else symlinkSync(target, link, LINK);
     linked.push(dir);
+  }
+  // Godot (ADR-73) : le cache d'import (.godot) est copié, jamais lié (l'import y écrit) ; la copie n'importe que ce
+  // que le chantier change, au lieu de tout le jeu.
+  const cache = join(repo, ".godot");
+  if (existsSync(join(repo, "project.godot")) && existsSync(cache) && !existsSync(join(worktree, ".godot")) && (await vcs.isIgnored(repo, ".godot"))) {
+    cpSync(cache, join(worktree, ".godot"), { recursive: true });
   }
   return linked;
 }

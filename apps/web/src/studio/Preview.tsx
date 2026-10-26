@@ -26,7 +26,7 @@ export function TryButton({ slug, task, label, small }: { slug: string; task?: s
     try {
       const p = await api.startPreview(slug, task);
       setRunning(p);
-      if (!p.opened) window.open(p.url, "_blank");
+      if (!p.opened && !p.desktop) window.open(p.url, "_blank");
       setState("idle");
     } catch (e) {
       setError((e as Error).message);
@@ -43,9 +43,13 @@ export function TryButton({ slug, task, label, small }: { slug: string; task?: s
     <span className="try">
       {running ? (
         <>
-          <button className="link try-open" onClick={start}>
-            ▶ Le jeu tourne : ouvrir
-          </button>
+          {running.desktop ? (
+            <span className="try-open small">▶ Le jeu est ouvert sur le PC</span>
+          ) : (
+            <button className="link try-open" onClick={start}>
+              ▶ Le jeu tourne : ouvrir
+            </button>
+          )}
           <button className={`link ${small ? "small" : ""}`} onClick={stop}>
             arrêter
           </button>

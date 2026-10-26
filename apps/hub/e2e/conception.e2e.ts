@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server/http.ts";
+import { PROJECT_SECTIONS } from "../src/conception/prompts.ts";
 import { FakeOrchestrator } from "../test/fake-orchestrator.ts";
 import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
 
@@ -36,6 +37,9 @@ Un roguelike de 15 minutes où l'on incarne un chat qui traverse le Néant.
 3. Choisir une récompense
 ## Estimation
 Environ 12 chantiers pour la première version jouable (ordre de grandeur).`;
+
+/** Le dossier une fois complet : les sections qu'un nouveau jeu ne doit pas oublier (ADR-73). */
+const COMPLETE = [DOSSIER, ...PROJECT_SECTIONS.filter((x) => !DOSSIER.includes(`## ${x}`)).map((x) => `## ${x}\nPrévu pour « ${x} » : quelques mots utiles.`)].join("\n");
 
 const turn = (over: Record<string, unknown>) => ({
   reply: "Si je comprends bien : un roguelike court, nerveux, avec des chats. Deux questions pour cadrer, le reste je le propose dans le dossier.",
@@ -96,7 +100,7 @@ afterAll(async () => {
 
 describe("Concepteur", () => {
   it("idée en vrac → questions → choisis pour moi → créer le projet", async () => {
-    fake.extractions.push(() => turn({}) as never, () => turn({ ready: true, questions: [], claude_md: "# Chats du Néant\nTextes en français ; tests avec Vitest." }) as never);
+    fake.extractions.push(() => turn({}) as never, () => turn({ ready: true, questions: [], dossier: COMPLETE, claude_md: "# Chats du Néant\nTextes en français ; tests avec Vitest." }) as never);
 
     await page.locator(".side-nav a", { hasText: "Nouveau projet" }).click();
     await page.getByRole("heading", { name: "Nouveau projet" }).waitFor();
@@ -122,8 +126,8 @@ describe("Concepteur", () => {
     // La discussion « Conception » et les chantiers prêts à lancer.
     await page.locator(".threads a", { hasText: "Conception : Chats du Néant" }).click();
     await page.locator(".workshop-list", { hasText: "Base technique" }).getByRole("button", { name: /Lancer ce chantier/ }).first().waitFor();
-    await page.locator(".msg", { hasText: "Premiers chantiers, prêts à lancer" }).waitFor();
+    await page.locator(".msg", { hasText: "Chantiers de toutes les étapes, prêts à lancer" }).waitFor();
     await page.screenshot({ path: join(shots, "concept-4-projet.png") });
     expect(pageErrors).toEqual([]);
-  });
+  }, 90_000);
 });

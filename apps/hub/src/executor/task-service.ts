@@ -1,4 +1,5 @@
 import type { PlayRequest, PlayResult, PlaytestService } from "../quality/playtest.ts";
+import { GODOT_IMPORT, GODOT_TESTS, hasBridge, hasStudioTests, isGodot } from "../godot/toolchain.ts";
 import type { SkillService } from "../skills/skill-service.ts";
 import type { UsageService } from "../usage/usage-service.ts";
 import {
@@ -577,7 +578,7 @@ export class TaskService {
         const hubChecks = await Promise.resolve(this.beforeVerify?.(this.get(project, id)) ?? null).catch(() => null);
         // Vérification QA automatique, en lecture seule.
         this.#spawn(this.get(project, id), "verify", new PolicyEngine({ mode: "verify", root: task.worktree!, plan, readable: this.#readable(task) }), {
-          systemPrompt: verificationSystemPrompt(ctx, this.playtest !== null && hasDevScript(task.worktree!)),
+          systemPrompt: verificationSystemPrompt(ctx, this.playtest !== null && canPlay(task.worktree!)),
           prompt: verificationPrompt(task, plan, decisions, patch, report, hubChecks),
           jsonSchema: VERIFY_SCHEMA,
           onResult: (v) => {
@@ -883,7 +884,7 @@ export class TaskService {
       let outcome: RunOutcome | null = null;
       try {
         const runDir = join(this.#opts.dataDir, "runs", id);
-        const play = kind === "verify" && this.playtest !== null && hasDevScript(task.worktree!);
+        const play = kind === "verify" && this.playtest !== null && canPlay(task.worktree!);
         // Compétences du studio (ADR-29) : un plugin propre au run, seules ces skills sont permises.
         const plugin = this.skills?.pluginFor(kind === "verify" ? "qa" : "developer", task.project, runDir) ?? null;
         if (plugin) this.#event(run, "info", `Compétences disponibles : ${plugin.names.map((n) => n.split(":")[1]).join(", ")}`);
@@ -1035,7 +1036,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
 
   #context(task: Task): ProjectContext {
     const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
-    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")), state: this.gameState?.(task.project) ?? null };
+    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")), state: this.gameState?.(task.project) ?? null, godot: isGodot(task.worktree!) };
   }
 
   #update(task: Task, patch: Partial<Task> & { status?: TaskStatus }): Task {
@@ -1076,8 +1077,9 @@ function summarizeInput(input: Record<string, unknown>): Record<string, unknown>
   return out;
 }
 
-/** Jeu web lançable par la manette du testeur (même condition que « ▶ Essayer »). */
-function hasDevScript(root: string): boolean {
+/** Jeu que la manette du testeur sait lancer : un jeu web (script « dev », comme « ▶ Essayer ») ou un jeu Godot avec le relais du studio (ADR-73). */
+function canPlay(root: string): boolean {
+  if (isGodot(root)) return hasBridge(root);
   try {
     return Boolean((JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> }).scripts?.dev);
   } catch {
@@ -1087,6 +1089,12 @@ function hasDevScript(root: string): boolean {
 
 /** Scripts de vérification du projet (package.json), dans l'ordre du plus rapide au plus complet. */
 export function verificationScripts(root: string): { cmd: string; purpose: string }[] {
+  // Jeu Godot (ADR-73) : import du projet, puis ses tests par le lanceur du studio.
+  if (isGodot(root))
+    return [
+      { cmd: GODOT_IMPORT, purpose: "importer le projet Godot (erreurs de scènes ou de ressources)" },
+      ...(hasStudioTests(root) ? [{ cmd: GODOT_TESTS, purpose: "tests du jeu (lanceur du studio)" }] : []),
+    ];
   const pkg = join(root, "package.json");
   if (!existsSync(pkg)) return [];
   let scripts: Record<string, string> = {};

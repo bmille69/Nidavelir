@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeOrchestrator } from "./fake-orchestrator.ts";
 import { cleanupSandboxes, git, sandbox } from "./helpers.ts";
+import { missingSections, PROJECT_SECTIONS } from "../src/conception/prompts.ts";
 
 vi.setConfig({ testTimeout: 30_000 });
 afterEach(() => cleanupSandboxes());
@@ -29,6 +30,10 @@ const turn = (over: Record<string, unknown> = {}) => ({
   sources: [{ title: "Hades", url: "https://example.invalid/hades" }],
   ...over,
 });
+
+/** Un dossier de nouveau jeu sans trou : chaque section a quelques mots (ADR-73). */
+const fullDossier = (title: string, extra = "") =>
+  [`# ${title}`, ...PROJECT_SECTIONS.map((s) => `## ${s}\nCe qui est prévu pour « ${s} », en quelques mots utiles.`)].join("\n") + extra;
 
 describe("Concepteur", () => {
   it("de l'idée en vrac au projet prêt à coder", async () => {
@@ -58,8 +63,20 @@ describe("Concepteur", () => {
     now = sb.hub.conceptions.get(c.id);
     expect(now.data.ready).toBe(true);
     expect(sb.hub.conceptions.messages(c.id).map((m) => m.role)).toEqual(["human", "concepteur", "human", "concepteur"]);
+    // Pas de Godot sur ce PC de test : le Concepteur le sait.
+    expect(fake.calls[1]!.systemPrompt).toMatch(/Godot n'est pas installé sur ce PC/);
     // Le second tour voit le dossier du premier et les échanges.
     expect(fake.calls[1]!.prompt).toMatch(/<dossier_actuel>\n# Chats du Néant[\s\S]*Navigateur/);
+
+    // Prêt, mais le dossier d'un nouveau jeu a des trous (ADR-73) : le hub les montre et refuse de créer le projet.
+    expect(now.data.missing).toContain("Contrôles et caméra");
+    expect(now.data.missing).toContain("Son et musique");
+    await expect(sb.hub.conceptions.createProject(sb.human(), c.id, join(sb.dir, "games"))).rejects.toThrow(/trous : Piliers, Boucle de jeu, Contrôles et caméra/);
+    expect(fake.calls[1]!.systemPrompt).toMatch(/## Contrôles et caméra[\s\S]*## Tests et outils de débogage[\s\S]*Ne mets "ready" à true que si aucune section n'est vide/);
+    fake.extractions.push(() => turn({ ready: true, questions: [], claude_md: "# Chats du Néant\nTextes en français.", dossier: fullDossier("Chats du Néant", "\nUn roguelike de 15 minutes avec des chats.") }) as never);
+    sb.hub.conceptions.reply(sb.human(), c.id, "Complète le dossier");
+    await sb.hub.conceptions.idle();
+    expect(sb.hub.conceptions.get(c.id).data.missing).toEqual([]);
 
     const { project, tasks } = await sb.hub.conceptions.createProject(sb.human(), c.id, join(sb.dir, "games"));
     expect(project).toMatchObject({ slug: "chats-du-neant", autonomy: "workshop" });
@@ -70,6 +87,49 @@ describe("Concepteur", () => {
     expect(sb.hub.tasks.get(project.slug, tasks[0]!)).toMatchObject({ title: "Base technique", status: "draft", origin: { thread: expect.any(String) } });
     expect(sb.hub.conceptions.get(c.id).status).toBe("done");
     expect(existsSync(join(sb.dir, "games", "chats-du-neant", ".git"))).toBe(true);
+  });
+
+  it("un jeu Godot (ADR-73) : le Concepteur connaît le Godot du PC, « Créer le projet » pose le socle et le CLAUDE.md", async () => {
+    const fake = new FakeOrchestrator();
+    const sb = sandbox(fake);
+    sb.hub.conceptions.godot = () => ({ exe: join(sb.dir, "absent", "Godot_v4.6.2-stable_win64.exe"), version: "4.6.2", mono: false });
+    const godot = { rendu: "gl_compatibility", dimension: "2d", largeur: 640, hauteur: 360, langage: "csharp" };
+    fake.extractions.push(() => turn({ title: "Neuf Vies", engine: "godot", godot, ready: true, questions: [], claude_md: "# Neuf Vies\nTextes en français.", dossier: fullDossier("Neuf Vies") }) as never);
+    const c = sb.hub.conceptions.start(sb.human(), { kind: "project", idea: "un roguelike avec des chats sur PC" });
+    await sb.hub.conceptions.idle();
+    expect(fake.calls[0]!.systemPrompt).toMatch(/le PC a Godot 4\.6\.2 \(sans \.NET : GDScript seulement\)[\s\S]*le HUB pose lui-même le socle/);
+
+    // Le « Godot » du test n'existe pas : le socle est posé, rien n'est lancé, et la discussion le dit.
+    const real = sb.hub.conceptions.godot;
+    sb.hub.conceptions.godot = () => null;
+    const { project } = await sb.hub.conceptions.createProject(sb.human(), c.id, join(sb.dir, "games"));
+    sb.hub.conceptions.godot = real;
+    const root = project.root;
+    const projectGodot = readFileSync(join(root, "project.godot"), "utf8");
+    expect(projectGodot).toMatch(/config\/name="Neuf Vies"/);
+    expect(projectGodot).toMatch(/config\/features=PackedStringArray\("4\.6", "GL Compatibility"\)/);
+    expect(projectGodot).toMatch(/window\/size\/viewport_width=640[\s\S]*viewport_height=360/);
+    expect(projectGodot).toMatch(/StudioBridge="\*res:\/\/addons\/studio_bridge\/bridge\.gd"/);
+    for (const f of ["scenes/main.tscn", "scripts/main.gd", "tests/test_demarrage.gd", "vitrines/README.md", ".gitignore", "addons/studio_bridge/bridge.gd", "addons/studio_tests/run.gd", "addons/studio_tests/studio_test.gd"]) expect(existsSync(join(root, f)), f).toBe(true);
+    expect(readFileSync(join(root, "scenes", "main.tscn"), "utf8")).toMatch(/type="Node2D"/);
+    expect(readFileSync(join(root, ".gitignore"), "utf8")).toMatch(/^\.godot\/$/m);
+    // C# demandé sans Godot .NET sur le PC : GDScript.
+    const claudeMd = readFileSync(join(root, "CLAUDE.md"), "utf8");
+    expect(claudeMd).toMatch(/Textes en français[\s\S]*## Godot dans le studio[\s\S]*Godot 4\.6[\s\S]*GDScript typé[\s\S]*godot --headless --path \. -s res:\/\/addons\/studio_tests\/run\.gd/);
+    expect(git(root, "log", "--format=%s")).toMatch(/studio: socle Godot 4\.6/);
+    expect(git(root, "status", "--porcelain")).toBe("");
+    const thread = sb.hub.conversations.listThreads(project.slug)[0]!;
+    expect(sb.hub.conversations.messages(project.slug, thread.id).at(-1)!.text).toMatch(/Socle Godot posé \(Godot 4\.6, rendu gl_compatibility, 2D, écran 640×360, GDScript\)[\s\S]*rien n'a pu être lancé/);
+  });
+
+  it("les trous du dossier : section absente, vide ou presque ; « Questions encore ouvertes » peut dire « aucune »", () => {
+    const full = fullDossier("X");
+    expect(missingSections(full, "project")).toEqual([]);
+    expect(missingSections(full.replace("## Son et musique\n", "## Son et musique\nAucun.\n## Rien\n"), "project")).toEqual(["Son et musique"]);
+    expect(missingSections(full.replace(/## Questions encore ouvertes\n.*$/, "## Questions encore ouvertes\nAucune."), "project")).toEqual([]);
+    expect(missingSections("# X\n## en une phrase\nUn jeu de chats très court et nerveux.", "feature")).toContain("Piliers");
+    // Accents et majuscules ne comptent pas.
+    expect(missingSections(full.replace("## Écrans et parcours du joueur", "## ECRANS ET PARCOURS DU JOUEUR (titre, pause)"), "project")).toEqual([]);
   });
 
   it("une fonctionnalité d'un projet existant : le Concepteur connaît le code, les chantiers arrivent dans le projet", async () => {

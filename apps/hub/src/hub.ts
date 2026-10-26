@@ -9,6 +9,7 @@ import { BootstrapService } from "./projects/bootstrap.ts";
 import { ProjectRegistry, type RegistryOptions } from "./projects/project-registry.ts";
 import { GitCli, type VcsPort } from "./vcs/git.ts";
 import { CaptureStore } from "./conversation/captures.ts";
+import type { GodotInstall } from "./godot/toolchain.ts";
 import { TaskService } from "./executor/task-service.ts";
 import { ExecutorError, type ExecutorPort } from "./executor/port.ts";
 import { dirname, join } from "node:path";
@@ -66,6 +67,8 @@ export type HubOptions = {
   conceptWeb?: boolean;
   /** Vérifications du hub avant fusion : tests du jeu et lancement (ADR-32). Absent : aucune. */
   checker?: CheckerPort;
+  /** Le Godot du PC (ADR-73) : « ▶ Essayer », le socle des nouveaux projets Godot. */
+  godot?: () => GodotInstall | null;
   /** La manette du testeur : il joue au jeu du chantier dans un navigateur invisible (ADR-69). Absente : il ne joue pas. */
   playDriver?: PlayDriver;
   /** Modèle par défaut de chaque agent, tant que vous n'en choisissez pas un dans le studio (ADR-37). */
@@ -170,7 +173,7 @@ export function createHub(options: HubOptions): Hub {
   skills.attach(tasks);
   tasks.skills = skills;
   conversations.skills = skills;
-  const previews = new PreviewService({ workDir: options.dataDir ?? dirname(options.databasePath) });
+  const previews = new PreviewService({ workDir: options.dataDir ?? dirname(options.databasePath), godot: options.godot });
   tasks.usage = usage;
   let autopilot: Autopilot | null = null;
   if (options.autopilot) {
@@ -289,6 +292,8 @@ export function createHub(options: HubOptions): Hub {
   });
   // Le Concepteur confie les visuels de ses conceptions au Directeur artistique, et sait ce qui existe déjà (ADR-59).
   conceptions.art = art;
+  // Le Godot du PC guide le Concepteur et sert au socle des nouveaux jeux Godot (ADR-73).
+  conceptions.godot = options.godot ?? null;
   // Un visuel validé attend que son chantier ait posé sa place dans le jeu (ADR-60).
   art.tasks = tasks;
   // La file des visuels attend, comme celle des chantiers, quand la jauge d'abonnement est presque pleine (ADR-62).

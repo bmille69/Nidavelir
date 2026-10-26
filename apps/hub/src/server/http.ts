@@ -682,7 +682,8 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     // Depuis l'ordinateur, le hub ouvre lui-même le jeu dans Edge ; depuis un téléphone, rien ne s'ouvre sur le PC.
     const openPreview = (req: FastifyRequest, p: Preview) => {
       const [sid] = readSessionCookie(req);
-      return { ...p, opened: !hub.sessions.isDevice(sid) && openInEdge(p.url) };
+      // Un jeu Godot s'ouvre dans sa fenêtre, sur le PC, d'où que vienne la demande (ADR-73).
+      return { ...p, opened: p.desktop ? true : !hub.sessions.isDevice(sid) && openInEdge(p.url) };
     };
     api.post("/projects/:slug/preview", async (req) => {
       const { slug } = req.params as { slug: string };

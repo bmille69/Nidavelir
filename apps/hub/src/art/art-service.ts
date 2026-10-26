@@ -15,6 +15,7 @@ import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
 import { computeBilan, wasLoaded, type BilanRow } from "./bilan.ts";
+import { isGodot } from "../godot/toolchain.ts";
 import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
   ART_SYSTEM,
@@ -712,7 +713,7 @@ export class ArtService {
         : "",
       "- La bible visuelle (studio/art/bible.md) et le manifeste (studio/art/assets.json) disent le reste.",
       `Lance un chantier dont le titre commence par « ${id} » : le développeur copie le fichier depuis studio/art/ vers les ressources du jeu (sans rien télécharger), le branche à l'endroit prévu, et l'ajoute aux crédits.`,
-      `Scène vitrine : si le jeu ne l'a pas encore, le même chantier l'ajoute, une fois pour toutes (vérifie-la avant de finir). ${vitrineScene(id)}`,
+      `Scène vitrine : si le jeu ne l'a pas encore, le même chantier l'ajoute, une fois pour toutes (vérifie-la avant de finir). ${vitrineScene(id, isGodot(gameRoot))}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -821,7 +822,7 @@ export class ArtService {
           a.ingame.summary,
           ...a.ingame.points.map((p) => `- ${p}`),
           missing
-            ? `Lance un chantier dont le titre commence par « ${id} » pour faire marcher la scène vitrine, sans changer le fichier validé. ${vitrineScene(id)} Vérifie-la (test de bout en bout qui ouvre « ?vitrine=${id} » et y trouve l'asset) avant de finir.`
+            ? `Lance un chantier dont le titre commence par « ${id} » pour faire marcher la scène vitrine, sans changer le fichier validé. ${vitrineScene(id, isGodot(gameRoot))} Vérifie-la (${isGodot(gameRoot) ? `test StudioTest qui charge res://vitrines/${id.toLowerCase()}.tscn et y trouve l'asset` : `test de bout en bout qui ouvre « ?vitrine=${id} » et y trouve l'asset`}) avant de finir.`
             : `Lance un chantier dont le titre commence par « ${id} » pour corriger l'intégration (taille, orientation, éclairage, fond…), sans changer le fichier validé.`,
         ].join("\n");
         void this.#conversations.send(project, thread.id, text).catch(() => {});
@@ -2319,7 +2320,10 @@ function sameAnimations(have: string[], want: string[]): boolean {
 }
 
 /** La scène vitrine que le hub photographie (ADR-49), telle que le développeur doit la faire. */
-function vitrineScene(id: string): string {
+function vitrineScene(id: string, godot = false): string {
+  // Jeu Godot (ADR-73) : le relais du studio ouvre res://vitrines/<id>.tscn quand le hub lance le jeu avec --vitrine=<id>.
+  if (godot)
+    return `Jeu Godot : la scène vitrine est res://vitrines/${id.toLowerCase()}.tscn ; le relais du studio l'ouvre tout seul quand le hub lance le jeu avec « --vitrine=${id} ». Elle montre seulement cet asset, sans menu ni écran d'accueil : caméra, lumière et sol du jeu, à sa taille réelle à côté du joueur pour l'échelle, son animation de marche ou d'attente en boucle. Le hub s'en sert pour photographier chaque visuel intégré.`;
   return `Quand l'adresse du jeu contient « ?vitrine=${id} » (n'importe quel identifiant d'asset intégré), le jeu affiche seulement cet asset, dès le chargement, sans menu ni écran d'accueil : caméra, lumière et sol du jeu, à sa taille réelle à côté du joueur pour l'échelle, son animation de marche ou d'attente en boucle. Le hub s'en sert pour photographier chaque visuel intégré.`;
 }
 

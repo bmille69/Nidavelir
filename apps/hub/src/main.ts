@@ -10,6 +10,7 @@ import { defaultRegistryOptions } from "./projects/project-registry.ts";
 import { buildServer } from "./server/http.ts";
 import { RealChecker } from "./quality/checks.ts";
 import { RealPlayDriver } from "./quality/playtest.ts";
+import { godotLocator } from "./godot/toolchain.ts";
 
 const hubRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const dataDir = process.env.STUDIO_DATA_DIR ? resolve(process.env.STUDIO_DATA_DIR) : join(hubRoot, ".data");
@@ -17,6 +18,10 @@ const port = Number(process.env.STUDIO_PORT ?? 4317);
 const gamesRoot = process.env.STUDIO_GAMES_ROOT ?? "C:\\Games";
 
 const cli = new ClaudeCli(join(dataDir, "claude-work"));
+// Le Godot du PC (ADR-73) : trouvé sur le bureau ou ailleurs, donné aux agents sous le nom « godot ».
+const godot = godotLocator(dataDir);
+const found = godot();
+console.log(found ? `  Godot ${found.version} : ${found.exe}` : "  Godot : introuvable (jeux Godot sans tests ni essais)");
 // Modèles choisis dans « Le studio en direct », lus à chaque appel (ADR-37) ; défauts recommandés (ADR-36).
 const orchestrator = new DirectClaudeOrchestrator(cli, () => ({ chat: hub.models.get("director"), structured: hub.models.get("archivist"), concept: hub.models.get("concepteur"), archeologue: hub.models.get("archeologue"), art: hub.models.get("art_director"), artisan: hub.models.get("art_workshop") }));
 
@@ -41,9 +46,10 @@ const hub = createHub({
   // Téléphone (ADR-30) : publication du hub dans votre réseau Tailscale, à la demande.
   remotePort: port,
   // Avant chaque fusion automatique : tests du jeu et lancement dans un navigateur invisible (ADR-32).
-  checker: new RealChecker({ workDir: dataDir }),
+  checker: new RealChecker({ workDir: dataDir, godot }),
+  godot,
   // Le testeur joue au jeu du chantier avant de donner son avis (ADR-69).
-  playDriver: new RealPlayDriver({ workDir: dataDir }),
+  playDriver: new RealPlayDriver({ workDir: dataDir, godot }),
   usageProbe: async () => {
     await cli.call({ systemPrompt: "Réponds uniquement : ok", prompt: "ok", model: "haiku", tag: { agent: "compteur" } });
   },

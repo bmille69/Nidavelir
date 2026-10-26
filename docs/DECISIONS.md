@@ -929,3 +929,62 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `http.test.ts` : envoi, commit, image servie, faux PNG refusé, chemin piégé refusé ; le directeur a la lecture de `studio/captures` pour le tour avec image, et plus aucun accès au tour suivant ;
   - `annotate.e2e.ts` dans Edge : joindre, entourer à la souris (PC) puis au doigt (téléphone 390 px), envoyer. L'image annotée, à la taille de la capture (1280×720), est dans la discussion et commitée, le directeur répond. Captures examinées ;
   - 242 tests au vert ; les tests navigateur aussi, sauf celui du Concepteur, déjà en échec.
+
+### ADR-73 : les jeux Godot dans le studio, et un Concepteur qui n'oublie rien
+**Statut** : Retenue le 26/10/2026, avant le lancement d'un nouveau projet Godot (« j'ai besoin qu'avec le concepteur on fasse tout le nécessaire sans rien oublier »). Choix de l'utilisateur : les trois blocs, dans l'ordre. Le testeur joue dans le vrai Godot sur le PC, pas dans une version web.
+- **Le manque** : toute la chaîne de vérification était faite pour les jeux web (`npm`, Vite, navigateur). Avec Godot :
+  - le gardien bloquait toute commande `godot` ;
+  - le hub ne lançait ni les tests ni le jeu, et ne prenait pas de photo ;
+  - le testeur ne pouvait pas jouer, et « ▶ Essayer » ne marchait pas ;
+  - le premier chantier devait tout installer, sans rien pouvoir télécharger ;
+  - la version de Godot n'était pas fixée : le Concepteur avait proposé la 4.7 pour un PC qui a la 4.6.2.
+  Claude Code sait tester Godot quand il est libre ; c'étaient les règles du hub qui l'en empêchaient.
+- **Bloc 1, Godot dans le hub** (`apps/hub/src/godot/`) :
+  - **Trouver Godot** (`toolchain.ts`) : la variable `STUDIO_GODOT`, sinon le bureau, les téléchargements et les dossiers d'installation habituels. La version la plus récente l'emporte ; la version .NET (« mono ») est reconnue.
+  - Le hub pose une commande `godot` (script pour Git Bash et `.cmd`) dans `.data/tools/godot/bin`, mise en tête du PATH : les agents l'héritent.
+  - **Le gardien** (`godotCommand`) laisse passer, toujours avec `--headless` et dans la copie :
+    - l'import du projet ;
+    - le lanceur de tests du studio (`-- --only=<nom>` permis) ;
+    - une scène qui tourne quelques images (`--quit-after`/`--quit`) ;
+    - `--version`.
+  - Le reste est demandé : éditeur, export, autre script, débogage à distance, fenêtre.
+  - **Nos tests, sans GUT** (`addons/studio_tests`) : `tests/**/test_*.gd` qui « extends StudioTest ». Ils offrent assert_eq, assert_true, assert_almost_eq, assert_gt… ; add_scene, wait_frames, wait_seconds, hold_action ; before/after each/all.
+    - Le bilan « STUDIO_TESTS: n réussis, m échoués » et le code de sortie font foi.
+    - Une erreur de script pendant les tests (« SCRIPT ERROR »), qui n'arrête pas Godot, fait échouer la vérification.
+    - Pourquoi pas GUT : il aurait fallu télécharger et exécuter du code extérieur (refusé sans votre accord), et suivre sa version à chaque mise à jour de Godot. GUT pourra s'ajouter plus tard.
+  - **Le relais du testeur** (`addons/studio_bridge`, autoload `StudioBridge`) : inactif dans une partie normale. Lancé par le hub avec `-- --studio-bridge=<port>`, il écoute en local et permet :
+    - de jouer : touches, actions de l'Input Map, clics sur un bouton par son texte ou par coordonnées, toucher en mode téléphone, texte, attente ;
+    - de prendre des photos (JPEG ou PNG) ;
+    - de lire ce que voit le joueur : textes, boutons et leur position, actions du projet ;
+    - de lire l'état du jeu : le nœud du groupe `studio_test`, avec `snapshot()`, et `reset`, `set_seed`, `step` ;
+    - de lister les fichiers utilisés par la scène (pour le bilan, ADR-71) ;
+    - d'ouvrir la scène vitrine `res://vitrines/<id>.tscn` avec `--vitrine=<id>`.
+    - La fenêtre du jeu est placée hors de l'écran : elle s'affiche, donc les photos marchent, sans gêner celui qui travaille sur le PC.
+  - **Vérifications du hub** (`RealChecker`) pour un jeu Godot :
+    - tests : import, puis le lanceur ;
+    - lancement : import, puis le jeu avec le relais. Ses erreurs, une photo, la scène, les fichiers chargés ; `?vitrine=A-0001` devient `--vitrine=A-0001`.
+  - **La manette** (`GodotPlaySession`) : même outil `jouer` que pour le web. Le testeur reçoit des consignes Godot (actions, nœud `studio_test`, vitrines). Les agents reçoivent les commandes Godot dans leur contexte (`<godot>`), et le plan propose l'import et les tests.
+  - **« ▶ Essayer »** ouvre le jeu dans sa fenêtre, sur le PC, d'où que vienne la demande.
+  - **Chaque copie de chantier** reçoit une copie du cache d'import `.godot` (jamais un lien, l'import y écrit) : elle n'importe que ce que le chantier change.
+  - Les consignes d'intégration des visuels parlent des scènes vitrines Godot.
+- **Bloc 2, le socle** (`scaffold.ts`), posé par « Créer le projet » quand le moteur est Godot. Il est réglé d'après ce que le Concepteur a décidé (`godot` : rendu, 2D ou 3D, taille de base, langage) :
+  - `project.godot` sur la version du PC, avec le rendu, la fenêtre et l'adaptation de l'écran ;
+  - une scène de départ 2D, ou 3D avec caméra, soleil et sol, avec son nœud `studio_test` ;
+  - un premier test, les dossiers `scenes/ scripts/ assets/ data/ tests/ vitrines/`, `.gitignore` (`.godot/`) et `.gitattributes` (fins de ligne) ;
+  - les outils du studio, et une section « Godot dans le studio » ajoutée au CLAUDE.md (version, commandes, tests, Input Map, relais, vitrines, interdits).
+  - Le hub importe le projet, lance le premier test, commite (« studio: socle Godot … ») et dit le résultat dans la discussion du projet. C# demandé sans Godot .NET : GDScript.
+- **Bloc 3, le Concepteur** :
+  - le dossier d'un nouveau jeu a huit sections de plus : contrôles et caméra ; écrans et parcours du joueur ; sauvegarde et progression ; son et musique ; plateformes, affichage et performances ; langues et accessibilité ; architecture du projet ; tests et outils de débogage. Chacune a ce qu'elle doit couvrir, et le dossier passe de 1 500 à 2 500 mots au plus ;
+  - le hub calcule les **trous** du dossier (`missingSections`) : une section absente, ou de moins de quelques mots (« Questions encore ouvertes » et « Choix faits pour vous » peuvent dire « aucune ») ;
+  - l'écran les montre (« Il manque encore : … » ou « Dossier complet ») ;
+  - « Créer le projet » est refusé tant qu'il en reste ;
+  - le Concepteur connaît le Godot du PC : version exacte, .NET ou non. Il sait ce que le hub pose lui-même : le premier chantier bâtit la première scène jouable sur le socle, sans le refaire ;
+  - une fonctionnalité garde l'ancien dossier.
+- **Pas fait** : l'export web (choix de l'utilisateur) ; un atelier sonore (le dossier dit comment s'en passer) ; Godot n'est pas téléchargé par le hub (celui du bureau est trouvé tout seul).
+- **Vérifié** :
+  - `godot.e2e.ts` avec le vrai Godot 4.6.2. Socle ; tests réussis, puis un échec et un script qui plante, tous deux vus. Lancement : photo, scène, fichiers chargés. Scène vitrine par le relais. Partie jouée : deux clics sur « Compter », l'action maintenue, l'état lu, la remise à zéro, la photo. Une erreur au démarrage fait échouer le lancement ;
+  - essai à part des socles 2D et 3D, avec le premier test et le lancement, et en mode téléphone ; la commande `godot` dans Git Bash ;
+  - `policy.test.ts` : commandes Godot permises et refusées ;
+  - `conception.test.ts` : trous du dossier, refus puis création ; socle Godot, project.godot et CLAUDE.md ; Concepteur sans Godot ;
+  - `conception.e2e.ts` remis à jour : il échouait depuis l'ADR-57, à cause d'un message dont le texte avait changé ;
+  - 246 tests au vert, et les 37 tests navigateur aussi.

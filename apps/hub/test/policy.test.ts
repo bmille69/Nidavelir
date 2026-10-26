@@ -201,3 +201,34 @@ describe("validation d'un plan", () => {
     expect(problems.join("\n")).toMatch(/hors du projet[\s\S]*protégée[\s\S]*sensible[\s\S]*Commande refusée/);
   });
 });
+
+describe("Godot (ADR-73)", () => {
+  const verify = new PolicyEngine({ mode: "verify", root, plan });
+  it("import, tests du studio et scène qui tourne quelques images : sans fenêtre, dans la copie", () => {
+    for (const c of [
+      "godot --version",
+      "godot --headless --path . --import",
+      "godot --headless --path . -s res://addons/studio_tests/run.gd",
+      "godot --headless --path . -s addons/studio_tests/run.gd -- --only=joueur",
+      "godot --headless --path . res://scenes/main.tscn --quit-after 120",
+      "godot --headless --path . --import && godot --headless --path . -s res://addons/studio_tests/run.gd 2>&1 | tail -40",
+    ]) {
+      expect(d(exec, "Bash", { command: c }), c).toBe("allow");
+      expect(d(verify, "Bash", { command: c }), c).toBe("allow");
+    }
+    expect(d(planning, "Bash", { command: "godot --headless --path . --import" })).toBe("deny");
+  });
+  it("jamais l'éditeur, une fenêtre, un autre script, un export, ni un dossier hors de la copie", () => {
+    for (const c of [
+      "godot --path . --import",
+      "godot -e --path .",
+      "godot --headless --path . -s res://outils/pirate.gd",
+      "godot --headless --path . --export-release Windows jeu.exe",
+      "godot --headless --path . --remote-debug tcp://1.2.3.4:6007 --quit",
+      "godot --headless --path . -s res://addons/studio_tests/run.gd -- --rm=tout",
+      "godot --headless --path .",
+    ]) expect(d(exec, "Bash", { command: c }), c).toBe("ask");
+    expect(d(exec, "Bash", { command: "godot --headless --path ../.. --import" })).toBe("deny");
+    expect(d(verify, "Bash", { command: "godot -e --path ." })).toBe("deny");
+  });
+});

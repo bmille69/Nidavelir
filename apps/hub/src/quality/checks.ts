@@ -6,6 +6,8 @@ import type { Db } from "../db/database.ts";
 import { PreviewService } from "../executor/preview.ts";
 import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
+import { GodotGame, godotImport, godotTests } from "../godot/run.ts";
+import { hasBridge, hasStudioTests, isGodot, type GodotInstall } from "../godot/toolchain.ts";
 
 /** Résultat d'une vérification faite par le hub lui-même ; « none » = rien à vérifier ou impossible ici. */
 export type CheckOutcome = {
@@ -133,14 +135,24 @@ export class RealChecker implements CheckerPort {
   readonly #testTimeoutMs: number;
   readonly #watchMs: number;
 
-  constructor(options: { workDir: string; testTimeoutMs?: number; watchMs?: number }) {
+  readonly #godot: () => GodotInstall | null;
+
+  constructor(options: { workDir: string; testTimeoutMs?: number; watchMs?: number; godot?: () => GodotInstall | null }) {
     // Instance à part : ne coupe jamais le jeu que vous êtes en train d'essayer.
     this.#previews = new PreviewService({ workDir: options.workDir });
     this.#testTimeoutMs = options.testTimeoutMs ?? 5 * 60_000;
     this.#watchMs = options.watchMs ?? 6000;
+    this.#godot = options.godot ?? (() => null);
   }
 
   async tests(cwd: string): Promise<CheckOutcome> {
+    // Jeu Godot (ADR-73) : le lanceur de tests du studio, dans Godot sans fenêtre.
+    if (isGodot(cwd)) {
+      if (!hasStudioTests(cwd)) return { status: "none", detail: "pas d'outil de tests du studio (addons/studio_tests)" };
+      const godot = this.#godot();
+      if (!godot) return { status: "none", detail: "Godot introuvable sur ce PC" };
+      return godotTests(godot.exe, cwd, this.#testTimeoutMs);
+    }
     const scripts = readScripts(cwd);
     if (!scripts?.test) return { status: "none", detail: "pas de script « test »" };
     if (!existsSync(join(cwd, "node_modules"))) return { status: "none", detail: "dépendances absentes (node_modules)" };
@@ -183,6 +195,7 @@ export class RealChecker implements CheckerPort {
   }
 
   async launch(key: string, cwd: string, screenshot?: string, path = ""): Promise<CheckOutcome> {
+    if (isGodot(cwd)) return this.#launchGodot(cwd, screenshot, path);
     const scripts = readScripts(cwd);
     if (!scripts?.dev) return { status: "none", detail: "pas de script « dev » (jeux web uniquement)" };
     let chromium: typeof import("playwright-core").chromium;
@@ -233,6 +246,43 @@ export class RealChecker implements CheckerPort {
       await this.#previews.stop(preview.key);
     }
   }
+
+  /** Jeu Godot (ADR-73) : import, puis le jeu hors de l'écran avec le relais ; ses erreurs, une photo, les fichiers chargés. */
+  async #launchGodot(cwd: string, screenshot: string | undefined, path: string): Promise<CheckOutcome> {
+    const godot = this.#godot();
+    if (!godot) return { status: "none", detail: "Godot introuvable sur ce PC" };
+    if (!hasBridge(cwd)) return { status: "none", detail: "pas de relais du studio dans ce jeu (addons/studio_bridge)" };
+    const imported = await godotImport(godot.exe, cwd, this.#testTimeoutMs);
+    if (imported.status === "fail") return imported;
+    let game: GodotGame;
+    try {
+      game = await GodotGame.start(godot.exe, cwd, { vitrine: vitrineOf(path) });
+    } catch (err) {
+      return { status: "fail", detail: (err as Error).message.slice(0, 600) };
+    }
+    try {
+      await new Promise((r) => setTimeout(r, this.#watchMs));
+      const snap = (await game.call("snapshot")).snapshot as { resources?: unknown; scene?: string } | undefined;
+      const shot = screenshot ? ((await game.call("capture", { path: screenshot })).ok ? screenshot : null) : null;
+      const errors = game.newErrors();
+      const loaded = godotLoaded(snap?.resources);
+      if (!game.alive) return { status: "fail", detail: `le jeu s'est fermé tout seul${errors.length ? ` : ${errors.slice(0, 4).join(" | ")}` : ""}`, screenshot: shot, loaded };
+      if (errors.length) return { status: "fail", detail: `erreurs dans le jeu : ${errors.slice(0, 4).join(" | ").slice(0, 600)}`, screenshot: shot, loaded };
+      return { status: "pass", detail: `lancé sans erreur (${Math.round(this.#watchMs / 1000)} s d'observation${snap?.scene ? `, scène ${snap.scene}` : ""})`, screenshot: shot, loaded };
+    } finally {
+      await game.close();
+    }
+  }
+}
+
+/** « ?vitrine=A-0001 » (l'adresse d'un jeu web) devient l'argument du relais pour un jeu Godot. */
+export function vitrineOf(path: string): string | null {
+  return /[?&]vitrine=(A-\d{4,})/.exec(path)?.[1] ?? null;
+}
+
+/** Les chemins res:// que la scène utilise, à la façon d'un serveur web (« /assets/x.glb »), pour le bilan (ADR-71). */
+export function godotLoaded(resources: unknown): string[] {
+  return Array.isArray(resources) ? resources.filter((r): r is string => typeof r === "string" && r.startsWith("res://")).map((r) => `/${r.slice(6)}`).sort() : [];
 }
 
 function readScripts(cwd: string): Record<string, string> | null {

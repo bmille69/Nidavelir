@@ -298,7 +298,7 @@ export class PolicyEngine {
     if (this.#mode !== "plan" && this.#commands.has(s.text)) return allow("commande prévue dans le plan");
     const art = this.#mode === "execute" ? this.#artCopy(s.words, cwd) : null;
     if (art) return art;
-    const script = this.#projectScript(s.words, cwd);
+    const script = this.#projectScript(s.words, cwd) ?? godotCommand(s.words);
     if (script && this.#mode !== "plan") return allow(script);
     const del = /^(?:git )?rm ([\w\-./]+)$/.exec(s.text);
     if (del && this.#mode === "execute" && !moved) {
@@ -356,7 +356,7 @@ export class PolicyEngine {
     return null;
   }
 
-  /** Un argument qui désigne un chemin hors de la copie (ou un secret) rend la commande dangereuse. */
+  /** Un argument qui désigne un chemin hors de la copie (ou un secret) rend la commande dangereuse (ex. godot --path ..). */
   #pathProblem(args: string[], cwd: string): string | null {
     for (const raw of args) {
       const value = raw.startsWith("-") ? (raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : "") : raw;
@@ -406,6 +406,54 @@ function commandProblem(cmd: string): string | null {
   for (const s of parsed.segments) {
     if (FORBIDDEN_COMMANDS.some((re) => re.test(s.text))) return "commande interdite (réseau, interpréteur, Git en écriture ou système)";
   }
+  return null;
+}
+
+/**
+ * Godot (ADR-73) : seulement sans fenêtre, et seulement pour importer le projet, lancer ses tests (le lanceur du studio)
+ * ou faire tourner une scène quelques images. Jamais l'éditeur, un export, le débogage à distance ni un autre script.
+ * Les chemins (--path, la scène) sont jugés à part : ils doivent rester dans la copie.
+ */
+function godotCommand(words: string[]): string | null {
+  const [head, ...args] = words;
+  if (!/^godot(\.exe|\.cmd)?$/i.test(head ?? "")) return null;
+  if (args.length === 1 && /^(--version|-v)$/.test(args[0]!)) return "version de Godot";
+  const sep = args.indexOf("--");
+  const own = sep >= 0 ? args.slice(0, sep) : args;
+  const user = sep >= 0 ? args.slice(sep + 1) : [];
+  if (!own.includes("--headless")) return null;
+  if (!user.every((a) => /^--only=[\w./-]+$/.test(a))) return null;
+  let what: "import" | "tests" | "scene" | null = null;
+  for (let i = 0; i < own.length; i++) {
+    const a = own[i]!;
+    if (a === "--headless" || a === "--verbose" || a === "--quit") continue;
+    if (a === "--path" && own[i + 1] && !own[i + 1]!.startsWith("-")) {
+      i++;
+      continue;
+    }
+    if (a === "--quit-after" && /^\d{1,6}$/.test(own[i + 1] ?? "")) {
+      i++;
+      what ??= "scene";
+      continue;
+    }
+    if (a === "--import") {
+      what = "import";
+      continue;
+    }
+    if ((a === "-s" || a === "--script") && /^(res:\/\/)?addons\/studio_tests\/run\.gd$/.test(own[i + 1] ?? "")) {
+      i++;
+      what = "tests";
+      continue;
+    }
+    if (/^[\w./:-]+\.tscn$/i.test(a) && !a.startsWith("-")) {
+      what ??= "scene";
+      continue;
+    }
+    return null;
+  }
+  if (what === "import") return "Godot : import du projet";
+  if (what === "tests") return "Godot : tests du jeu (lanceur du studio)";
+  if (what === "scene" && (own.includes("--quit-after") || own.includes("--quit"))) return "Godot : la scène tourne quelques images, sans fenêtre";
   return null;
 }
 

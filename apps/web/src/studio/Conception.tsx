@@ -136,6 +136,7 @@ export function ConceptionView({ id }: { id: string }) {
   const thinking = c.status === "thinking";
   const cost = messages.reduce((n, m) => n + (m.cost_usd ?? 0), 0);
 
+  const missing = c.data.missing ?? [];
   return (
     <main className="conception">
       <section className="concept-chat">
@@ -191,9 +192,20 @@ export function ConceptionView({ id }: { id: string }) {
               Sources ({c.data.sources.length})
             </button>
           </div>
-          <span className={`ready ${c.data.ready ? "on" : ""}`}>{c.data.ready ? "✓ Prêt à démarrer" : "En cours de cadrage"}</span>
+          <span className={`ready ${c.data.ready && !missing.length ? "on" : ""}`}>{c.data.ready ? (missing.length ? "Prêt, sauf des trous" : "✓ Prêt à démarrer") : "En cours de cadrage"}</span>
         </div>
         <div className="concept-doc-body">
+          {tab === "dossier" && c.data.dossier && (
+            <p className={`concept-check small ${missing.length ? "warn" : "ok"}`}>
+              {missing.length ? `Il manque encore : ${missing.join(", ")}.` : "Dossier complet : rien d'oublié pour le départ."}
+              {c.data.godot && (
+                <span className="muted">
+                  {" "}
+                  · Godot {c.data.godot.dimension.toUpperCase()}, {c.data.godot.largeur}×{c.data.godot.hauteur}, {c.data.godot.langage === "csharp" ? "C#" : "GDScript"}
+                </span>
+              )}
+            </p>
+          )}
           {tab === "dossier" && (c.data.dossier ? <Markdown text={c.data.dossier} /> : <p className="muted">Le dossier apparaîtra ici après la première réponse.</p>)}
           {tab === "chantiers" && (
             <ol className="concept-chantiers">
@@ -242,11 +254,13 @@ export function ConceptionView({ id }: { id: string }) {
         </div>
         {c.status === "open" && (
           <div className="concept-finish">
-            <button disabled={!c.data.ready || busy || thinking} onClick={finish}>
+            <button disabled={!c.data.ready || missing.length > 0 || busy || thinking} onClick={finish}>
               {busy ? "Création…" : c.kind === "project" ? "✦ Créer le projet" : "✦ Ajouter les chantiers au projet"}
             </button>
             <span className="muted small">
-              {c.data.ready
+              {c.data.ready && missing.length
+                ? "Le dossier a encore des trous : dites au Concepteur « complète le dossier »."
+                : c.data.ready
                 ? c.kind === "project"
                   ? "Crée le dossier du jeu, Git, le CLAUDE.md, le dossier de conception et les chantiers de toutes les étapes (non lancés)."
                   : "Range le dossier dans le projet et prépare les chantiers (non lancés)."

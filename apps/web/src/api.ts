@@ -315,7 +315,8 @@ export type Conception = {
   project: string | null;
   title: string;
   status: "thinking" | "open" | "done";
-  data: Omit<ConceptTurn, "reply"> & { error?: string };
+  /** `missing` : sections du dossier encore vides (ADR-73) ; `godot` : le socle demandé pour un jeu Godot. */
+  data: Omit<ConceptTurn, "reply"> & { error?: string; missing?: string[]; godot?: { rendu: string; dimension: string; largeur: number; hauteur: number; langage: string } | null };
   created_at: string;
   updated_at: string;
 };
@@ -332,7 +333,8 @@ export type Skill = {
   project: string | null;
   updated_at: string;
 };
-export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string };
+/** `desktop` : un jeu Godot, ouvert dans sa fenêtre sur le PC (ADR-73). */
+export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string; desktop?: boolean };
 export type SessionInfo = { csrf: string; orchestrator: string; gamesRoot: string; device: boolean };
 export type RemoteStatus = { tailscale: "absent" | "stopped" | "ready"; dnsName: string | null; serving: boolean; url: string | null; message?: string; link?: string };
 export type Device = { id: string; name: string; created_at: string; last_seen: string; current: boolean };

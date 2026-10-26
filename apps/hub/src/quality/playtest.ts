@@ -3,6 +3,9 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { PreviewService, type Preview } from "../executor/preview.ts";
 import type { Journal } from "../journal/journal.ts";
+import { GodotGame, godotImport } from "../godot/run.ts";
+import { hasBridge, isGodot, type GodotInstall } from "../godot/toolchain.ts";
+import { vitrineOf } from "./checks.ts";
 
 /**
  * La manette du testeur (ADR-69) : le hub ouvre le jeu de la copie du chantier dans un navigateur invisible
@@ -47,6 +50,8 @@ export type PlaySnapshot = {
   /** `window.__STUDIO_TEST__.snapshot()` si le jeu l'expose. */
   state: string | null;
   bridge: string[];
+  /** Jeu Godot : les actions du projet, utilisables comme touches (« ui_accept », « sauter »). */
+  actions?: string[];
 };
 
 /** Une partie ouverte dans le navigateur invisible. */
@@ -173,11 +178,12 @@ export class PlaytestService {
 
 /** Ce que reçoit le testeur, en texte court. */
 export function describeSnapshot(s: PlaySnapshot): string {
-  const lines = [`Page : ${s.title ? `« ${s.title} » ` : ""}${s.url}`];
+  const lines = [s.url.startsWith("res://") ? `Scène Godot : ${s.url}` : `Page : ${s.title ? `« ${s.title} » ` : ""}${s.url}`];
   if (s.canvases.length) lines.push(`Zones de jeu (canvas) : ${s.canvases.map((c) => `${c.width}×${c.height} à (${c.x}, ${c.y})${c.visible ? "" : " invisible"}`).join(" ; ")}`);
   if (s.controls.length) lines.push(`Boutons et champs visibles (centre x, y) : ${s.controls.map((c) => `${c.kind} « ${c.label} » (${c.x}, ${c.y})`).join(" ; ")}`);
   lines.push(`Texte visible : ${s.text ? s.text : "(aucun)"}`);
-  if (s.state) lines.push(`État du jeu (__STUDIO_TEST__.snapshot) : ${s.state}`);
+  if (s.actions?.length) lines.push(`Actions du projet (utilisables comme « key ») : ${s.actions.join(", ")}`);
+  if (s.state) lines.push(`État du jeu (${s.url.startsWith("res://") ? "nœud studio_test" : "__STUDIO_TEST__"}.snapshot) : ${s.state}`);
   if (s.bridge.length) lines.push(`Pont de test disponible : ${s.bridge.join(", ")}`);
   lines.push(s.errors.length ? `Erreurs dans la page : ${s.errors.join(" | ")}` : "Aucune nouvelle erreur dans la page.");
   if (s.failedRequests.length) lines.push(`Fichiers non chargés : ${s.failedRequests.join(" | ")}`);
@@ -206,16 +212,22 @@ const SNAPSHOT_SCRIPT = `(() => {
   return { url: location.pathname + location.search + location.hash, title: d.title, text: (d.body ? d.body.innerText : "").replace(/\\s+/g, " ").trim().slice(0, 1500), controls, canvases, state, bridge };
 })()`;
 
-/** La vraie manette : `npm run dev` de la copie, puis Edge (ou Chrome) invisible piloté par playwright-core. */
+/**
+ * La vraie manette : `npm run dev` de la copie, puis Edge (ou Chrome) invisible piloté par playwright-core ; pour un jeu
+ * Godot (ADR-73), le jeu lui-même hors de l'écran, piloté par le relais du studio.
+ */
 export class RealPlayDriver implements PlayDriver {
   // Instance à part : ne coupe ni le jeu que vous essayez, ni les vérifications du hub.
   readonly #previews: PreviewService;
+  readonly #godot: () => GodotInstall | null;
 
-  constructor(options: { workDir: string }) {
+  constructor(options: { workDir: string; godot?: () => GodotInstall | null }) {
     this.#previews = new PreviewService({ workDir: options.workDir });
+    this.#godot = options.godot ?? (() => null);
   }
 
   async open(key: string, cwd: string, screen: Screen, path: string): Promise<PlaySession> {
+    if (isGodot(cwd)) return GodotPlaySession.open(this.#godot(), cwd, screen, path);
     let chromium: typeof import("playwright-core").chromium;
     try {
       ({ chromium } = await import("playwright-core"));
@@ -374,6 +386,65 @@ export class BrowserPlaySession implements PlaySession {
   async close(): Promise<void> {
     await this.#page.context().close().catch(() => {});
     await this.#onClose();
+  }
+}
+
+/** Une partie de Godot, par le relais du studio (addons/studio_bridge). */
+export class GodotPlaySession implements PlaySession {
+  readonly screen: Screen;
+  readonly #game: GodotGame;
+
+  private constructor(game: GodotGame, screen: Screen) {
+    this.#game = game;
+    this.screen = screen;
+  }
+
+  static async open(godot: GodotInstall | null, cwd: string, screen: Screen, path: string): Promise<GodotPlaySession> {
+    if (!godot) throw new Error("Godot introuvable sur ce PC");
+    if (!hasBridge(cwd)) throw new Error("ce jeu n'a pas le relais du studio (addons/studio_bridge et l'autoload StudioBridge)");
+    const imported = await godotImport(godot.exe, cwd);
+    if (imported.status === "fail") throw new Error(imported.detail);
+    const game = await GodotGame.start(godot.exe, cwd, { screen, vitrine: vitrineOf(path) });
+    // Le temps que la première scène se mette en place.
+    await new Promise((r) => setTimeout(r, 1500));
+    return new GodotPlaySession(game, screen);
+  }
+
+  async act(steps: PlayStep[]): Promise<string[]> {
+    // Le pont du jeu web (reset, setSeed, step) devient les méthodes du nœud « studio_test » (reset, set_seed, step).
+    const mapped = steps.map((s) =>
+      s.do === "bridge" ? { ...s, method: s.method === "setSeed" ? "set_seed" : s.method } : s.do === "click" && s.selector && !s.text ? { do: "click", text: s.selector } : s,
+    );
+    const r = await this.#game.call("act", { steps: mapped, touch: this.screen === "phone" }, 120_000);
+    if (!r.ok) return [String(r.error ?? "le relais n'a pas pu jouer")];
+    return (r.notes as string[] | undefined) ?? [];
+  }
+
+  async snapshot(): Promise<PlaySnapshot> {
+    const r = await this.#game.call("snapshot");
+    const s = (r.snapshot ?? {}) as { scene?: string; window?: number[]; text?: string; controls?: PlaySnapshot["controls"]; state?: string; bridge?: string[]; actions?: string[] };
+    const [w = 0, h = 0] = s.window ?? [];
+    return {
+      url: s.scene || "res://",
+      title: "",
+      text: s.text ?? "",
+      controls: s.controls ?? [],
+      canvases: w ? [{ width: w, height: h, x: 0, y: 0, visible: true }] : [],
+      errors: [...(r.ok ? [] : [String(r.error)]), ...this.#game.newErrors()],
+      failedRequests: [],
+      state: s.state || null,
+      bridge: s.bridge ?? [],
+      actions: s.actions ?? [],
+    };
+  }
+
+  async capture(file: string): Promise<void> {
+    const r = await this.#game.call("capture", { path: file });
+    if (!r.ok) throw new Error(String(r.error || "photo impossible"));
+  }
+
+  close(): Promise<void> {
+    return this.#game.close();
   }
 }
 

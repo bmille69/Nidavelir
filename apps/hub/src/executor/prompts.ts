@@ -1,4 +1,5 @@
 import type { ItemFrontmatter, Plan, Task } from "@studio/contracts";
+import { GODOT_IMPORT, GODOT_TESTS } from "../godot/toolchain.ts";
 
 const block = (tag: string, body: string, attrs = "") => `<${tag}${attrs ? " " + attrs : ""}>\n${body.trim()}\n</${tag}>`;
 
@@ -6,10 +7,12 @@ const decisionsBlock = (decisions: ItemFrontmatter[]) =>
   block("decisions_validees", decisions.map((d) => `- [${d.id}] ${d.title} : ${d.statement.replace(/\n+/g, " ")}`).join("\n"));
 
 /** Ce que les agents savent du jeu avant de commencer. `state` : carnet « État du jeu » (ADR-33). */
-export type ProjectContext = { brief: string | null; claudeMd: string | null; state?: string | null };
+/** `godot` : un jeu Godot (ADR-73), avec ses commandes et les outils du studio. */
+export type ProjectContext = { brief: string | null; claudeMd: string | null; state?: string | null; godot?: boolean };
 
-function projectContext({ brief, claudeMd, state }: ProjectContext): string {
+function projectContext({ brief, claudeMd, state, godot }: ProjectContext): string {
   const parts: string[] = [];
+  if (godot) parts.push(block("godot", GODOT_RULES));
   if (brief) parts.push(block("vision_du_jeu", brief, 'source="studio/BRIEF.md" note="canon validé par le directeur créatif"'));
   if (state) parts.push(block("etat_du_jeu", state, 'note="carnet tenu à jour après chaque chantier fusionné : ce qui existe déjà, les choix faits, les limites connues"'));
   if (claudeMd) {
@@ -136,8 +139,9 @@ export function executionPrompt(task: Task, plan: Plan, decisions: ItemFrontmatt
 }
 
 export function verificationSystemPrompt(input: ProjectContext, canPlay = false): string {
+  const godot = !!input.godot;
   return `Tu es le QA du studio. Tu VÉRIFIES le travail du développeur ; tu ne corriges rien (aucune écriture possible).
-Tu peux lire le code et lancer les commandes de vérification prévues par le plan, ainsi que les scripts du projet (npm test, npm run <script>, ex. une simulation) et ses outils (npx vitest…).${canPlay ? `\n\n${PLAYTEST_RULES}` : ""}
+Tu peux lire le code et lancer les commandes de vérification prévues par le plan, ainsi que les scripts du projet (npm test, npm run <script>, ex. une simulation) et ses outils (npx vitest…)${godot ? ", ou les commandes Godot (voir <godot>)" : ""}.${canPlay ? `\n\n${PLAYTEST_RULES}${godot ? `\n${GODOT_PLAY_RULES}` : ""}` : ""}
 
 ${COMMON_RULES}
 
@@ -158,6 +162,19 @@ const PLAYTEST_RULES = `TU PEUX JOUER AU JEU de cette copie avec l'outil jouer (
 - Tu n'as pas de réflexes : chaque paquet est joué d'un bloc, puis tu regardes. Pour un jeu d'action, vérifie les effets (déplacement, tir, score), pas l'habileté.
 - Sois économe : 3 à 8 appels suffisent en général. Termine par action=close.
 - Ne dis jamais avoir vérifié en jouant ce que tu n'as pas joué. Une construction réussie ou une photo de l'écran de départ ne prouvent pas que le jeu se joue. Si le jeu ne s'ouvre pas, dis-le et vérifie par le code.`;
+
+/** Jeu Godot (ADR-73) : ce que les agents peuvent lancer, et les outils du studio posés dans le jeu. */
+export const GODOT_RULES = `Jeu Godot : la commande « godot » lance le Godot du PC, toujours avec --headless.
+- « ${GODOT_IMPORT} » : importe le projet et montre les erreurs de scènes, de scripts ou de ressources.
+- « ${GODOT_TESTS} » : lance les tests res://tests/**/test_*.gd (« extends StudioTest », fonctions « func test_…() », assert_eq, assert_true, add_scene, wait_frames, hold_action) ; « -- --only=<nom> » pour un seul fichier.
+- « godot --headless --path . res://<scène>.tscn --quit-after 120 » : fait tourner une scène quelques images et montre ses erreurs.
+- addons/studio_bridge et addons/studio_tests appartiennent au hub : ne les modifie pas.`;
+
+const GODOT_PLAY_RULES = `Pour ce jeu Godot, la manette pilote le vrai jeu (fenêtre de 1280×720, ou 390×844 en tactile pour screen=phone) :
+- « key » accepte une touche (ArrowLeft, Space, Enter, a…) ou une action du projet : la réponse les liste. Préfère les actions.
+- Un clic par « text » vise un bouton visible par son texte ; sinon les coordonnées de la photo.
+- L'état du jeu vient du nœud du groupe « studio_test » (méthode snapshot()) ; « bridge » appelle ses méthodes reset, setSeed (set_seed) ou step.
+- path « ?vitrine=A-0001 » ouvre la scène vitrine res://vitrines/a-0001.tscn.`;
 
 export function verificationPrompt(
   task: Task,
