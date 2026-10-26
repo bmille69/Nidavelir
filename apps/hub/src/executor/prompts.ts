@@ -28,6 +28,7 @@ const COMMON_RULES = `Règles du studio (appliquées par le hub, pas seulement d
 - Tu travailles UNIQUEMENT dans le répertoire courant, une copie isolée du jeu (worktree Git).
 - Le dossier studio/ (la vision) est en lecture seule. Le dossier .git et les fichiers sensibles sont interdits.
 - Visuels : studio/art/ appartient au Directeur artistique (bible.md, assets.json, production/). Pour brancher un asset (A-xxxx), copie son fichier validé de studio/art/ vers les ressources du jeu, à l'endroit et au format que dit sa fiche dans assets.json ; ne modifie rien dans studio/art/ (le hub le met à jour à la fusion). Ne télécharge aucun visuel.
+- Captures : si la consigne cite une image de studio/captures/, regarde-la avec Read. Ce sont des photos du jeu sur lesquelles le directeur créatif a dessiné : les traits rouges montrent ce dont il parle.
 - Toute action hors du plan validé déclenche une demande d'autorisation au directeur créatif. Si elle est refusée, NE CHERCHE PAS de contournement : note-le dans ton rapport.
 - Réseau, interpréteurs (node -e, python, powershell…), installation de bibliothèques et Git en écriture sont bloqués. Ne fais pas de commit : le hub s'en charge.
 - Commandes : tu peux enchaîner des lectures avec ; ou && et filtrer avec | (grep, head, tail, sort, wc), et ajouter 2>&1. Les scripts du projet (npm test, npm run <script>) et ses outils (npx vitest, npx tsc) sont permis. Pour écrire un fichier, utilise TOUJOURS Write ou Edit, jamais > fichier, <<EOF ou sed -i. Pas de $(...), de variables ni de parenthèses.

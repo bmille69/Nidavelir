@@ -4,6 +4,7 @@ import { AUTONOMY } from "../studio/Autonomy.tsx";
 import { DirectorPanel } from "../studio/Choices.tsx";
 import { WorkshopPanel } from "../studio/Workshop.tsx";
 import { Capture } from "../studio/Capture.tsx";
+import { Annotator, withImage } from "../studio/Annotator.tsx";
 import { Linkify } from "../studio/Linkify.tsx";
 import { href, navigate } from "../App.tsx";
 import { ThreadList, useSeen } from "../studio/ThreadList.tsx";
@@ -128,33 +129,45 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
 
   const news = threads.filter((t) => t.id !== threadId && unread(t) > 0);
 
-  async function send() {
-    const text = draft.trim();
+  /** `override` : un message tout prêt (capture annotée, ADR-72), envoyé sans toucher au brouillon. */
+  async function send(override?: string) {
+    const text = (override ?? draft).trim();
     if (!text || sending) return;
     setSending(true);
     setError(null);
     let thread = threadId;
     try {
       if (!thread) {
-        const t = await api.createThread(slug, text.slice(0, 60));
+        const t = await api.createThread(slug, text.replace(IMAGES, "").trim().slice(0, 60) || "Capture annotée");
         setThreads((ts) => [t, ...ts]);
         thread = t.id;
         threadRef.current = thread;
         navigate({ page: "project", slug, thread });
       }
       setMessages((m) => [...m, { id: "pending", thread: thread!, seq: m.length + 1, role: "human", text, at: "", extraction: "pending", cost_usd: null }]);
-      setDraft("");
+      if (override === undefined) setDraft("");
       await api.send(slug, thread, text);
       setMessages(await api.messages(slug, thread));
       await refresh();
     } catch (e) {
       setError((e as Error).message);
-      setDraft(text);
+      if (override === undefined) setDraft(text);
       if (thread) setMessages(await api.messages(slug, thread).catch(() => []));
     } finally {
       setSending(false);
     }
   }
+
+  // Une capture annotée (ADR-72) : l'image part d'abord, puis le message qui la cite ; la fenêtre se ferme sans attendre la réponse.
+  const [toAnnotate, setToAnnotate] = useState<Blob | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const annotate = async (text: string, image: Blob) => {
+    if (sending) throw new Error("Attendez la réponse du directeur, puis renvoyez.");
+    const { line } = await api.captureUpload(slug, image);
+    const words = text || draft.trim();
+    if (!text) setDraft("");
+    void send(withImage(words, line));
+  };
 
   const sources = [...new Set(items.map(sourceOf))].sort();
   const types = [...new Set(items.map((i) => i.type))].sort();
@@ -251,7 +264,7 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
           {messages.map((m) => (
             <div key={m.id} className={`msg ${m.role}`}>
               <div className="who">{m.role === "human" ? "Vous" : "Directeur (IA)"}</div>
-              <MessageText text={m.text} slug={slug} />
+              <MessageText text={m.text} slug={slug} annotate={annotate} />
               {m.role === "human" && m.extraction === "pending" && <div className="muted small">analyse en cours…</div>}
               {m.role === "human" && m.extraction === "failed" && <div className="error small">l'analyse de ce message a échoué</div>}
             </div>
@@ -261,9 +274,30 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
         </div>
         {error && <p className="error">{error}</p>}
         <div className="composer">
+          <button className="secondary attach" onClick={() => fileRef.current?.click()} disabled={sending} aria-label="Joindre une capture à annoter" title="Joindre une capture (ou collez-la) pour y entourer ce qui ne va pas">
+            <Icon name="image" size={18} />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) setToAnnotate(f);
+              e.target.value = "";
+            }}
+          />
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onPaste={(e) => {
+              const f = [...e.clipboardData.files].find((x) => x.type.startsWith("image/"));
+              if (f) {
+                e.preventDefault();
+                setToAnnotate(f);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -275,11 +309,12 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
             enterKeyHint="send"
             disabled={sending}
           />
-          <button onClick={send} disabled={!draft.trim() || sending} aria-label="Envoyer">
+          <button onClick={() => void send()} disabled={!draft.trim() || sending} aria-label="Envoyer">
             <Icon name="arrow" size={18} className="send-icon" />
             <span className="send-label">Envoyer</span>
           </button>
         </div>
+        {toAnnotate && <Annotator source={toAnnotate} title="Votre capture" onClose={() => setToAnnotate(null)} onSend={annotate} />}
       </section>
 
       {workshop ? (
@@ -425,11 +460,14 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
 const BRIEF_MARK = "§CONSIGNE§ ";
 
 const CAPTURE = /^§CAPTURE§ (T-\d+) (\S+)$/m;
+/** Les captures annotées jointes (ADR-72), une par ligne. */
+const IMAGES = /^§IMAGE§ (studio\/captures\/\S+)$/gm;
 
 /** Texte d'un message ; chaque consigne envoyée au développeur est repliée sous la réponse, la capture du jeu est affichée. */
-function MessageText({ text, slug }: { text: string; slug: string }) {
+function MessageText({ text, slug, annotate }: { text: string; slug: string; annotate: (text: string, image: Blob) => Promise<void> }) {
   const shot = CAPTURE.exec(text);
-  const [intro, ...briefs] = text.replace(CAPTURE, "").split(BRIEF_MARK);
+  const images = [...text.matchAll(IMAGES)].map((m) => m[1]!);
+  const [intro, ...briefs] = text.replace(CAPTURE, "").replace(IMAGES, "").split(BRIEF_MARK);
   return (
     <>
       {intro!.trim() && (
@@ -437,7 +475,12 @@ function MessageText({ text, slug }: { text: string; slug: string }) {
           <Linkify text={intro!.trim()} />
         </div>
       )}
-      {shot && <Capture slug={slug} task={shot[1]!} version={shot[2]!} />}
+      {images.map((f) => (
+        <a key={f} className="msg-image" href={api.captureUrl(slug, f)} target="_blank" rel="noreferrer">
+          <img src={api.captureUrl(slug, f)} alt="Capture annotée" loading="lazy" />
+        </a>
+      ))}
+      {shot && <Capture slug={slug} task={shot[1]!} version={shot[2]!} annotate={annotate} />}
       {briefs.map((b, k) => {
         const [title, ...rest] = b.split("\n");
         return (

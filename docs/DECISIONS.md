@@ -905,5 +905,27 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `bilan.test.ts` ;
   - un test du DA de bout en bout : absent, puis copié non prouvé, prouvé au lancement depuis `public/`, ancienne version, réintégration ;
   - `pilotage.e2e.ts` avec l'onglet Bilan sur PC et téléphone (captures examinées) ;
-  - 242 tests au vert ; les tests navigateur aussi, sauf celui du Concepteur, déjà en échec ;
+  - 241 tests au vert ; les tests navigateur aussi, sauf celui du Concepteur, déjà en échec ;
   - essai réel, sur une copie de Survivor Destiny : bilan à blanc (14 visuels copiés, pas vérifiés) puis deux vrais lancements dans Edge, qui ont bien reçu les 14 fichiers `assets/studio/`.
+
+### ADR-72 : montrer au lieu de décrire, les captures annotées
+**Statut** : Retenue le 26/10/2026. C'est le n°4 des idées tirées d'OhMyGame (leur mode « Draw » : « dessinez sur l'aperçu pour montrer à l'IA ce que vous voulez dire »). L'utilisateur : « ok on continue dans l'ordre ».
+- **Le manque** : pour signaler un défaut visuel, il fallait le décrire avec des mots (« le score déborde en haut à droite… »). Le directeur ne voyait aucune image : il répondait sans aucun outil.
+- **Dessiner** (`studio/Annotator.tsx`) : une fenêtre ouvre la photo du jeu.
+  - Vous entourez ou touchez ce qui ne va pas, à la souris ou au doigt (traits rouges, toucher seul = point).
+  - « Annuler le trait », « Tout effacer », un mot facultatif, « Envoyer au directeur ».
+  - Les traits sont gardés en pixels de l'image, puis redessinés sur une copie exportée en JPEG, 1600 px de large au plus.
+- **Trois entrées** :
+  - **joindre** une capture dans la discussion (bouton image du champ de saisie) ;
+  - la **coller** dans le champ, après un Win+Maj+S ;
+  - **« Montrer un défaut »** sous chaque capture de chantier : dans la discussion, ou sur la page du chantier, qui l'envoie dans la discussion d'où vient le chantier.
+- **Où vont les images** (`conversation/captures.ts`) : `studio/captures/` du dépôt du jeu, commitées par le hub (« captures: image annotée … »), PNG, JPEG ou WebP vérifiés par leurs premiers octets, 8 Mo au plus. Le message porte une ligne `§IMAGE§ studio/captures/…`, affichée comme une image.
+- **Le directeur regarde** : pour ce tour seulement, il reçoit la lecture du dossier `studio/captures`, et rien d'autre.
+  - Son modèle reste le sien (`images` dans le port, au lieu du modèle de l'Archéologue).
+  - La ligne devient une consigne : regarder l'image, dire ce qu'il y voit, et recopier son chemin dans la consigne d'un chantier.
+  - Le développeur et le testeur la retrouvent dans leur copie : règle « Captures » des consignes communes.
+- **Pas repris** : dessiner sur le jeu en train de tourner. L'aperçu « ▶ Essayer » est une autre adresse, que le site ne peut pas photographier. La capture Windows collée fait le même travail.
+- **Vérifié** :
+  - `http.test.ts` : envoi, commit, image servie, faux PNG refusé, chemin piégé refusé ; le directeur a la lecture de `studio/captures` pour le tour avec image, et plus aucun accès au tour suivant ;
+  - `annotate.e2e.ts` dans Edge : joindre, entourer à la souris (PC) puis au doigt (téléphone 390 px), envoyer. L'image annotée, à la taille de la capture (1280×720), est dans la discussion et commitée, le directeur répond. Captures examinées ;
+  - 242 tests au vert ; les tests navigateur aussi, sauf celui du Concepteur, déjà en échec.

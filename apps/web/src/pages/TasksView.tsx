@@ -5,6 +5,7 @@ import { formatDate } from "./labels.ts";
 import { TryButton } from "../studio/Preview.tsx";
 import { RatingBox } from "../studio/Rating.tsx";
 import { Capture } from "../studio/Capture.tsx";
+import { withImage } from "../studio/Annotator.tsx";
 import { money } from "../studio/Workshop.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
@@ -399,7 +400,18 @@ function ReviewCard(props: {
   return (
     <div className="card">
       <h2>{isReview ? "Le résultat, à relire" : "Résultat"}</h2>
-      <Capture slug={slug} task={id} version={review.task.updated_at} />
+      <Capture
+        slug={slug}
+        task={id}
+        version={review.task.updated_at}
+        annotate={async (text, image) => {
+          // La capture annotée part dans la discussion d'où vient le chantier, ou dans une nouvelle (ADR-72).
+          const { line } = await api.captureUpload(slug, image);
+          const thread = review.task.origin?.thread ?? (await api.createThread(slug, `Défaut vu sur ${id}`)).id;
+          void api.send(slug, thread, withImage(text || `Sur la capture de ${id} : regarde ce que j'ai entouré.`, line)).catch(() => {});
+          navigate({ page: "project", slug, thread });
+        }}
+      />
       {review.report && <p className="statement">{review.report.summary_simple}</p>}
       {(isReview || review.task.status === "merged") && (
         <div className="how-to-test">

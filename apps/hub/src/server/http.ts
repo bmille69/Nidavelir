@@ -9,6 +9,7 @@ import { ApprovalError } from "../approvals/approval-service.ts";
 import { HumanSessionRequiredError, PairingError, type HumanSession } from "../auth/human-session.ts";
 import { PAIRING_PAGE } from "./pairing-page.ts";
 import { ConversationError } from "../conversation/conversation-service.ts";
+import { CaptureError } from "../conversation/captures.ts";
 import type { Hub } from "../hub.ts";
 import { OrchestratorError } from "../orchestrator/port.ts";
 import type { FolderPicker } from "../projects/folder-picker.ts";
@@ -740,6 +741,16 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.conversations.send(slug, id, Body.message.parse(req.body).text);
     });
+    // Les captures annotées jointes à un message (ADR-72) : enregistrées et commitées dans studio/captures du jeu.
+    api.post("/projects/:slug/captures", async (req) => {
+      if (!Buffer.isBuffer(req.body)) throw new CaptureError("Envoyez une image (PNG, JPEG ou WebP)");
+      return hub.captures.save((req.params as { slug: string }).slug, req.body, String(req.headers["content-type"] ?? "").split(";")[0]!.trim());
+    });
+    api.get("/projects/:slug/captures/:name", async (req, reply) => {
+      const { slug, name } = req.params as { slug: string; name: string };
+      const f = hub.captures.file(slug, name);
+      return reply.type(f.mime).header("cache-control", "private, max-age=3600").send(readFileSync(f.path));
+    });
     api.get("/projects/:slug/journal", async (req) => hub.journal.list({ project: (req.params as { slug: string }).slug, limit: 200, latest: true }));
   }, { prefix: "/api/human" });
 
@@ -787,7 +798,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

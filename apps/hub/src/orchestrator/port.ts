@@ -19,6 +19,8 @@ export interface OrchestratorPort {
     tools?: string[];
     /** « art » : modèle du Directeur artistique. */
     role?: "art";
+    /** readDir ne sert qu'à regarder des images jointes (ADR-72) : le modèle du directeur est gardé. */
+    images?: boolean;
     timeoutMs?: number;
   }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */

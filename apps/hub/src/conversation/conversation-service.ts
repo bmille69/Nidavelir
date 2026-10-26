@@ -10,6 +10,8 @@ import type { ExtractionService } from "../vision/extraction.ts";
 import type { VisionService } from "../vision/vision-service.ts";
 import { codeContext } from "../projects/code-context.ts";
 import { manifestSummary } from "../art/manifest.ts";
+import { join } from "node:path";
+import { CAPTURES_DIR, imagesOf, withImages } from "./captures.ts";
 import { directorSystemPrompt, renderCodeContext, directorTurnPrompt, hubTurnPrompt, renderContextPack, renderHistory } from "./prompts.ts";
 
 export class ConversationError extends Error {
@@ -164,7 +166,10 @@ export class ConversationService {
     this.#replying.set(human.id, { project, thread: thread.id, title: thread.title, since: human.at });
     let exchange: { human: Message; director: Message };
     try {
-      exchange = { human, director: await this.#reply(project, thread, directorTurnPrompt(history, body)) };
+      // Une capture annotée jointe (ADR-72) : le directeur la regarde, dans studio/captures seulement, pour ce tour.
+      const images = imagesOf(this.#projects.get(project).root, body);
+      const turn = images.length ? withImages(body) : body;
+      exchange = { human, director: await this.#reply(project, thread, directorTurnPrompt(history, turn), images.length > 0) };
     } finally {
       this.#replying.delete(human.id);
     }
@@ -217,7 +222,7 @@ export class ConversationService {
     if (directives && this.autopilot) this.#track(this.autopilot.workshop(project, thread, directives));
   }
 
-  async #reply(project: string, thread: Thread, prompt: string): Promise<Message> {
+  async #reply(project: string, thread: Thread, prompt: string, images = false): Promise<Message> {
     const p = this.#projects.get(project);
     const code = p.autonomy === "workshop" ? await codeContext(p.root) : null;
     const pack = renderContextPack({
@@ -240,6 +245,7 @@ export class ConversationService {
         .join("\n\n"),
       prompt,
       meta: { project, agent: "director" },
+      ...(images ? { readDir: join(p.root, CAPTURES_DIR), images: true } : {}),
     });
     // Le directeur ne code pas : quand vous dites « go », il confie le travail au développeur (ADR-22).
     const { text: answer, directives } = parseDirectives(raw);

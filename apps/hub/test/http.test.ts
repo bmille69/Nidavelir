@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { existsSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ClaudeCli } from "../src/llm/claude-cli.ts";
@@ -192,5 +193,44 @@ describe("modèles des agents (ADR-37)", () => {
     await director.reply({ systemPrompt: "s", prompt: "p" });
     await director.structured({ systemPrompt: "s", prompt: "p", jsonSchema: {}, tier: "concept" });
     expect(seen).toEqual(["sonnet", "fable", "fable"]);
+  });
+});
+
+describe("captures annotées (ADR-72)", () => {
+  it("une capture envoyée est commitée dans studio/captures, servie, et le directeur la regarde pour ce tour seulement", async () => {
+    const { get, cookie, csrf, post } = await login();
+    const root = sb.makeGameRepo("games/destiny");
+    await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny" });
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("dessin rouge")]);
+    const upload = (body: Buffer, type: string) =>
+      app.inject({ method: "POST", url: "/api/human/projects/destiny/captures", payload: body, headers: { host: HOST, cookie, origin: ORIGIN, "x-csrf-token": csrf, "content-type": type } });
+
+    const res = await upload(png, "image/png");
+    expect(res.statusCode).toBe(200);
+    const { file, line } = res.json() as { file: string; line: string };
+    expect(file).toMatch(/^studio\/captures\/\d{14}-[0-9a-f]{6}\.png$/);
+    expect(line).toBe(`§IMAGE§ ${file}`);
+    expect(existsSync(join(root, file))).toBe(true);
+    expect(execFileSync("git", ["-C", root, "log", "--format=%s"], { encoding: "utf8" })).toMatch(/captures: image annotée/);
+    const name = file.split("/").pop()!;
+    const served = await get(`/api/human/projects/destiny/captures/${name}`);
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toBe("image/png");
+    expect((await get("/api/human/projects/destiny/captures/..%2Fsecret.png")).statusCode).toBeGreaterThanOrEqual(400);
+    // Un faux PNG est refusé.
+    expect((await upload(Buffer.from("pas une image"), "image/png")).statusCode).toBe(400);
+
+    const thread = (await post("/api/human/projects/destiny/threads", { title: "Le HUD" })).json() as { id: string };
+    await post(`/api/human/projects/destiny/threads/${thread.id}/messages`, { text: `Le score déborde.\n\n${line}` });
+    const turn = fake.calls.filter((c) => c.kind === "reply").at(-1) as unknown as { prompt: string; readDir?: string; images?: boolean };
+    expect(turn.readDir).toBe(join(root, "studio", "captures"));
+    expect(turn.images).toBe(true);
+    expect(turn.prompt).toContain(`Capture jointe par le directeur créatif : ${file}`);
+    expect(turn.prompt).toContain(`fichier « ${name} »`);
+    expect(turn.prompt).not.toContain("§IMAGE§");
+
+    // Le tour suivant, sans image, n'a plus aucun accès aux fichiers.
+    await post(`/api/human/projects/destiny/threads/${thread.id}/messages`, { text: "Et sur téléphone ?" });
+    expect((fake.calls.filter((c) => c.kind === "reply").at(-1) as unknown as { readDir?: string }).readDir).toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ import { OrchestratorError, type OrchestratorPort } from "./orchestrator/port.ts
 import { BootstrapService } from "./projects/bootstrap.ts";
 import { ProjectRegistry, type RegistryOptions } from "./projects/project-registry.ts";
 import { GitCli, type VcsPort } from "./vcs/git.ts";
+import { CaptureStore } from "./conversation/captures.ts";
 import { TaskService } from "./executor/task-service.ts";
 import { ExecutorError, type ExecutorPort } from "./executor/port.ts";
 import { dirname, join } from "node:path";
@@ -95,6 +96,8 @@ export type Hub = {
   orchestrator: OrchestratorPort;
   extraction: ExtractionService;
   conversations: ConversationService;
+  /** Les captures annotées jointes aux discussions (ADR-72). */
+  captures: CaptureStore;
   bootstrap: BootstrapService;
   synthesis: SynthesisService;
   tasks: TaskService;
@@ -357,6 +360,7 @@ export function createHub(options: HubOptions): Hub {
     orchestrator,
     extraction,
     conversations,
+    captures: new CaptureStore({ projects, vcs, clock }),
     bootstrap,
     synthesis,
     tasks,

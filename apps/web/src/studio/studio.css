@@ -1617,3 +1617,26 @@ a.pilot-row-title:hover { color: var(--accent); }
 @media (max-width: 860px) {
   .link-chip { min-height: 0; padding: 3px 9px; }
 }
+
+/* Les captures annotées (ADR-72) : la fenêtre de dessin, l'image dans le message. */
+.annotator { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: var(--space-4); background: rgba(4, 6, 10, 0.78); }
+.annotator-panel { display: flex; flex-direction: column; gap: var(--space-3); width: min(1100px, 100%); max-height: 100%; padding: var(--space-4); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.annotator-head { display: flex; align-items: baseline; gap: var(--space-3); }
+.annotator-head .muted { flex: 1; }
+.annotator-stage { display: grid; place-items: center; min-height: 0; flex: 1; overflow: hidden; }
+.annotator-frame { position: relative; display: inline-block; line-height: 0; }
+.annotator-frame img { display: block; max-width: 100%; max-height: 62vh; border-radius: var(--radius-sm); user-select: none; -webkit-user-drag: none; }
+.annotator-frame canvas { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+.annotator-tools { display: flex; gap: var(--space-2); }
+.annotator-send { display: flex; gap: var(--space-2); align-items: flex-end; }
+.annotator-send textarea { flex: 1; resize: none; }
+.capture-annotate { margin-left: 0.5rem; }
+.msg-image { display: block; margin-top: 0.6rem; max-width: 520px; }
+.msg-image img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border-strong); }
+@media (max-width: 720px) {
+  .annotator { padding: 0; }
+  .annotator-panel { height: 100%; border-radius: 0; padding: var(--space-3); }
+  .annotator-frame img { max-height: 55vh; }
+  .annotator-send { flex-direction: column; align-items: stretch; }
+  .annotator-send textarea { font-size: 16px; }
+}

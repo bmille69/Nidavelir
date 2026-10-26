@@ -15,12 +15,12 @@ export class DirectClaudeOrchestrator implements OrchestratorPort {
     this.#pick = typeof models === "function" ? models : () => models;
   }
 
-  async reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta; readDir?: string; tools?: string[]; role?: "art"; timeoutMs?: number }) {
+  async reply(input: { systemPrompt: string; prompt: string; meta?: CallMeta; readDir?: string; tools?: string[]; role?: "art"; images?: boolean; timeoutMs?: number }) {
     const models = this.#pick();
     const r = await this.#cli.call({
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
-      model: input.role === "art" ? (models.art ?? models.chat) : input.readDir ? (models.archeologue ?? models.chat) : models.chat,
+      model: input.role === "art" ? (models.art ?? models.chat) : input.readDir && !input.images ? (models.archeologue ?? models.chat) : models.chat,
       tag: input.meta,
       readDir: input.readDir,
       tools: input.tools,

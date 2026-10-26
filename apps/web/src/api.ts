@@ -434,6 +434,21 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? (res.status === 413 ? "Image trop lourde (15 Mo au plus)" : `Erreur ${res.status}`));
     return data as { file: string };
   },
+  /** Une capture annotée pour la discussion (ADR-72) : rend la ligne à ajouter au message. */
+  async captureUpload(slug: string, image: Blob): Promise<{ file: string; line: string }> {
+    const res = await withCsrf(() =>
+      fetch(`/api/human/projects/${slug}/captures`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": image.type || "image/png", "x-csrf-token": csrf },
+        body: image,
+      }),
+    );
+    const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+    if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `Erreur ${res.status}`);
+    return data as { file: string; line: string };
+  },
+  captureUrl: (slug: string, file: string) => `/api/human/projects/${slug}/captures/${encodeURIComponent(file.split("/").pop()!)}`,
   artReact: (slug: string, body: { verdicts: Record<string, ArtTaste | null>; comment?: string; tell?: boolean }) =>
     request<ArtDirectionData>("POST", `/projects/${slug}/art/references`, body),
   artDecide: (slug: string, id: string, decision: "valider" | "refaire") => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/decide`, { decision }),
