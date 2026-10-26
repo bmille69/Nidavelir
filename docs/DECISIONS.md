@@ -1006,3 +1006,13 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
 - **Contexte** : sur « Néon Saloon » (3D, 34 chantiers, dossier de 12 500 caractères), le Concepteur s'est arrêté deux fois de suite : « Claude Code n'a pas répondu en 480 s ». Une fois le dossier prêt, il réécrit à chaque tour le dossier et toutes les consignes en entier. Le tour précédent avait déjà pris 7 minutes, et le dossier plus long de l'ADR-73 alourdit chaque tour.
 - **Décision** : le niveau « concept » a 900 s, comme l'artisan 3D, au lieu de 480 s.
 - **Vérifié** : typecheck, `conception.test.ts`. La conversation garde son dossier : il suffit de renvoyer le dernier message après le redémarrage du hub.
+
+## ADR-76 — Les .uid de Godot ne bloquent plus la fusion
+
+- **Contexte** : sur Néon Saloon, T-0001 a été fait, testé par le hub et validé par le testeur, mais sa fusion a échoué avec « Conflit de fusion sur : ? ». L'import de Godot fait à la pose du socle avait écrit `scripts/main.gd.uid` et `tests/test_demarrage.gd.uid` dans le projet, sans qu'ils soient enregistrés. Le chantier avait créé les siens, avec d'autres identifiants, et Git refuse d'écraser un fichier non suivi.
+- **Décision** :
+  - le socle enregistre les `.uid` que l'import a écrits avec le reste ;
+  - avant une fusion, un fichier non suivi que la branche ajoute est remplacé par celui de la branche s'il est régénéré par Godot (`.uid`, `.import`) ;
+  - un autre fichier non suivi donne un refus clair qui le nomme, sans rien toucher, au lieu de « Conflit sur : ? ».
+- **Vérifié** : `tasks.test.ts` (un .uid local cède la place, un brouillon à vous bloque avec son nom), 247 tests au vert, typecheck.
+- **Constaté au passage** : premier vrai chantier Godot réussi. Le développeur a travaillé, les tests du jeu (6) et le lancement ont été vérifiés par le hub, et le testeur a joué au vrai jeu (7 actions, 2 photos).

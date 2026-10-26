@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -28,8 +30,12 @@ export interface VcsPort {
   /** Commite tout le contenu du worktree. Renvoie le sha, ou null s'il n'y avait rien. */
   commitAll(worktree: string, message: string): Promise<string | null>;
   diff(repo: string, base: string, branch: string): Promise<{ files: { status: string; path: string }[]; patch: string }>;
-  /** Fusion --no-ff de branch dans la branche courante ; annule proprement en cas de conflit. */
-  merge(repo: string, branch: string, message: string): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }>;
+  /**
+   * Fusion --no-ff de branch dans la branche courante ; annule proprement en cas de conflit. Un fichier non suivi que la
+   * branche ajoute bloquerait Git : celui que Godot régénère seul (.uid, .import) est remplacé par celui de la branche,
+   * un autre est rendu dans `untracked` (ADR-76).
+   */
+  merge(repo: string, branch: string, message: string): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[]; untracked?: string[] }>;
   /** Commits annulés par un « git revert » dans l'historique récent de la branche courante. */
   revertedCommits(repo: string): Promise<string[]>;
 }
@@ -145,6 +151,12 @@ export class GitCli implements VcsPort {
   }
 
   async merge(repo: string, branch: string, message: string) {
+    const added = (await this.#git(repo, ["diff", "--name-only", "--diff-filter=A", `HEAD...${branch}`]).catch(() => "")).split("\n").filter(Boolean);
+    const loose = new Set((await this.#git(repo, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")).split("\n").filter(Boolean));
+    const blocking = added.filter((f) => loose.has(f));
+    const untracked = blocking.filter((f) => !GODOT_GENERATED.test(f));
+    if (untracked.length) return { ok: false as const, conflicts: [], untracked };
+    for (const f of blocking) rmSync(join(repo, f), { force: true });
     try {
       await this.#git(repo, ["merge", "--no-ff", "--no-edit", "-m", message, branch]);
       return { ok: true as const, sha: (await this.#git(repo, ["rev-parse", "HEAD"])).trim() };
@@ -162,6 +174,9 @@ export class GitCli implements VcsPort {
     return [...log.matchAll(/This reverts commit ([0-9a-f]{7,40})/g)].map((m) => m[1]!);
   }
 }
+
+/** Fichiers que Godot écrit seul à l'import : sans valeur propre, ils se régénèrent. */
+const GODOT_GENERATED = /\.(uid|import)$/;
 
 function samePath(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();

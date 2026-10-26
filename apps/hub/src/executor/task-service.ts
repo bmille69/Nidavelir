@@ -688,6 +688,8 @@ export class TaskService {
     }
     if (!(await this.#vcs.currentBranch(repo))) throw new TaskError("Votre projet n'est sur aucune branche (HEAD détachée)");
     const res = await this.#vcs.merge(repo, task.branch!, `studio: fusion de ${task.id} — ${task.title} (${approval})`);
+    if (!res.ok && res.untracked?.length)
+      throw new TaskError(`Votre projet contient des fichiers non enregistrés que ce chantier crée aussi (${res.untracked.slice(0, 3).join(", ")}${res.untracked.length > 3 ? "…" : ""}). Enregistrez-les (commit) ou supprimez-les, puis dites « fusionne ». Rien n'a été modifié dans votre projet.`);
     if (!res.ok) throw new TaskError(`Conflit de fusion sur : ${res.conflicts.join(", ") || "?"}. Rien n'a été modifié dans votre projet.`);
     await this.#cleanup(task);
     this.#log(project, "task.merged", id, { approval, commit: res.sha });

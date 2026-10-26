@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -271,6 +271,25 @@ describe("revue, fusion, corrections, abandon", () => {
     await expect(hub.tasks.merge(sb.human(), P, "T-0001", review.head!)).rejects.toThrow(/non commitées/);
     expect(readFileSync(join(repo, "src/main.ts"), "utf8")).toMatch(/travail en cours/);
     expect(status()).toBe("review");
+  });
+
+  it("un fichier non suivi que le chantier crée aussi : régénéré par Godot, il cède la place ; sinon, refus clair (ADR-76)", async () => {
+    const review = await reviewed();
+    // Godot a écrit son propre .uid dans votre projet ; le chantier a le sien : le sien gagne.
+    writeFileSync(join(review.task.worktree!, "src/boss.ts.uid"), "uid://chantier\n");
+    git(review.task.worktree!, "add", "-A");
+    git(review.task.worktree!, "commit", "-q", "-m", "uid");
+    writeFileSync(join(repo, "src/boss.ts.uid"), "uid://local\n");
+    // Un fichier à vous, non enregistré, que le chantier crée aussi : rien n'est touché.
+    writeFileSync(join(repo, "src/boss.ts"), "// mon brouillon\n");
+    const head = git(review.task.worktree!, "rev-parse", "HEAD").trim();
+    await expect(hub.tasks.merge(sb.human(), P, "T-0001", head)).rejects.toThrow(/fichiers non enregistrés que ce chantier crée aussi \(src\/boss\.ts\)/);
+    expect(readFileSync(join(repo, "src/boss.ts"), "utf8")).toMatch(/mon brouillon/);
+    expect(readFileSync(join(repo, "src/boss.ts.uid"), "utf8")).toMatch(/local/);
+    rmSync(join(repo, "src/boss.ts"));
+    await hub.tasks.merge(sb.human(), P, "T-0001", head);
+    expect(status()).toBe("merged");
+    expect(readFileSync(join(repo, "src/boss.ts.uid"), "utf8")).toMatch(/chantier/);
   });
 
   it("demander des corrections relance un plan avec vos remarques", async () => {

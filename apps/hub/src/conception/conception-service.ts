@@ -251,7 +251,10 @@ export class ConceptionService {
     writeFileSync(claudeMd, `${existsSync(claudeMd) ? readFileSync(claudeMd, "utf8").trimEnd() + "\n" : `# ${c.data.title}\n`}${claudeMdGodot(version, setup)}`, "utf8");
     const files = scaffoldGodot(root, c.data.title, version, setup);
     const check = godot ? await godotTests(godot.exe, root) : null;
-    await this.#vcs.commitPaths(root, ["CLAUDE.md", ...files], `studio: socle Godot ${version} (projet, tests, relais du testeur)`);
+    // L'import de Godot écrit un .uid à côté de chaque script : on les enregistre avec le socle, sinon ils bloquent la
+    // fusion du premier chantier, qui crée les siens (ADR-76).
+    const uids = files.map((f) => `${f}.uid`).filter((f) => existsSync(join(root, f)));
+    await this.#vcs.commitPaths(root, ["CLAUDE.md", ...files, ...uids], `studio: socle Godot ${version} (projet, tests, relais du testeur)`);
     const how = `Godot ${version}, rendu ${setup.rendu}, ${setup.dimension.toUpperCase()}, écran ${setup.largeur}×${setup.hauteur}, ${setup.langage === "csharp" ? "C#" : "GDScript"}`;
     if (!check) return `Socle Godot posé (${how}) : projet, dossiers, outil de tests et relais du testeur. Godot n'est pas sur ce PC : rien n'a pu être lancé.`;
     return check.status === "pass"
