@@ -1102,3 +1102,31 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - **« Relever le plafond »** (fiche du visuel, `POST /projects/:slug/art/assets/:id/budget`, session humaine) ajoute un plafond de plus (12 $, puis 18 $…). Journal `art.budget_raised`. Aucun agent ne peut le faire ;
   - la fiche montre « Dépensé : x $ sur y $ · n crédits Tripo sur m », en orange au plafond.
 - **Vérifié** : deux tests dans `art.test.ts`. Un décor dont la finition résiste : les pas de l'artisan et le validateur sont comptés, la 2e passe n'a pas lieu, le message cite la dépense et les remarques, « Reprendre la finition » est refusé, puis accepté après « Relever le plafond » ; un canon : les 30 crédits Tripo sont comptés. 41 tests du DA au vert, typecheck.
+
+## ADR-83 — Le hub retrouve la forge de la DA, sans revenir au tout-lueur
+
+- **Contexte** : à la demande du directeur créatif (« améliorer le rendu graphique », propositions 1 et 2 retenues). Depuis ADR-68, le hub était sobre mais plat, loin de `DA.png`. Quelques incohérences aussi : le rose du DA (`--c-art`) hors palette, sur la sélection d'un style et les visuels à valider ; un bouton indisponible (cyan à 42 %) passait pour un second style de bouton bleu-vert ; la frise des étapes de la direction passait à la ligne ; Exo 2 et Orbitron étaient livrées sans servir.
+- **Décision** (`styles.css`, `studio/studio.css`, CSS seulement) :
+  - **couleurs** : ce que vous choisissez est en glace (style retenu, vignette), ce qui vous attend en braise (question du DA, visuel à valider, puce « à valider »), le validé en vert. `--c-art` devient une braise claire (`#ff8a4c`). Un bouton indisponible est gris (`grayscale`), sauf les vignettes de style, qui gardent leurs couleurs ;
+  - **la forge** : fond avec la glace en haut à droite, la braise en bas, très atténuées, et un grain fin (SVG en ligne, aucun fichier). Le liseré glace → braise revient sous l'onglet actif, sur la barre du menu et sous la bannière de l'accueil. La lueur reste réservée à l'élément actif ;
+  - **lettres** : Exo 2 pour les titres (h1 à h3), Orbitron pour les rubriques en capitales (menu, sur-titres, titres de colonnes). Le texte courant et les boutons restent en Segoe. Orbitron rend mal les parenthèses en petit : elle ne sert pas aux libellés des messages ;
+  - la frise des étapes de la direction tient sur une ligne (étape en cours en glace).
+- **Non retenu** : les messages « estompés » des captures étaient l'animation d'apparition saisie en cours, pas un défaut. « Directeur : fake » au bas du menu vient des tests (en vrai : « Claude (direct) »).
+- **Vérifié** : captures avant/après de `studio`, `art`, `art-vision` et `pilotage` examinées ; suite navigateur relancée.
+
+## ADR-83 — Budget de performance des jeux Godot : le relais mesure, le hub refuse un chantier qui ralentit le jeu
+
+- **Contexte** : idée n°2 de la phase 6. Le hub vérifiait que le jeu se lance sans erreur, jamais qu'il reste fluide. L'ADR-80 fait passer l'arme vue à la première personne à 15 000 triangles et à des textures de 2048 : sans mesure, un chantier qui fait chuter le jeu passe inaperçu jusqu'à ce que vous jouiez.
+- **Décision** :
+  - **Le relais mesure** (`bridge.gd` v2, commande `perf`). Pendant 3 s, avec la synchronisation verticale coupée pour obtenir la marge réelle et non les 60 images de l'écran, il relève : images par seconde ; temps par image (moyenne, 95 %, pire) ; appels de dessin, triangles et objets par image ; mémoire vidéo et statique ; nombre de nœuds. Les réglages d'écran sont rétablis ensuite.
+  - **Quelle scène** : `res://vitrines/perf.tscn` si le jeu l'a (la scène de jeu la plus chargée, tenue à jour par le développeur), sinon la scène de départ. Sur Néon Saloon, c'est aujourd'hui le menu titre : la consigne Godot des agents (`GODOT_RULES`) et la section CLAUDE.md d'un nouveau jeu demandent de créer `vitrines/perf.tscn` dès qu'il y a une partie jouable.
+  - **Le budget** (`perfProblems`) : un plancher de 60 images/s (`STUDIO_PERF_MIN_FPS`), et pas plus de 25 % de baisse face à la dernière mesure d'un chantier fusionné. La différence d'appels de dessin, de triangles ou de nœuds (+30 %) est nommée.
+  - **Contre le bruit de la machine** : un chantier qui paraît plus lent fait remesurer le jeu actuel **à l'instant** (même machine, même charge). C'est une régression seulement si le jeu actuel fait nettement mieux. Sinon la vérification passe, avec « l'écart venait de la machine » ; si les deux sont sous le plancher, elle dit « déjà le cas avant ce chantier ».
+  - **Conséquence** : une régression de performance est une régression comme les autres (ADR-32). Le développeur la corrige tout seul, avec les chiffres et des pistes (objets, lumières, modèles trop détaillés, matériaux non partagés, calcul dans `_process`). Le compte rendu dit « performances ✓ (N images/s) » et le testeur reçoit la mesure.
+  - **Les outils du studio suivent le hub** : avant chaque chantier d'un jeu Godot, `addons/studio_bridge` et `addons/studio_tests` sont remis à jour s'ils ont changé, et commités (« outils du studio Godot mis à jour »). Avant, ils n'étaient posés qu'à la création du jeu.
+  - Jeux web : pas de mesure (un navigateur sans écran ne dit rien de fiable sur la fluidité).
+- **Vérifié** :
+  - `autonomy.test.ts` : une mesure de référence ; un chantier à 110 images/s contre 195 pour le jeu remesuré, corrigé par le développeur avec « 195 → 110 images/s (−44 %) ; appels de dessin 200 → 450 », puis fusionné ; un chantier lent sur une machine lente aussi : fusionné, « l'écart venait de la machine ». Un relais v1 remis à jour avant un chantier.
+  - `godot.e2e.ts` avec le vrai Godot 4.6.2 : 1 198 images/s sur le socle 2D, 3 593 images mesurées ; `vitrines/perf.tscn` mesurée à la place de la scène de départ.
+  - Essai sur une copie de Néon Saloon (relais mis à jour) : menu titre à 1 411 images/s, 135 appels de dessin, 2 827 triangles, 172 Mo de mémoire vidéo.
+  - 256 tests au vert, typecheck.

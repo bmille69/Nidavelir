@@ -3,12 +3,13 @@ extends Node
 ##
 ## Il ne fait RIEN dans une partie normale : il ne s'active que si le hub lance le jeu avec
 ## « -- --studio-bridge=<port> ». Il écoute alors en local (127.0.0.1) et laisse le testeur jouer :
-## touches, actions, clics, toucher, texte, photos de l'écran, état du jeu (nœud du groupe « studio_test »).
+## touches, actions, clics, toucher, texte, photos de l'écran, état du jeu (nœud du groupe « studio_test »),
+## et mesure des performances (« perf », ADR-83).
 ## « --vitrine=A-0001 » ouvre la scène vitrine res://vitrines/a-0001.tscn, si elle existe.
 ##
 ## Ce fichier appartient au hub : ne le modifiez pas, il est remplacé à chaque mise à jour.
 
-const VERSION := 1
+const VERSION := 2
 
 var _server: TCPServer
 var _peer: StreamPeerTCP
@@ -100,6 +101,8 @@ func _handle(req: Dictionary) -> Dictionary:
 			var path := str(req.get("path", ""))
 			var err := image.save_png(path) if path.to_lower().ends_with(".png") else image.save_jpg(path, 0.7)
 			return {"ok": err == OK, "error": "" if err == OK else "photo impossible (%d)" % err}
+		"perf":
+			return await _perf(clampf(float(req.get("seconds", 3.0)), 0.5, 10.0), str(req.get("scene", "")))
 		"quit":
 			get_tree().call_deferred("quit")
 			return {"ok": true}
@@ -109,6 +112,64 @@ func _handle(req: Dictionary) -> Dictionary:
 func _scene_path() -> String:
 	var scene := get_tree().current_scene
 	return scene.scene_file_path if scene else ""
+
+
+# ── Performances (ADR-83) ───────────────────────────────────────────────
+
+## Mesure sur quelques secondes (sur `scene` si donnée), synchronisation verticale coupée : la marge réelle du jeu, pas les 60 images de
+## l'écran. Rendu tel que le joueur le voit (la fenêtre est hors de l'écran, mais affichée).
+func _perf(seconds: float, scene: String) -> Dictionary:
+	# La scène de référence du jeu (res://vitrines/perf.tscn), si le hub la demande : la plus chargée.
+	if scene != "":
+		if not ResourceLoader.exists(scene):
+			return {"ok": false, "error": "pas de scène %s" % scene}
+		get_tree().change_scene_to_file(scene)
+		await get_tree().create_timer(1.0, true, false, true).timeout
+	var vsync := DisplayServer.window_get_vsync_mode()
+	var max_fps := Engine.max_fps
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	for i in 15:
+		await get_tree().process_frame
+	var deltas: Array[float] = []
+	var draw := 0.0
+	var primitives := 0.0
+	var objects := 0.0
+	var start := Time.get_ticks_usec()
+	var last := start
+	while Time.get_ticks_usec() - start < int(seconds * 1000000.0):
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		deltas.append((now - last) / 1000.0)
+		last = now
+		draw += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		primitives += Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
+		objects += Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)
+	DisplayServer.window_set_vsync_mode(vsync)
+	Engine.max_fps = max_fps
+	var n := deltas.size()
+	if n == 0:
+		return {"ok": false, "error": "aucune image rendue pendant la mesure"}
+	var elapsed := (last - start) / 1000000.0
+	deltas.sort()
+	return {
+		"ok": true,
+		"perf": {
+			"seconds": snappedf(elapsed, 0.01),
+			"frames": n,
+			"fps": snappedf(n / elapsed, 0.1),
+			"frame_ms_avg": snappedf(elapsed * 1000.0 / n, 0.01),
+			"frame_ms_p95": snappedf(deltas[int(0.95 * (n - 1))], 0.01),
+			"frame_ms_max": snappedf(deltas[n - 1], 0.01),
+			"draw_calls": roundi(draw / n),
+			"primitives": roundi(primitives / n),
+			"objects": roundi(objects / n),
+			"video_mem_mb": snappedf(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0, 0.1),
+			"static_mem_mb": snappedf(Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, 0.1),
+			"nodes": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+			"scene": _scene_path(),
+		},
+	}
 
 
 # ── Les actions du testeur ──────────────────────────────────────────────

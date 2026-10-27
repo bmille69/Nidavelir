@@ -1,5 +1,5 @@
 import type { PlayRequest, PlayResult, PlaytestService } from "../quality/playtest.ts";
-import { GODOT_IMPORT, GODOT_TESTS, hasBridge, hasStudioTests, isGodot } from "../godot/toolchain.ts";
+import { GODOT_IMPORT, GODOT_TESTS, hasBridge, hasStudioTests, installStudioAddons, isGodot } from "../godot/toolchain.ts";
 import type { SkillService } from "../skills/skill-service.ts";
 import type { UsageService } from "../usage/usage-service.ts";
 import {
@@ -1041,8 +1041,12 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
    * `.import` à côté, dans une zone interdite aux agents : le chantier échouait (T-0002 de Néon Saloon, ADR-77).
    */
   async #godotIgnoresStudio(repo: string): Promise<void> {
+    if (!isGodot(repo)) return;
+    // Les outils du studio (relais, tests) suivent le hub : un jeu créé avant une mise à jour la reçoit ici (ADR-83).
+    const updated = hasBridge(repo) ? installStudioAddons(repo) : [];
+    if (updated.length) await this.#vcs.commitPaths(repo, updated, "studio: outils du studio Godot mis à jour (relais, tests)");
     const marker = join(repo, "studio", ".gdignore");
-    if (!isGodot(repo) || !existsSync(join(repo, "studio")) || existsSync(marker)) return;
+    if (!existsSync(join(repo, "studio")) || existsSync(marker)) return;
     writeFileSync(marker, "", "utf8");
     await this.#vcs.commitPaths(repo, ["studio/.gdignore"], "studio: Godot n'importe pas le dossier du studio");
   }

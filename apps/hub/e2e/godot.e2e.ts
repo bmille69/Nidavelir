@@ -70,6 +70,13 @@ describe.skipIf(!godot)("Godot dans le studio", () => {
     expect(launch.status, launch.detail).toBe("pass");
     expect(launch.screenshot).toBe(shot);
     expect(launch.loaded).toContain("/scenes/main.tscn");
+    // Les performances, mesurées par le relais, synchronisation coupée (ADR-83).
+    expect(launch.perf, "le relais doit mesurer").toBeTruthy();
+    expect(launch.perf!.frames).toBeGreaterThan(30);
+    expect(launch.perf!.fps).toBeGreaterThan(60);
+    expect(launch.perf!.frame_ms_p95).toBeGreaterThan(0);
+    expect(launch.perf!.scene).toBe("res://scenes/main.tscn");
+    writeFileSync(join(shots, "godot-perf.json"), JSON.stringify(launch.perf, null, 2));
 
     // La scène vitrine d'un asset s'ouvre par le relais (--vitrine=A-0001).
     writeFileSync(
@@ -80,6 +87,13 @@ describe.skipIf(!godot)("Godot dans le studio", () => {
     expect(vitrine.status, vitrine.detail).toBe("pass");
     expect(vitrine.detail).toMatch(/scène res:\/\/vitrines\/a-0001\.tscn/);
     expect(vitrine.loaded).toContain("/vitrines/a-0001.tscn");
+
+    // La scène de référence des performances (ADR-83) : mesurée à la place de la scène de départ.
+    writeFileSync(join(root, "vitrines", "perf.tscn"), `[gd_scene format=3]\n\n[node name="Perf" type="Node2D"]\n\n[node name="Nom" type="Label" parent="."]\ntext = "Scène chargée"\n`);
+    const heavy = await checker.launch("essai/perf", root);
+    expect(heavy.status, heavy.detail).toBe("pass");
+    expect(heavy.perf).toMatchObject({ scene: "res://vitrines/perf.tscn" });
+    expect(heavy.loaded).toContain("/scenes/main.tscn");
 
     // Le testeur joue : un clic sur le bouton par son texte, l'action maintenue, l'état lu, une photo.
     const driver = new RealPlayDriver({ workDir: join(dir, "data"), godot: () => godot });

@@ -168,6 +168,7 @@ export function claudeMdGodot(version: string, s: GodotSetup): string {
 - Commandes du joueur : toujours des actions de l'Input Map (Projet > Paramètres > Contrôles : « sauter », « tirer »…), jamais une touche en dur ; clavier et manette.
 - Le testeur du studio joue au vrai jeu par le relais \`addons/studio_bridge\` : il lit l'état par le nœud du groupe \`studio_test\` (méthode \`snapshot()\` qui rend un dictionnaire : score, vies, niveau…). Gardez ce nœud à jour quand le jeu grandit.
 - Scènes vitrines : \`vitrines/a-0001.tscn\` pour chaque visuel intégré (voir vitrines/README.md).
+- Budget de performance : le hub mesure le jeu avant chaque fusion et refuse un chantier qui le ralentit nettement. \`vitrines/perf.tscn\` est la scène qu'il mesure : la scène de jeu la plus chargée, qui se lance seule. À créer dès qu'il y a une partie jouable, et à garder à jour.
 - \`addons/studio_bridge\` et \`addons/studio_tests\` appartiennent au hub : ne les modifiez jamais. \`.godot/\` n'est jamais commité.
 `;
 }

@@ -168,6 +168,7 @@ export const GODOT_RULES = `Jeu Godot : la commande « godot » lance le Godot d
 - « ${GODOT_IMPORT} » : importe le projet et montre les erreurs de scènes, de scripts ou de ressources.
 - « ${GODOT_TESTS} » : lance les tests res://tests/**/test_*.gd (« extends StudioTest », fonctions « func test_…() », assert_eq, assert_true, add_scene, wait_frames, hold_action) ; « -- --only=<nom> » pour un seul fichier.
 - « godot --headless --path . res://<scène>.tscn --quit-after 120 » : fait tourner une scène quelques images et montre ses erreurs.
+- Budget de performance (ADR-83) : avant chaque fusion, le hub mesure les images par seconde, les appels de dessin et les triangles, et refuse un chantier qui ralentit nettement le jeu. Il mesure la scène res://vitrines/perf.tscn si elle existe, sinon la scène de départ (souvent un menu). Quand le jeu a une partie jouable, crée ou tiens à jour vitrines/perf.tscn : la scène de jeu la plus chargée (le plus d'ennemis, d'effets et de décor à la fois), qui se lance seule.
 - addons/studio_bridge et addons/studio_tests appartiennent au hub : ne les modifie pas.`;
 
 const GODOT_PLAY_RULES = `Pour ce jeu Godot, la manette pilote le vrai jeu (fenêtre de 1280×720, ou 390×844 en tactile pour screen=phone) :

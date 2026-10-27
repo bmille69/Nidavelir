@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHub, type Hub } from "../src/hub.ts";
@@ -430,6 +430,30 @@ describe("atelier (par défaut)", () => {
     expect(hub.journal.list({ subject: second!.id, latest: true }).find((e) => e.type === "queue.paused")).toMatchObject({ payload: { until: "2026-10-13T14:00:00.000Z", window: "five_hour" } });
   });
 
+  it("ADR-83 : un jeu Godot créé avant une mise à jour du relais la reçoit avant son prochain chantier", async () => {
+    const { sb, hub, fake, exec } = await setup();
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    const root = hub.projects.get(P).root;
+    writeFileSync(join(root, "project.godot"), `config_version=5\n\n[autoload]\n\nStudioBridge="*res://addons/studio_bridge/bridge.gd"\n`);
+    mkdirSync(join(root, "addons", "studio_bridge"), { recursive: true });
+    writeFileSync(join(root, "addons", "studio_bridge", "bridge.gd"), "extends Node\nconst VERSION := 1\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "godot");
+    exec.scripts.execute.push(async (t) => {
+      await t.write("src/a.ts", "export {};\n");
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
+    fake.replies.push("[[CHANTIER: Un]]\nObjectif : un.\n[[/CHANTIER]]");
+    await hub.conversations.send(P, hub.conversations.createThread(P, "x").id, "go");
+    await settle(hub);
+    const bridge = readFileSync(join(root, "addons", "studio_bridge", "bridge.gd"), "utf8");
+    expect(bridge).toMatch(/const VERSION := 2[\s\S]*"perf":/);
+    expect(existsSync(join(root, "addons", "studio_tests", "run.gd"))).toBe(true);
+    expect(git(root, "log", "--format=%s")).toMatch(/outils du studio Godot mis à jour/);
+    expect(git(root, "status", "--porcelain", "--", "addons")).toBe("");
+  });
+
   it("ADR-77 : un chantier de la file échoue, les suivants l'attendent ; un jeu Godot n'importe pas studio/", async () => {
     const { sb, hub, fake, exec } = await setup();
     hub.projects.setAutonomy(sb.human(), P, "workshop");
@@ -726,6 +750,48 @@ describe("qualité fiable (ADR-32)", () => {
     await settle(hub);
     expect(hub.tasks.get(P, "T-0001").status).toBe("merged");
     expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(/tests du jeu ✗ \(déjà le cas avant ce chantier\), le jeu se lance ✓/);
+  });
+
+  it("budget de performance (ADR-83) : un chantier qui ralentit le jeu est corrigé ; un écart dû à la machine ne bloque pas", async () => {
+    let root = "";
+    const checker = new FakeChecker(() => root);
+    const { sb, hub, fake, exec } = await setup(checker);
+    root = hub.projects.get(P).root;
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    const perf = (fps: number, draw_calls = 200) => ({ fps, frame_ms_avg: 1000 / fps, frame_ms_p95: 1200 / fps, frame_ms_max: 2000 / fps, draw_calls, primitives: 80_000, objects: 120, video_mem_mb: 300, static_mem_mb: 90, nodes: 400, scene: "res://scenes/main.tscn", seconds: 3, frames: fps * 3 });
+    const ran = (fps: number, draw = 200) => ({ status: "pass" as const, detail: "ok", perf: perf(fps, draw) });
+    const t = hub.conversations.createThread(P, "x");
+
+    // 1er chantier : la mesure de référence (200 images/s).
+    work(exec, "a.ts");
+    checker.answers.launch.push(ran(200));
+    fake.replies.push(brief("Décor"));
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+    expect(hub.tasks.get(P, "T-0001").status).toBe("merged");
+    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(/performances ✓ \(200 images\/s\)/);
+
+    // 2e chantier : 110 images/s et deux fois plus d'appels de dessin ; le jeu actuel, remesuré, fait 195 → régression.
+    work(exec, "b.ts", ["pass", "pass"]);
+    checker.answers.launch.push(ran(110, 450), ran(195), ran(190));
+    fake.replies.push(brief("Forêt"));
+    checker.calls.length = 0;
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+    expect(checker.calls).toEqual(["tests:chantier", "launch:chantier", "launch:jeu", "tests:chantier", "launch:chantier"]);
+    const fix = exec.requests.find((r) => /devenu trop lent/.test(r.prompt))!;
+    expect(fix.prompt).toMatch(/195 → 110 images\/s \(−44 %\) ; appels de dessin 200 → 450/);
+    expect(hub.tasks.get(P, "T-0002").status).toBe("merged");
+    expect(hub.checks!.get(P, "T-0002")!.perf).toMatchObject({ status: "pass", regression: false });
+
+    // 3e chantier : 120 images/s, mais le jeu actuel aussi (machine occupée) : rien à corriger.
+    work(exec, "c.ts");
+    checker.answers.launch.push(ran(120), ran(118));
+    fake.replies.push(brief("Pluie"));
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+    expect(hub.tasks.get(P, "T-0003").status).toBe("merged");
+    expect(hub.checks!.get(P, "T-0003")!.perf).toMatchObject({ status: "pass", regression: false, detail: expect.stringMatching(/l'écart venait de la machine/) });
   });
 
   it("un chantier repris ou annulé ne compte plus comme réussi, et le testeur est noté en conséquence", async () => {

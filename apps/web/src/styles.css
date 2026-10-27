@@ -87,17 +87,19 @@
   --fs-md: 15px;
   --fs-lg: 18px;
   --fs-xl: 24px;
-  /* Typographie : une seule famille, celle de Windows ; plus de lettres de marque. */
+  /* Typographie (ADR-83) : Segoe pour lire et pour les boutons, Exo 2 pour les titres, Orbitron pour les
+     sur-titres et rubriques en capitales (les lettres de la DA, incluses dans l'application). */
   --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-brand: var(--font-display);
+  --font-title: "Exo 2", var(--font-display);
+  --font-brand: "Orbitron", var(--font-display);
   --font-mono: "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
   /* Couleur de chaque agent : une pastille discrète */
   --c-you: #d9b56b;
   --c-concepteur: #d99a6c;
   --c-director: #00e5ff;
   --c-archivist: #a99be0;
-  --c-art: #d496b8;
+  --c-art: #ff8a4c; /* braise claire : le rose sortait de la palette de la DA (ADR-83) */
   --c-developer: #84a9d9;
   --c-qa: #7cc79a;
   --c-guardian: #d98a92;
@@ -116,7 +118,13 @@ body,
   margin: 0;
 }
 body {
-  background: var(--bg);
+  /* La forge (ADR-83) : la glace en haut à droite, la braise en bas à gauche, à peine ; un grain très fin. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(1100px 620px at 100% -10%, rgba(0, 229, 255, 0.08), transparent 70%),
+    radial-gradient(900px 560px at 35% 115%, rgba(255, 90, 0, 0.07), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 15px/1.55 var(--font);
   -webkit-font-smoothing: antialiased;
@@ -127,7 +135,7 @@ body {
 h1,
 h2,
 h3 {
-  font-family: var(--font-display);
+  font-family: var(--font-title);
   letter-spacing: 0;
   line-height: 1.2;
 }
@@ -224,8 +232,10 @@ button.danger {
   border-color: rgba(255, 122, 133, 0.5);
 }
 button.danger:hover:not(:disabled) { background: var(--error-bg); border-color: var(--error); }
+/* Indisponible = gris : un bouton cyan à demi transparent passait pour un second style de bouton (ADR-83). */
 button:disabled {
-  opacity: 0.42;
+  opacity: 0.5;
+  filter: grayscale(0.9);
   cursor: default;
 }
 .icon-btn {
@@ -676,8 +686,8 @@ blockquote cite {
   bottom: -1px;
   height: 2px;
   border-radius: 2px;
-  background: var(--grad);
-  box-shadow: 0 0 12px rgba(0, 229, 255, 0.35);
+  background: var(--grad-brand);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.25), 6px 0 12px rgba(255, 90, 0, 0.2);
 }
 .project-tabs a .icon { opacity: 0.8; }
 .hero {

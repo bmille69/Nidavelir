@@ -31,7 +31,8 @@ Les appels aux modèles passent par votre Claude Code (votre abonnement). Godot 
 Variables facultatives :
 - serveur : `STUDIO_PORT`, `STUDIO_GAMES_ROOT` (défaut `C:\Games`), `STUDIO_DATA_DIR` (défaut `.data`), `STUDIO_NO_BROWSER=1` ;
 - modèles : `STUDIO_MODEL_CHAT`, `STUDIO_MODEL_STRUCTURED`, `STUDIO_MODEL_CONCEPT`, `STUDIO_MODEL_DEV`, `STUDIO_MODEL_DEV_BIG`, `STUDIO_MODEL_QA`, `STUDIO_MODEL_ART`, `STUDIO_MODEL_ARCHEOLOGUE` (ils se règlent aussi dans « Le studio en direct ») ;
-- 3D : `STUDIO_TRIPO_MODEL`, `STUDIO_TRIPO_MULTIVIEW_MODEL`, `STUDIO_TRIPO_MONTHLY_CREDITS` ; plafond par visuel `STUDIO_ART_ASSET_USD` (défaut 6) et `STUDIO_ART_ASSET_CREDITS` (défaut 250). Les clés des services se saisissent dans l'interface.
+- 3D : `STUDIO_TRIPO_MODEL`, `STUDIO_TRIPO_MULTIVIEW_MODEL`, `STUDIO_TRIPO_MONTHLY_CREDITS` ; plafond par visuel `STUDIO_ART_ASSET_USD` (défaut 6) et `STUDIO_ART_ASSET_CREDITS` (défaut 250) ;
+- Godot : `STUDIO_GODOT` (l'exécutable), `STUDIO_PERF_MIN_FPS` (plancher du budget de performance, défaut 60). Les clés des services se saisissent dans l'interface.
 
 ## Développement
 
