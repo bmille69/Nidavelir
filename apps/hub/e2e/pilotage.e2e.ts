@@ -213,6 +213,20 @@ describe("poste de pilotage", () => {
     await page.locator(".pilot-feel input").fill("la mort des bandits");
     await page.locator(".pilot-feel").screenshot({ path: join(shots, "pilot-13-game-feel.png") });
 
+    // Le journal de bord (ADR-89) : une fusion et un visuel intégré cette semaine, puis le récit du directeur.
+    const merged = hub.tasks.list(P).find((t) => t.status === "merged")!;
+    hub.journal.append({ project: P, actor: { kind: "system" }, type: "task.merged", subject: merged.id, payload: {} });
+    const titan = hub.art.state(P).assets.find((a) => a.name === "Gardien Titan")!;
+    hub.journal.append({ project: P, actor: { kind: "system" }, type: "art.asset_integrated", subject: titan.id, payload: { task: merged.id } });
+    await page.locator(".pilot-head .segmented button", { hasText: "Journal" }).click();
+    await page.locator(".logbook-entry").first().waitFor();
+    expect(await page.locator(".logbook-entry").count()).toBe(2);
+    await expect(page.locator(".logbook").textContent()).resolves.toMatch(/Rampes lisibles[\s\S]*Visuel « Gardien Titan » intégré/);
+    fake.replies.push("Les rampes se lisent enfin, et le Titan est dans le jeu.\nLa semaine prochaine : le ciel.");
+    await page.locator(".logbook-story button").click();
+    await page.locator(".logbook-text").waitFor();
+    await page.screenshot({ path: join(shots, "pilot-14-journal.png"), fullPage: true });
+
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);

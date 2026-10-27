@@ -1805,3 +1805,17 @@ a.pilot-row-title:hover { color: var(--accent); }
 /* La passe game feel (ADR-88) */
 .pilot-feel { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
 .pilot-feel-open { align-self: flex-start; margin-top: var(--space-3); }
+
+/* Le journal de bord (ADR-89) */
+.logbook { display: flex; flex-direction: column; gap: var(--space-3); }
+.logbook-top { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-start; }
+.logbook-gif { margin: 0; flex: 0 1 640px; }
+.logbook-gif img { width: 100%; border-radius: 10px; border: 1px solid var(--border); display: block; }
+.logbook-story { flex: 1 1 260px; display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+.logbook-text { white-space: pre-wrap; margin: 0; }
+.logbook-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.logbook-entry { display: grid; grid-template-columns: 200px 1fr; gap: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: var(--space-2); }
+.logbook-entry img, .logbook-noshot { width: 200px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--surface-2); display: block; }
+.logbook-entry h3 { margin: 2px 0; font-size: 1rem; }
+.logbook-entry p { margin: 2px 0; }
+@media (max-width: 640px) { .logbook-entry { grid-template-columns: 1fr; } .logbook-entry img, .logbook-noshot { width: 100%; } }

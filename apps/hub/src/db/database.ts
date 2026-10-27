@@ -447,6 +447,16 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX bench_runs_project ON bench_runs (project, id);
   `,
+  `
+  -- ADR-89 : le journal de bord, la semaine racontée par le directeur (sur votre demande).
+  CREATE TABLE logbook_weeks (
+    project TEXT NOT NULL,
+    week TEXT NOT NULL,
+    text TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (project, week)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

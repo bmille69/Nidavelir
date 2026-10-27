@@ -4,11 +4,12 @@ import { STATUS } from "./ArtDirection.tsx";
 import { useNow, useStudio } from "./context.tsx";
 import { Balance } from "./Balance.tsx";
 import { Bench } from "./Bench.tsx";
+import { Logbook } from "./Logbook.tsx";
 import { Bilan } from "./Bilan.tsx";
 import { Gallery } from "./Gallery.tsx";
 
 const LAST_PROJECT = "studio:last-project";
-type View = "production" | "galerie" | "bilan" | "equilibrage" | "banc";
+type View = "production" | "galerie" | "bilan" | "journal" | "equilibrage" | "banc";
 const STAGE: Record<string, string> = { croquis: "Croquis", image: "Image", planche: "Planche 4 vues", tripo: "Tripo (3D)", atelier: "Atelier Blender", controle: "Contrôle" };
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const usd = (n: number) => `${n.toFixed(2).replace(".", ",")} $`;
@@ -82,6 +83,9 @@ export function Pilotage() {
             <button role="tab" aria-selected={view === "bilan"} className={view === "bilan" ? "on" : ""} onClick={() => setView("bilan")}>
               Bilan
             </button>
+            <button role="tab" aria-selected={view === "journal"} className={view === "journal" ? "on" : ""} onClick={() => setView("journal")}>
+              Journal
+            </button>
             <button role="tab" aria-selected={view === "equilibrage"} className={view === "equilibrage" ? "on" : ""} onClick={() => setView("equilibrage")}>
               Équilibrage
             </button>
@@ -114,7 +118,9 @@ function ProjectPilot({ slug, view }: { slug: string; view: View }) {
           ))}
         </section>
       )}
-      {view === "banc" ? (
+      {view === "journal" ? (
+        <Logbook slug={slug} />
+      ) : view === "banc" ? (
         <Bench slug={slug} />
       ) : view === "equilibrage" ? (
         <Balance slug={slug} />

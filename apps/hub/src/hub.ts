@@ -38,6 +38,7 @@ import { ReplayService } from "./quality/replays.ts";
 import { BalanceService } from "./quality/balance.ts";
 import { BenchService } from "./quality/bench.ts";
 import { FeelService } from "./quality/feel.ts";
+import { LogbookService } from "./journal/logbook.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
@@ -126,6 +127,8 @@ export type Hub = {
   bench: BenchService;
   /** La passe « game feel » à la demande (ADR-88). */
   feel: FeelService;
+  /** Le journal de bord : les fusions en images, semaine par semaine (ADR-89). */
+  logbook: LogbookService;
   gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
@@ -221,6 +224,7 @@ export function createHub(options: HubOptions): Hub {
   const balance = new BalanceService({ db, clock, journal, projects, vcs, conversations, godot: options.godot ?? (() => null) });
   const bench = new BenchService({ db, clock, journal, projects, tasks, checker: options.checker ?? null });
   const feel = new FeelService({ projects, tasks, conversations, journal });
+  const logbook = new LogbookService({ db, clock, journal, projects, tasks, checks, orchestrator, dataDir });
   if (checks) {
     // Entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33).
     tasks.beforeVerify = async (task) => {
@@ -308,6 +312,11 @@ export function createHub(options: HubOptions): Hub {
   });
   // Le Concepteur confie les visuels de ses conceptions au Directeur artistique, et sait ce qui existe déjà (ADR-59).
   conceptions.art = art;
+  // Le journal de bord montre les visuels intégrés avec leur image (ADR-89).
+  logbook.asset = (project, id) => {
+    const a = art.state(project).assets.find((x) => x.id === id);
+    return a ? { name: a.name, image: a.model?.renders[0] ?? a.renders.at(-1) ?? null } : null;
+  };
   // Le Godot du PC guide le Concepteur et sert au socle des nouveaux jeux Godot (ADR-73).
   conceptions.godot = options.godot ?? null;
   // Un visuel validé attend que son chantier ait posé sa place dans le jeu (ADR-60).
@@ -398,6 +407,7 @@ export function createHub(options: HubOptions): Hub {
     balance,
     bench,
     feel,
+    logbook,
     quality,
     checks,
     gameState,

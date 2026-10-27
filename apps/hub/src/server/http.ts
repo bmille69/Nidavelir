@@ -718,6 +718,23 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
     });
+    // Le journal de bord (ADR-89).
+    api.get("/projects/:slug/logbook", async (req) => {
+      const { slug } = req.params as { slug: string };
+      const { week } = req.query as { week?: string };
+      return { weeks: hub.logbook.weeks(slug), current: hub.logbook.week(slug, week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? week : undefined) };
+    });
+    api.get("/projects/:slug/logbook/:week/gif", async (req, reply) => {
+      const { slug, week } = req.params as { slug: string; week: string };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return reply.code(400).send({ error: "Semaine invalide" });
+      const gif = hub.logbook.gif(slug, week);
+      if (!gif) return reply.code(404).send({ error: "Pas assez de captures cette semaine-là" });
+      return reply.type("image/gif").header("cache-control", "private, max-age=300").send(gif);
+    });
+    api.post("/projects/:slug/logbook/:week/tell", async (req) => {
+      const { slug, week } = req.params as { slug: string; week: string };
+      return hub.logbook.tell(req.human!, slug, week);
+    });
     // La passe « game feel » (ADR-88).
     api.post("/projects/:slug/feel", async (req) => {
       const { slug } = req.params as { slug: string };

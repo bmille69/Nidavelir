@@ -223,6 +223,19 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** Le journal de bord (ADR-89). */
+export type LogWeek = {
+  week: string;
+  from: string;
+  to: string;
+  previous: string | null;
+  next: string | null;
+  entries: { task: string; title: string; at: string; summary: string; costUsd: number; checks: string; shot: boolean }[];
+  visuals: { id: string; name: string; image: string | null; task: string | null; at: string }[];
+  facts: { merged: number; failed: number; costUsd: number; visuals: number; balanceRuns: number; benchRuns: number; replaysSaved: number };
+  gif: boolean;
+  story: { text: string; at: string } | null;
+};
 /** Le banc d'essai des agents (ADR-87). */
 export type BenchCase = { id: string; source: string; title: string; goal: string; base: string; original: { costUsd: number | null; seconds: number | null; files: number | null }; created_at: string };
 export type BenchResult = {
@@ -602,6 +615,9 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  logbook: (slug: string, week?: string) => request<{ weeks: string[]; current: LogWeek }>("GET", `/projects/${slug}/logbook${week ? `?week=${week}` : ""}`),
+  logbookGif: (slug: string, week: string, n: number) => `/api/human/projects/${slug}/logbook/${week}/gif?n=${n}`,
+  logbookTell: (slug: string, week: string) => request<LogWeek>("POST", `/projects/${slug}/logbook/${week}/tell`, {}),
   feel: (slug: string, moments: string, intensity: "discret" | "marque" | "genereux") =>
     request<{ task: { id: string }; thread: string; after: string | null }>("POST", `/projects/${slug}/feel`, { moments, intensity }),
   bench: (slug: string) => request<BenchState>("GET", `/projects/${slug}/bench`),

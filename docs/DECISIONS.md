@@ -1223,3 +1223,19 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
     - un compte rendu « moment → retours → réglages », pour doser ensuite dans la discussion.
   - Le développeur dispose déjà de la compétence game-feel-godot (ADR-78) ; la consigne lui dit de la consulter.
 - **Vérifié** : `feel.test.ts` (la consigne pour Godot et pour le web, sous les 4 000 caractères ; refus en « Je valide tout » et sans session humaine ; premier chantier lancé et suivi dans sa discussion, second en file derrière lui, journal). `pilotage.e2e.ts` : le formulaire (capture examinée). Suite complète au vert, typecheck, construction.
+
+## ADR-89 — Le journal de bord : les fusions en images, semaine par semaine, et le récit du directeur sur demande
+
+- **Contexte** : idée n°8 de la phase 6. Le studio produit vite (près de 190 chantiers fusionnés en deux semaines sur trois jeux), mais rien ne montrait le jeu changer. Il fallait ouvrir les chantiers un par un. Chaque chantier a pourtant sa capture du jeu prise par le hub (ADR-33), ses vérifications et son coût.
+- **Décision** :
+  - Pilotage → Journal : une page par semaine (du lundi au dimanche, heure locale), avec précédente et suivante parmi les semaines où le jeu a bougé.
+    - Les chiffres de la semaine : fusions, visuels intégrés, chantiers en échec, coût, passages de l'équilibreur et du banc d'essai, parties gardées comme tests.
+    - Chaque fusion, dans l'ordre : sa capture, son titre, le compte rendu simple du développeur, les vérifications du hub en une ligne, son coût. Chaque visuel intégré, avec son image et le chantier qui l'a intégré.
+    - Un GIF du jeu au fil de la semaine, une image par fusion (la dernière tenue 3 s), dès qu'il y a deux captures.
+  - Le GIF est fait par le hub, sans dépendance (`journal/gif.ts`) : captures décodées par le décodeur PNG de l'ADR-84, ramenées à 640 × 360, palette fixe de 252 couleurs avec un tramage léger, compression LZW. Il est gardé en cache dans `.data/logbook/` et refait quand une fusion s'ajoute.
+  - Tout cela sans modèle, à partir du journal du hub. « Raconter la semaine » demande au directeur 5 à 8 lignes : ce qui a changé pour le joueur, ce qui a coûté ou résisté, une suggestion. Il n'a que les faits fournis. Le récit est gardé (table `logbook_weeks`).
+- **Vérifié** :
+  - `logbook.test.ts` : la semaine commence le lundi. Le GIF est relu par ffmpeg image par image, avec les bonnes couleurs. Deux vrais chantiers fusionnés apparaissent avec leur capture, leurs vérifications et leur coût ; le GIF est fait, puis resservi depuis le cache. Le récit est refusé sans session humaine ; sinon il est demandé avec les faits et gardé.
+  - Un GIF fait des huit dernières captures réelles de Bordée (272 Ko en 0,3 s) est relu par ffmpeg ; une image extraite a été examinée.
+  - `pilotage.e2e.ts` : l'onglet Journal avec une fusion, un visuel et le récit (capture examinée).
+  - 273 tests au vert, typecheck, construction de l'interface.
