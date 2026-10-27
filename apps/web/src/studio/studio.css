@@ -1793,3 +1793,11 @@ a.pilot-row-title:hover { color: var(--accent); }
 .sim-metric .up { color: var(--ok, #3fb950); }
 .sim-metric .down { color: var(--warn); }
 .balance-send { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* Le banc d'essai des agents (ADR-87) */
+.bench-table { width: 100%; border-collapse: collapse; }
+.bench-table th, .bench-table td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
+.bench-table th { font-weight: 500; color: var(--muted, inherit); font-size: 0.85rem; }
+.bench-table .ok { color: var(--ok, #3fb950); }
+.bench-table .warn { color: var(--warn); }
+.bench-total td { font-weight: 600; }

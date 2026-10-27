@@ -3,11 +3,12 @@ import { api, type ArtAsset, type ArtState, type Monitor, type TaskRow } from ".
 import { STATUS } from "./ArtDirection.tsx";
 import { useNow, useStudio } from "./context.tsx";
 import { Balance } from "./Balance.tsx";
+import { Bench } from "./Bench.tsx";
 import { Bilan } from "./Bilan.tsx";
 import { Gallery } from "./Gallery.tsx";
 
 const LAST_PROJECT = "studio:last-project";
-type View = "production" | "galerie" | "bilan" | "equilibrage";
+type View = "production" | "galerie" | "bilan" | "equilibrage" | "banc";
 const STAGE: Record<string, string> = { croquis: "Croquis", image: "Image", planche: "Planche 4 vues", tripo: "Tripo (3D)", atelier: "Atelier Blender", controle: "Contrôle" };
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const usd = (n: number) => `${n.toFixed(2).replace(".", ",")} $`;
@@ -84,6 +85,9 @@ export function Pilotage() {
             <button role="tab" aria-selected={view === "equilibrage"} className={view === "equilibrage" ? "on" : ""} onClick={() => setView("equilibrage")}>
               Équilibrage
             </button>
+            <button role="tab" aria-selected={view === "banc"} className={view === "banc" ? "on" : ""} onClick={() => setView("banc")}>
+              Banc d'essai
+            </button>
           </div>
         </div>
       </header>
@@ -110,7 +114,9 @@ function ProjectPilot({ slug, view }: { slug: string; view: View }) {
           ))}
         </section>
       )}
-      {view === "equilibrage" ? (
+      {view === "banc" ? (
+        <Bench slug={slug} />
+      ) : view === "equilibrage" ? (
         <Balance slug={slug} />
       ) : view === "bilan" ? (
         <Bilan slug={slug} />

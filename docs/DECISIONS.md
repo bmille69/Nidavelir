@@ -1193,3 +1193,18 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `godot.e2e.ts` avec le vrai Godot 4.6.2 : 300 parties d'une simulation qui instancie aussi la scène principale, en 0,38 s ; vague atteinte de 4 à 10 ; les mêmes graines redonnent exactement les mêmes chiffres.
   - `pilotage.e2e.ts` : l'onglet Équilibrage, deux passages comparés (capture examinée).
   - 267 tests au vert, typecheck, construction de l'interface.
+
+## ADR-87 — Le banc d'essai des agents : des chantiers de référence refaits à chaque changement de modèle ou de consignes
+
+- **Contexte** : idée n°6 de la phase 6. Les consignes du développeur changent souvent (ADR-26, 41, 77, 83, 85, 86…) et les modèles aussi. Rien ne disait si un changement rendait le développeur meilleur ou pire : on le découvrait sur le chantier suivant, au prix d'un échec réel.
+- **Décision** :
+  - **Une référence** est un chantier déjà fusionné, choisi par vous (Pilotage → Banc d'essai, « Ajouter au banc », 8 au plus). Le hub garde sa consigne, le commit d'où il était parti, et son coût et sa durée d'origine.
+  - **« Passer le banc »** refait chaque référence, l'une après l'autre, en arrière-plan : une copie jetable du jeu partie du même commit (`.data/bench/<projet>/B-xxxx`, branche `studio/banc-B-xxxx`), le développeur actuel en exécution directe (mêmes consignes, même gardien, même compte rendu), puis les vérifications du hub (tests, lancement, parties rejouées). Ni testeur ni fusion : la copie et sa branche sont effacées, le jeu n'est jamais touché, et aucun chantier n'apparaît dans la liste.
+  - **Réussi** veut dire : le développeur a rendu un compte rendu qui n'est pas un échec, il a modifié au moins un fichier, et aucune vérification n'échoue. Pour chaque référence, le tableau montre réussi ou raté, tests et jeu, coût, durée et nombre de fichiers, face à l'origine et au passage précédent, avec un total.
+  - **L'empreinte du développeur** est un hachage de l'exécuteur, des modèles du développeur (`STUDIO_MODEL_DEV`, `STUDIO_MODEL_DEV_BIG`) et de ses consignes système pour ce jeu (hors carnet « État du jeu », qui bouge à chaque fusion). Si elle a changé depuis le dernier passage, l'onglet le dit : le banc n'est plus à jour.
+  - Seul votre clic passe le banc : chaque passage coûte autant que les chantiers de référence, et l'onglet le rappelle.
+  - Au passage, la suite de tests a 30 s par test au lieu de 5 (des tests qui font plusieurs commits Git dépassaient parfois sous Windows quand tout tourne en parallèle).
+- **Vérifié** :
+  - `bench.test.ts` : un vrai chantier mené jusqu'à la fusion devient une référence. Le premier passage refait la consigne depuis le commit de départ (le fichier du chantier n'y est pas encore), et réussit. Le jeu reste au même commit, sans branche du banc ni copie restante, sans chantier ajouté. Un changement de modèle change l'empreinte ; le passage suivant échoue sur les tests et le dit. Un développeur qui s'arrête est dit avec sa raison, et la copie est quand même effacée.
+  - `pilotage.e2e.ts` : l'onglet Banc d'essai, deux passages comparés, banc pas à jour (capture examinée).
+  - 268 tests au vert, typecheck, construction de l'interface.

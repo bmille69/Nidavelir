@@ -195,6 +195,18 @@ describe("poste de pilotage", () => {
     expect(await page.locator(".sim-hist span").count()).toBeGreaterThan(3);
     await page.screenshot({ path: join(shots, "pilot-11-equilibrage.png"), fullPage: true });
 
+    // Le banc d'essai (ADR-87) : deux références, deux passages, le dernier avec un raté.
+    const res = (c: string, ok: boolean, cost: number) => ({ case: c, ok, outcome: ok ? "completed" : "partial", summary: ok ? "Fait." : "Les tests cassent.", error: null, tests: ok ? "pass" : "fail", launch: "pass", replays: null, costUsd: cost, tokens: 90000, model: "claude", seconds: 420, files: 3 });
+    for (const [i, c] of [["BC-01-T-0001", "Boss au minuteur"], ["BC-02-T-0002", "Vagues plus denses"]] as const)
+      hub.db.prepare("INSERT INTO bench_cases (project, id, source_task, title, goal, base_commit, original_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(P, i, i.slice(6), c, c, "0".repeat(40), JSON.stringify({ costUsd: 1.2, seconds: 600, files: null }), "2026-10-20T10:00:00.000Z");
+    hub.db.prepare("INSERT INTO bench_runs (project, at, fingerprint, status, results_json) VALUES (?, ?, ?, 'done', ?)").run(P, "2026-10-25T09:00:00.000Z", "aaaaaaaaaaaa", JSON.stringify([res("BC-01-T-0001", true, 1.1), res("BC-02-T-0002", true, 1.4)]));
+    hub.db.prepare("INSERT INTO bench_runs (project, at, fingerprint, status, results_json) VALUES (?, ?, ?, 'done', ?)").run(P, "2026-10-27T09:00:00.000Z", "bbbbbbbbbbbb", JSON.stringify([res("BC-01-T-0001", true, 0.9), res("BC-02-T-0002", false, 2.1)]));
+    await page.locator(".pilot-head .segmented button", { hasText: "Banc d'essai" }).click();
+    await page.locator(".bench-table tbody tr").first().waitFor();
+    await expect(page.locator(".bench-total").textContent()).resolves.toMatch(/1\/2 réussis[\s\S]*2\/2 réussis/);
+    await expect(page.locator(".balance").textContent()).resolves.toMatch(/plus à jour/);
+    await page.screenshot({ path: join(shots, "pilot-12-banc.png"), fullPage: true });
+
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);

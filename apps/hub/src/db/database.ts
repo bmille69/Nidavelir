@@ -424,6 +424,29 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX sim_runs_project ON sim_runs (project, id);
   `,
+  `
+  -- ADR-87 : le banc d'essai des agents, des chantiers de référence rejoués à chaque changement de modèle ou de consignes.
+  CREATE TABLE bench_cases (
+    project TEXT NOT NULL,
+    id TEXT NOT NULL,
+    source_task TEXT NOT NULL,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    base_commit TEXT NOT NULL,
+    original_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project, id)
+  );
+  CREATE TABLE bench_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    at TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    results_json TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE INDEX bench_runs_project ON bench_runs (project, id);
+  `,
 ];
 
 export function openDatabase(path: string): Db {

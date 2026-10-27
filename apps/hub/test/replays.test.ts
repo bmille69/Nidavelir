@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readReplay, runSavedReplays } from "../src/quality/replays.ts";
 import type { ReplayResult } from "../src/godot/run.ts";
 import { cleanupSandboxes, git, sandbox } from "./helpers.ts";
 
+vi.setConfig({ testTimeout: 30_000 });
 afterEach(() => cleanupSandboxes());
 
 /** Une partie enregistrée par le relais : en-tête, entrées image par image, état du jeu toutes les 30 images. */

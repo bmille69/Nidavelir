@@ -137,6 +137,8 @@ export class TaskService {
   readonly #held = new Map<string, string[]>();
   readonly #finished = new Map<string, RunEvent[]>();
   readonly #background = new Set<Promise<void>>();
+  /** Chantiers du banc d'essai en cours (ADR-87) : jamais dans la liste des chantiers, jamais fusionnés. */
+  readonly #bench = new Map<string, Task>();
 
   constructor(deps: {
     db: Db;
@@ -812,11 +814,13 @@ export class TaskService {
     if (d.decision === "deny") return { behavior: "deny", message: `Refusé par le hub : ${d.reason}` };
     // Atelier (ADR-25) : hors plan mais sans danger (le gardien a déjà refusé ce qui l'est), dans une copie
     // du jeu que vous relirez avant fusion. On laisse travailler, et on le note.
-    if (this.#projects.get(run.project).autonomy === "workshop") {
+    // Le banc d'essai (ADR-87) travaille comme l'atelier : personne n'attend devant, et sa copie est jetée.
+    const bench = this.#bench.get(`${run.project}/${run.task}`);
+    if (bench || this.#projects.get(run.project).autonomy === "workshop") {
       const summary = this.#describe(run, tool, input);
       this.#log(run.project, "escalation.auto_allowed", run.task, { summary, reason: d.reason });
       // En exécution directe il n'y a pas de plan : rien d'« hors plan » à signaler à chaque action.
-      if (!this.get(run.project, run.task).direct) this.#event(run, "info", `Hors plan, autorisé automatiquement (atelier) : ${summary}`);
+      if (!(bench ?? this.get(run.project, run.task)).direct) this.#event(run, "info", `Hors plan, autorisé automatiquement (atelier) : ${summary}`);
       return { behavior: "allow" };
     }
 
@@ -868,7 +872,7 @@ export class TaskService {
       prompt: string;
       jsonSchema: object;
       onResult: (r: ExecResult) => RunOutcome | Promise<RunOutcome>;
-      onFailure: () => void;
+      onFailure: (error: string) => void;
     },
   ): string {
     const id = nextId(this.#db, task.project, "RUN");
@@ -940,7 +944,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
         status = run.abort.signal.aborted ? "cancelled" : "failed";
         error = (err as Error).message.slice(0, 500);
         this.#event(run, "error", error);
-        if (status === "failed") spec.onFailure();
+        if (status === "failed") spec.onFailure(error);
       } finally {
         for (const resolve of run.waiting.values()) resolve(false);
         // Partie laissée ouverte par le testeur : navigateur et serveur du jeu fermés.
@@ -1064,6 +1068,72 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
       await this.#vcs.removeWorktree(repo, task.worktree).catch(() => {});
     }
     if (task.branch && (await this.#vcs.branchHead(repo, task.branch))) await this.#vcs.deleteBranch(repo, task.branch).catch(() => {});
+  }
+
+  // ── Banc d'essai des agents (ADR-87) ─────────────────────────────────────
+
+  /**
+   * Empreinte de ce que reçoit le développeur : ses consignes système (pour ce jeu) et l'exécuteur. Quand elle change
+   * (nouveau modèle, consignes retouchées), le banc d'essai n'est plus à jour.
+   */
+  benchFingerprint(project: string): { hash: string; executor: string } {
+    const root = this.#projects.get(project).root;
+    const pseudo = { project, worktree: root } as Task;
+    const ctx = { ...this.#context(pseudo), state: null };
+    const models = [process.env.STUDIO_MODEL_DEV, process.env.STUDIO_MODEL_DEV_BIG].map((m) => m ?? "").join("|");
+    return { hash: sha256(`${this.#executor.name}\n${models}\n${directExecutionSystemPrompt(ctx)}`).slice(0, 12), executor: this.#executor.name };
+  }
+
+  /**
+   * Rejoue la consigne d'un chantier de référence depuis le commit d'où il était parti, dans une copie jetable, avec le
+   * développeur actuel (exécution directe, sans testeur). Rend son rapport, son coût, sa durée et ses fichiers ;
+   * `inspect` regarde la copie avant qu'elle soit effacée (vérifications du hub).
+   */
+  async benchRun<T>(
+    project: string,
+    input: { title: string; goal: string; base: string },
+    inspect: (worktree: string) => Promise<T>,
+  ): Promise<{ id: string; report: ExecutionReportOutput | null; error: string | null; costUsd: number | null; tokens: number | null; model: string | null; seconds: number; files: string[]; checks: T | null }> {
+    const repo = this.#projects.get(project).root;
+    const id = nextId(this.#db, project, "B");
+    const branch = `studio/banc-${id}`;
+    const path = join(this.#opts.dataDir, "bench", project, id);
+    mkdirSync(join(path, ".."), { recursive: true });
+    await this.#vcs.addWorktree(repo, path, branch, input.base);
+    const now = this.#clock.now();
+    const task = Task.parse({ id: "T-0000", project, title: input.title, goal: input.goal, direct: true, status: "running", base_commit: input.base, branch, worktree: path, plan: null, created_at: now, updated_at: now });
+    const pseudo = { ...task, id } as Task;
+    const key = `${project}/${id}`;
+    this.#bench.set(key, pseudo);
+    const started = Date.now();
+    try {
+      await linkSharedDirs(repo, path, this.#vcs);
+      const plan = { commands: verificationScripts(path), files_to_create: [], files_to_modify: [], files_to_delete: [], new_dependencies: [] } as unknown as Plan;
+      const done = await new Promise<{ report: ExecutionReportOutput | null; costUsd: number | null; tokens: number | null; model: string | null; failed: boolean; error?: string }>((resolve) => {
+        this.#spawn(pseudo, "execute", new PolicyEngine({ mode: "execute", root: path, plan, readable: this.#readable(pseudo) }), {
+          systemPrompt: directExecutionSystemPrompt({ ...this.#context(pseudo), state: null }),
+          prompt: directExecutionPrompt(pseudo, []),
+          jsonSchema: REPORT_SCHEMA,
+          onResult: (r) => {
+            const parsed = ExecutionReportOutput.safeParse(r.structured);
+            const report = parsed.success ? parsed.data : null;
+            resolve({ report, costUsd: r.costUsd ?? null, tokens: r.tokens ? r.tokens.input + r.tokens.output + r.tokens.cacheRead + r.tokens.cacheWrite : null, model: r.model ?? null, failed: false });
+            return report ? { report, text: report.summary_simple } : {};
+          },
+          onFailure: (error) => resolve({ report: null, costUsd: null, tokens: null, model: null, failed: true, error }),
+        });
+      });
+      const error = done.failed ? done.error || "le développeur s'est arrêté" : null;
+      await this.#vcs.commitAll(path, `banc d'essai: ${id} — ${input.title}`).catch(() => {});
+      const files = (await this.#vcs.diff(repo, input.base, branch)).files.map((f) => f.path);
+      const checks = done.failed ? null : await inspect(path).catch(() => null);
+      return { id, report: done.report, error, costUsd: done.costUsd, tokens: done.tokens, model: done.model, seconds: Math.round((Date.now() - started) / 1000), files, checks };
+    } finally {
+      this.#bench.delete(key);
+      unlinkAllLinks(path);
+      await this.#vcs.removeWorktree(repo, path).catch(() => {});
+      if (await this.#vcs.branchHead(repo, branch)) await this.#vcs.deleteBranch(repo, branch).catch(() => {});
+    }
   }
 
   /** Lisibles en plus de la copie : le jeu (modules partagés) et les captures du hub pour ce projet. */

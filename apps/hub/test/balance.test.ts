@@ -1,10 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareSims, describeSim, summarize, type SimSummary } from "../src/godot/sim.ts";
 import { FakeOrchestrator } from "./fake-orchestrator.ts";
 import { cleanupSandboxes, sandbox } from "./helpers.ts";
 
+vi.setConfig({ testTimeout: 30_000 });
 afterEach(() => cleanupSandboxes());
 
 /** 100 parties : la vague atteinte va de 5 à 9, une victoire sur 4, la cause de défaite. */

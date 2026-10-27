@@ -223,6 +223,25 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** Le banc d'essai des agents (ADR-87). */
+export type BenchCase = { id: string; source: string; title: string; goal: string; base: string; original: { costUsd: number | null; seconds: number | null; files: number | null }; created_at: string };
+export type BenchResult = {
+  case: string;
+  ok: boolean;
+  outcome: string;
+  summary: string;
+  error: string | null;
+  tests: string | null;
+  launch: string | null;
+  replays: string | null;
+  costUsd: number | null;
+  tokens: number | null;
+  model: string | null;
+  seconds: number;
+  files: number;
+};
+export type BenchRun = { id: number; at: string; fingerprint: string; status: "running" | "done"; results: BenchResult[] };
+export type BenchState = { cases: BenchCase[]; runs: BenchRun[]; fingerprint: string; executor: string; stale: boolean; running: boolean; candidates: { id: string; title: string }[] };
 /** L'équilibreur (ADR-86) : des centaines de parties simulées sans écran. */
 export type MetricStats =
   | { kind: "number"; n: number; mean: number; min: number; max: number; p10: number; p50: number; p90: number; histogram: { from: number; to: number; count: number }[] }
@@ -583,6 +602,10 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  bench: (slug: string) => request<BenchState>("GET", `/projects/${slug}/bench`),
+  benchAdd: (slug: string, task: string) => request<BenchCase>("POST", `/projects/${slug}/bench/cases`, { task }),
+  benchRemove: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/projects/${slug}/bench/cases/${id}`),
+  benchRun: (slug: string) => request<BenchState>("POST", `/projects/${slug}/bench/run`, {}),
   balance: (slug: string) => request<BalanceState>("GET", `/projects/${slug}/balance`),
   balanceRun: (slug: string, runs: number) => request<BalanceState>("POST", `/projects/${slug}/balance/run`, { runs }),
   balanceSend: (slug: string, id: number, question: string) => request<{ thread: string }>("POST", `/projects/${slug}/balance/${id}/send`, { question }),

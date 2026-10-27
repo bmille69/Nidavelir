@@ -36,6 +36,7 @@ import { QualityService } from "./quality/quality-service.ts";
 import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
 import { ReplayService } from "./quality/replays.ts";
 import { BalanceService } from "./quality/balance.ts";
+import { BenchService } from "./quality/bench.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
@@ -120,6 +121,8 @@ export type Hub = {
   replays: ReplayService;
   /** L'équilibreur : des centaines de parties simulées sans écran (ADR-86). */
   balance: BalanceService;
+  /** Le banc d'essai des agents (ADR-87). */
+  bench: BenchService;
   gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
@@ -213,6 +216,7 @@ export function createHub(options: HubOptions): Hub {
   if (autopilot) autopilot.checks = checks;
   const replays = new ReplayService({ dataDir, projects, vcs, journal, clock, godot: options.godot ?? (() => null) });
   const balance = new BalanceService({ db, clock, journal, projects, vcs, conversations, godot: options.godot ?? (() => null) });
+  const bench = new BenchService({ db, clock, journal, projects, tasks, checker: options.checker ?? null });
   if (checks) {
     // Entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33).
     tasks.beforeVerify = async (task) => {
@@ -388,6 +392,7 @@ export function createHub(options: HubOptions): Hub {
     previews,
     replays,
     balance,
+    bench,
     quality,
     checks,
     gameState,
