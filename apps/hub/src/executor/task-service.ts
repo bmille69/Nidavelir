@@ -940,7 +940,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           taskId: task.id,
         });
         cost = result.costUsd;
-        // Mesure par passage (ADR-90) : jetons réels rapportés par Claude Code et chemin pris.
+        // Mesure par passage (ADR-92) : jetons réels rapportés par Claude Code et chemin pris.
         route = result.route ?? "direct";
         tokens = result.tokens ? JSON.stringify(result.tokens) : null;
         this.usage?.record({ project: task.project, agent: kind === "verify" ? "qa" : "developer", model: result.model ?? null, tokens: result.tokens ?? null, costUsd: cost, limits: result.limits });

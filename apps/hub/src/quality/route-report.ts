@@ -1,7 +1,7 @@
 import type { Db } from "../db/database.ts";
 
 /**
- * Comparaison des chantiers passés en direct et par le relais Caveman (ADR-90), avec les chiffres réels que
+ * Comparaison des chantiers passés en direct et par le relais Caveman (ADR-92), avec les chiffres réels que
  * Claude Code rapporte à chaque passage (pas les estimations du relais). Seuls comptent les passages mesurés
  * depuis l'ajout de la mesure, et pour les jetons et le coût, les chantiers fusionnés.
  */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type QualityReport, type QualityStats } from "../api.ts";
+import { api, type QualityReport, type QualityStats, type RouteReport } from "../api.ts";
 import { formatDate } from "../pages/labels.ts";
 import { StatusBadge } from "../pages/TasksView.tsx";
 import { useStudio } from "./context.tsx";
@@ -136,6 +136,8 @@ export function QualityView() {
             </div>
           </section>
 
+          <RouteCompare project={project} />
+
           <section className="panel-card">
             <h2>Chantiers</h2>
             <div className="table-wrap">
@@ -189,6 +191,78 @@ export function QualityView() {
         </>
       )}
     </main>
+  );
+}
+
+const tokens = (v: number | null) => (v === null ? "—" : v >= 1_000_000 ? `${num(v / 1_000_000, 2)} M` : `${Math.round(v / 1000)} k`);
+const MODE = { off: "éteint", record: "mesure seule (le relais ne modifie rien)", compress: "compression" } as const;
+
+/**
+ * Ce que coûte vraiment le travail du Développeur, par chantier fusionné, et l'essai Caveman (ADR-92) :
+ * les chantiers passés par le relais face à ceux restés en direct, avec les chiffres de Claude Code.
+ */
+function RouteCompare({ project }: { project?: string }) {
+  const [data, setData] = useState<RouteReport | null>(null);
+  useEffect(() => {
+    setData(null);
+    api.qualityRoutes(project).then(setData, () => setData(null));
+  }, [project]);
+  if (!data) return null;
+  const c = data.caveman;
+  const rows = data.routes.filter((r) => r.route === "direct" || (c && c.mode !== "off") || r.runs > 0);
+  return (
+    <section className="panel-card route-compare">
+      <h2>Jetons du Développeur par chantier</h2>
+      <p className="muted small">
+        Chiffres réels rapportés par Claude Code à chaque passage
+        {data.measuredSince ? `, mesurés depuis le ${formatDate(data.measuredSince)}` : " : la mesure commence avec le prochain chantier"}. Médiane par chantier fusionné. La relecture du
+        cache compte peu dans vos limites : la colonne « hors cache » est la plus parlante.
+      </p>
+      <p className="small">
+        Essai Caveman : <b>{c ? MODE[c.mode] : MODE.off}</b>
+        {c && c.mode !== "off" && (
+          <>
+            {" "}
+            · {Math.round(c.share * 100)} % des chantiers · relais {c.running ? "prêt" : "arrêté"}
+            {c.lastError && <span className="error"> · {c.lastError}</span>}
+          </>
+        )}
+        {(!c || c.mode === "off") && <span className="muted"> (STUDIO_CAVEMAN=record ou compress au lancement du hub)</span>}
+      </p>
+      <div className="table-wrap">
+        <table className="qtable">
+          <thead>
+            <tr>
+              <th>Chemin</th>
+              <th>Chantiers fusionnés</th>
+              <th>Jetons</th>
+              <th>Hors cache</th>
+              <th>Coût (équiv. API)</th>
+              <th>Exécutions</th>
+              <th>Vérifications</th>
+              <th>Passages échoués</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.route}>
+                <td>{r.route === "direct" ? "Direct" : "Par Caveman"}</td>
+                <td>{r.chantiers}</td>
+                <td>{tokens(r.tokensMedian)}</td>
+                <td>{tokens(r.freshMedian)}</td>
+                <td>{r.costMedian === null ? "—" : money(r.costMedian)}</td>
+                <td>{num(r.executeRunsMean, 2)}</td>
+                <td>{num(r.verifyRunsMean, 2)}</td>
+                <td>{r.runs ? `${r.failedRuns} / ${r.runs}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {c && c.mode !== "off" && data.routes.some((r) => r.chantiers < 10) && (
+        <p className="muted small">Comparaison à lire à partir d'une dizaine de chantiers fusionnés de chaque côté.</p>
+      )}
+    </section>
   );
 }
 

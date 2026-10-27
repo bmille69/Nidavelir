@@ -23,7 +23,7 @@ export const STUDIO_PLUGIN = "studio-skills";
 /** Outil « jouer » du relais MCP du studio, tel que Claude Code le nomme (ADR-69). */
 export const PLAY_TOOL = "mcp__studio__jouer";
 
-/** Relecture d'un passage compressé par le relais Caveman (ADR-90) : lecture seule, dans son magasin local. */
+/** Relecture d'un passage compressé par le relais Caveman (ADR-92) : lecture seule, dans son magasin local. */
 export const CAVEMAN_RETRIEVE_TOOL = "mcp__caveman__caveman_retrieve";
 
 /** Outils intégrés que l'agent peut recevoir (vérifié : ADR-15). */

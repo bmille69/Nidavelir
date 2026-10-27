@@ -45,6 +45,8 @@ export const SESSION_COOKIE = "studio_session";
 
 export type ServerOptions = {
   port: number;
+  /** L'essai Caveman (ADR-92) : son état, pour la page Qualité. Absent : éteint. */
+  caveman?: CavemanRouter;
   gamesRoot: string;
   /** Hôtes acceptés dans l'en-tête Host (protection contre le DNS rebinding). */
   allowedHosts: string[];
@@ -701,6 +703,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     });
     // ── Qualité du workflow (ADR-27) ──
     api.get("/quality", async (req) => hub.quality.report(z.object({ project: z.string().optional() }).parse(req.query).project));
+    // Mesure par passage et essai Caveman (ADR-92) : chiffres réels de Claude Code, chemin par chemin.
+    api.get("/quality/routes", async (req) => ({
+      caveman: options.caveman?.status() ?? null,
+      ...routeReport(hub.db, z.object({ project: z.string().optional() }).parse(req.query).project),
+    }));
     api.post("/projects/:slug/tasks/:id/rating", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       const body = Body.rating.parse(req.body);

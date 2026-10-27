@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ExecRequest, ExecResult, ExecutorPort } from "./port.ts";
 
 /**
- * Essai de Caveman (ADR-90) : un relais local (caveman-proxy) qui compresse ce que relit le Développeur
+ * Essai de Caveman (ADR-92) : un relais local (caveman-proxy) qui compresse ce que relit le Développeur
  * (journaux, sorties de tests, diffs). Éteint par défaut. Allumé, une part des chantiers seulement y passe,
  * pour comparer avec ceux restés en direct, et tout passage repart en direct si le relais ne répond pas.
  *

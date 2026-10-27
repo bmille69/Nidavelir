@@ -301,6 +301,23 @@ export type BalanceState = { available: boolean; hasSims: boolean; running: bool
 /** Vos parties enregistrées en essayant un jeu Godot, et celles gardées comme tests (ADR-85). */
 export type Recording = { id: string; task: string | null; at: string; seconds: number; inputs: number; checkpoints: number; finalState: string | null };
 export type SavedReplay = { file: string; name: string; note: string; seconds: number; inputs: number; saved_at: string | null };
+/** Mesure par passage et essai Caveman (ADR-92) : chiffres réels de Claude Code, chemin par chemin. */
+export type RouteStats = {
+  route: "direct" | "caveman";
+  chantiers: number;
+  tokensMedian: number | null;
+  freshMedian: number | null;
+  costMedian: number | null;
+  executeRunsMean: number | null;
+  verifyRunsMean: number | null;
+  runs: number;
+  failedRuns: number;
+};
+export type RouteReport = {
+  caveman: { mode: "off" | "record" | "compress"; share: number; url: string; installed: boolean; running: boolean; lastError: string | null } | null;
+  measuredSince: string | null;
+  routes: RouteStats[];
+};
 export type ArtSpend = { usd: number; credits: number; capUsd: number; capCredits: number; over: boolean };
 /** La direction visuelle (ADR-58) : studio/art/direction.json. */
 export type ArtTaste = "aime" | "evite";
@@ -646,6 +663,7 @@ export const api = {
   addConceptionToProject: (id: string) => request<{ tasks: string[] }>("POST", `/conceptions/${id}/add-to-project`, {}),
   startTask: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/start`, {}),
   quality: (project?: string) => request<QualityReport>("GET", `/quality${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  qualityRoutes: (project?: string) => request<RouteReport>("GET", `/quality/routes${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   rateTask: (slug: string, id: string, rating: "up" | "down", note?: string) => request<Rating>("POST", `/projects/${slug}/tasks/${id}/rating`, { rating, note }),
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */

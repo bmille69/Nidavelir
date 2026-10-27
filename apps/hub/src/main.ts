@@ -5,6 +5,7 @@ import { createHub } from "./hub.ts";
 import { ClaudeCli } from "./llm/claude-cli.ts";
 import { DirectClaudeOrchestrator } from "./orchestrator/direct-claude.ts";
 import { ClaudeCodeExecutor } from "./executor/claude-code.ts";
+import { CavemanExecutor, CavemanRouter, cavemanSettings } from "./executor/caveman.ts";
 import { WindowsFolderPicker } from "./projects/folder-picker.ts";
 import { defaultRegistryOptions } from "./projects/project-registry.ts";
 import { buildServer } from "./server/http.ts";
@@ -25,11 +26,15 @@ console.log(found ? `  Godot ${found.version} : ${found.exe}` : "  Godot : intro
 // Modèles choisis dans « Le studio en direct », lus à chaque appel (ADR-37) ; défauts recommandés (ADR-36).
 const orchestrator = new DirectClaudeOrchestrator(cli, () => ({ chat: hub.models.get("director"), structured: hub.models.get("archivist"), concept: hub.models.get("concepteur"), archeologue: hub.models.get("archeologue"), art: hub.models.get("art_director"), artisan: hub.models.get("art_workshop") }));
 
+// Essai Caveman (ADR-92) : éteint sans STUDIO_CAVEMAN ; allumé, le Développeur d'une part des chantiers passe par le relais.
+const caveman = new CavemanRouter(cavemanSettings(), { home: join(dataDir, "caveman") });
+const developerExecutor = new ClaudeCodeExecutor(() => ({ default: hub.models.get("developer"), big: hub.models.get("developer_big"), verify: hub.models.get("qa") }));
+
 const hub = createHub({
   databasePath: join(dataDir, "hub.db"),
   registry: defaultRegistryOptions(hubRoot, dataDir),
   orchestrator,
-  executor: new ClaudeCodeExecutor(() => ({ default: hub.models.get("developer"), big: hub.models.get("developer_big"), verify: hub.models.get("qa") })),
+  executor: caveman.enabled ? new CavemanExecutor(developerExecutor, caveman) : developerExecutor,
   models: {
     director: process.env.STUDIO_MODEL_CHAT,
     archivist: process.env.STUDIO_MODEL_STRUCTURED,
@@ -75,11 +80,22 @@ const server = await buildServer(hub, {
   allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
   folderPicker: new WindowsFolderPicker(),
   webDist: join(hubRoot, "apps", "web", "dist"),
+  caveman,
 });
 await server.listen({ host: "127.0.0.1", port });
 // Le hub prêt, le travail interrompu reprend : chantiers en file, travaux du Directeur artistique (ADR-61).
 for (const r of restarted) {
   if (r.thread) hub.conversations.notify(r.project, r.thread, `↻ Le hub a redémarré pendant le chantier ${r.id} : il repart de zéro sous ${r.again}, avant le reste de la file.`);
+}
+if (caveman.enabled) {
+  const s = caveman.settings;
+  void caveman.ensure().then((ok) =>
+    console.log(
+      ok
+        ? `  Caveman (essai, mode ${s.mode}) : relais prêt sur ${s.url}, ${Math.round(s.share * 100)} % des chantiers`
+        : `  Caveman (essai) : ${caveman.status().lastError} — les chantiers restent en direct`,
+    ),
+  );
 }
 hub.tasks.resumeQueues();
 hub.art.resume();
@@ -95,6 +111,7 @@ if (process.env.STUDIO_NO_BROWSER !== "1") {
 }
 
 const shutdown = async () => {
+  caveman.stop();
   await server.close();
   await hub.conversations.idle();
   hub.close();

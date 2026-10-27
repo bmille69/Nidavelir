@@ -99,7 +99,7 @@ export class ClaudeCodeExecutor implements ExecutorPort {
         cwd: req.cwd,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
-        // Relais Caveman (ADR-90) : seulement l'adresse, aucun identifiant, l'abonnement reste celui de Claude Code.
+        // Relais Caveman (ADR-92) : seulement l'adresse, aucun identifiant, l'abonnement reste celui de Claude Code.
         env: { ...process.env, STUDIO_RUN_TOKEN: req.token, ...(req.baseUrl ? { ANTHROPIC_BASE_URL: req.baseUrl } : {}) },
       });
       let buffer = "";

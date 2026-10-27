@@ -37,6 +37,7 @@ Variables facultatives :
 - 3D : `STUDIO_TRIPO_MODEL`, `STUDIO_TRIPO_MULTIVIEW_MODEL`, `STUDIO_TRIPO_MONTHLY_CREDITS` ; plafond par visuel `STUDIO_ART_ASSET_USD` (défaut 6) et `STUDIO_ART_ASSET_CREDITS` (défaut 250) ;
 - Godot : `STUDIO_GODOT` (l'exécutable), `STUDIO_PERF_MIN_FPS` (plancher du budget de performance, défaut 60). Les clés des services se saisissent dans l'interface.
 - Son : `STUDIO_ELEVENLABS_KEY` (sinon la clé saisie dans Pilotage → Son, gardée dans `.data/elevenlabs/`).
+- Essai Caveman (ADR-92, éteint par défaut) : `STUDIO_CAVEMAN=record` (le relais mesure sans rien modifier) ou `compress`, `STUDIO_CAVEMAN_SHARE` (part des chantiers routés, défaut 0.5), `STUDIO_CAVEMAN_PORT` (défaut 8797). Prérequis : `npm i -g @caveman-ai/cli` puis `caveman setup --install` (et surtout pas `caveman setup --yes`, qui réécrit vos réglages Claude Code et Hermes). Comparaison dans Qualité.
 
 ## Développement
 

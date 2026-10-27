@@ -36,11 +36,11 @@ export type ExecRequest = {
   token: string;
   onEvent(type: RunEvent["type"], text: string): void;
   signal: AbortSignal;
-  /** Le chantier du run : l'essai Caveman (ADR-90) choisit son chemin chantier par chantier. */
+  /** Le chantier du run : l'essai Caveman (ADR-92) choisit son chemin chantier par chantier. */
   taskId?: string;
-  /** Adresse de base de l'API pour ce run (relais Caveman, ADR-90). Absente : Anthropic en direct. */
+  /** Adresse de base de l'API pour ce run (relais Caveman, ADR-92). Absente : Anthropic en direct. */
   baseUrl?: string;
-  /** Serveurs MCP ajoutés à celui du studio pour ce run (l'outil de relecture de Caveman, ADR-90). */
+  /** Serveurs MCP ajoutés à celui du studio pour ce run (l'outil de relecture de Caveman, ADR-92). */
   extraMcp?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
 };
 
@@ -51,7 +51,7 @@ export type ExecResult = {
   tokens?: TokenUsage | null;
   limits?: RateLimits | null;
   model?: string | null;
-  /** Chemin réellement pris par le run (ADR-90). */
+  /** Chemin réellement pris par le run (ADR-92). */
   route?: "direct" | "caveman";
 };
 
