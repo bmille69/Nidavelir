@@ -1208,3 +1208,18 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `bench.test.ts` : un vrai chantier mené jusqu'à la fusion devient une référence. Le premier passage refait la consigne depuis le commit de départ (le fichier du chantier n'y est pas encore), et réussit. Le jeu reste au même commit, sans branche du banc ni copie restante, sans chantier ajouté. Un changement de modèle change l'empreinte ; le passage suivant échoue sur les tests et le dit. Un développeur qui s'arrête est dit avec sa raison, et la copie est quand même effacée.
   - `pilotage.e2e.ts` : l'onglet Banc d'essai, deux passages comparés, banc pas à jour (capture examinée).
   - 268 tests au vert, typecheck, construction de l'interface.
+
+## ADR-88 — La passe « game feel » à la demande : la sensation change, les règles non, et c'est vérifié
+
+- **Contexte** : idée n°7 de la phase 6. Le polish (« juice ») arrivait au hasard des chantiers, ou pas du tout, et un effet ajouté en passant pouvait changer une règle (un ralenti qui touche la logique, un recul qui déplace le joueur). Le studio a désormais de quoi prouver qu'une règle n'a pas bougé : parties gardées (ADR-85) et simulations (ADR-86).
+- **Décision** :
+  - Pilotage → Production, sous les chantiers : « ✦ Passe game feel… ». Vous dites quels moments (vide : les actions principales du joueur) et l'intensité (discrète, marquée, généreuse). Un clic crée la discussion « Game feel : … » et lance le chantier en exécution directe ; si le projet est occupé, il attend son tour dans la file. Refusé en « Je valide tout » : la passe se demande alors au directeur.
+  - La consigne (`quality/feel.ts`, `feelGoal`) :
+    - repérer chaque moment et ce qui le signale aujourd'hui ;
+    - 2 à 4 retours par moment, pris dans un catalogue : arrêt sur image, tremblement à « trauma » qui décroît, flash, écrasement-étirement, éclats, recul, zoom, courbes adoucies, chiffres qui volent, point d'accroche pour un son (le directeur sonore viendra) ;
+    - toutes les valeurs dans un seul fichier de réglages (`res://scripts/feel.gd` en autoload « Feel », ou `src/feel.ts`), un interrupteur par effet, une intensité globale, et un réglage « mouvements réduits » ;
+    - interdit de toucher une règle, une valeur de jeu, l'ordre des événements, la physique ou le hasard ; l'arrêt sur image ne ralentit que l'affichage (pas d'`Engine.time_scale` sur le jeu) ;
+    - la preuve : tests du jeu, parties gardées rejouées à l'identique (si le jeu en a), simulations aux chiffres identiques avant et après (si le jeu en a), et pas de chute d'images par seconde ;
+    - un compte rendu « moment → retours → réglages », pour doser ensuite dans la discussion.
+  - Le développeur dispose déjà de la compétence game-feel-godot (ADR-78) ; la consigne lui dit de la consulter.
+- **Vérifié** : `feel.test.ts` (la consigne pour Godot et pour le web, sous les 4 000 caractères ; refus en « Je valide tout » et sans session humaine ; premier chantier lancé et suivi dans sa discussion, second en file derrière lui, journal). `pilotage.e2e.ts` : le formulaire (capture examinée). Suite complète au vert, typecheck, construction.

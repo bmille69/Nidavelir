@@ -207,6 +207,12 @@ describe("poste de pilotage", () => {
     await expect(page.locator(".balance").textContent()).resolves.toMatch(/plus à jour/);
     await page.screenshot({ path: join(shots, "pilot-12-banc.png"), fullPage: true });
 
+    // La passe game feel (ADR-88) : le formulaire, sous les chantiers.
+    await page.locator(".pilot-head .segmented button", { hasText: "Production" }).click();
+    await page.locator(".pilot-feel-open").click();
+    await page.locator(".pilot-feel input").fill("la mort des bandits");
+    await page.locator(".pilot-feel").screenshot({ path: join(shots, "pilot-13-game-feel.png") });
+
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);

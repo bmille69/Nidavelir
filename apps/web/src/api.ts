@@ -602,6 +602,8 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  feel: (slug: string, moments: string, intensity: "discret" | "marque" | "genereux") =>
+    request<{ task: { id: string }; thread: string; after: string | null }>("POST", `/projects/${slug}/feel`, { moments, intensity }),
   bench: (slug: string) => request<BenchState>("GET", `/projects/${slug}/bench`),
   benchAdd: (slug: string, task: string) => request<BenchCase>("POST", `/projects/${slug}/bench/cases`, { task }),
   benchRemove: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/projects/${slug}/bench/cases/${id}`),

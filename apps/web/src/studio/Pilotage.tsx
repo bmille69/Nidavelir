@@ -167,6 +167,59 @@ function StatusStrip({ slug, monitor }: { slug: string; monitor: Monitor | null 
   );
 }
 
+/** La passe « game feel » à la demande (ADR-88) : un chantier qui ne touche qu'à la sensation, jamais aux règles. */
+function FeelPass({ slug }: { slug: string }) {
+  const [open, setOpen] = useState(false);
+  const [moments, setMoments] = useState("");
+  const [intensity, setIntensity] = useState<"discret" | "marque" | "genereux">("marque");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string; href?: string } | null>(null);
+  if (!open)
+    return (
+      <button className="small secondary pilot-feel-open" onClick={() => setOpen(true)}>
+        ✦ Passe game feel…
+      </button>
+    );
+  const go = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.feel(slug, moments, intensity);
+      setMsg({ ok: true, text: r.after ? `${r.task.id} attend son tour (après ${r.after}).` : `${r.task.id} lancé.`, href: `#/p/${slug}/t/${r.thread}` });
+      setMoments("");
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="pilot-feel">
+      <p className="pilot-sub">Passe game feel</p>
+      <p className="muted small">Ce que le joueur voit et ressent quand il agit : tremblements, arrêts sur image, éclats, flashs. Les règles ne bougent pas : tests, parties gardées et simulations le vérifient.</p>
+      <input value={moments} onChange={(e) => setMoments(e.target.value)} placeholder="Quels moments ? (vide : les actions principales du joueur)" aria-label="Moments visés" />
+      <span className="bilan-actions">
+        <select value={intensity} onChange={(e) => setIntensity(e.target.value as typeof intensity)} aria-label="Intensité">
+          <option value="discret">Discrète</option>
+          <option value="marque">Marquée</option>
+          <option value="genereux">Généreuse (arcade)</option>
+        </select>
+        <button className="small" disabled={busy} onClick={go}>
+          {busy ? "…" : "Lancer la passe"}
+        </button>
+        <button className="small link" onClick={() => setOpen(false)}>
+          Fermer
+        </button>
+      </span>
+      {msg && (
+        <p className={`small ${msg.ok ? "muted" : "error"}`}>
+          {msg.text} {msg.href && <a href={msg.href}>Suivre dans sa discussion</a>}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Les chantiers en échec : un clic les remet à zéro ; le premier part, les suivants attendent leur tour dans la file. */
 function Relaunch({ slug, failed }: { slug: string; failed: TaskRow[] }) {
   const [busy, setBusy] = useState(false);
@@ -289,6 +342,7 @@ function Production({ slug, tasks, art }: { slug: string; tasks: TaskRow[] | nul
           </article>
         ))}
         {failed.length > 0 && <Relaunch slug={slug} failed={failed} />}
+        <FeelPass slug={slug} />
         {recent.length > 0 && <p className="pilot-sub">Fusionnés récemment</p>}
         {recent.map((t) => (
           <article key={t.id} className="pilot-row done">

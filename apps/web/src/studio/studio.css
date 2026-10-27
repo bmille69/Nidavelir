@@ -1801,3 +1801,7 @@ a.pilot-row-title:hover { color: var(--accent); }
 .bench-table .ok { color: var(--ok, #3fb950); }
 .bench-table .warn { color: var(--warn); }
 .bench-total td { font-weight: 600; }
+
+/* La passe game feel (ADR-88) */
+.pilot-feel { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.pilot-feel-open { align-self: flex-start; margin-top: var(--space-3); }
