@@ -960,6 +960,50 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model3d: { simple: true }, model: { source: null, workshop: "Caisse en bois biseautée." } });
   }, 30_000);
 
+  it("plafond par visuel (ADR-82) : appels et crédits comptés, le DA s'arrête et explique, seul votre clic le relève", async () => {
+    const { sb, fake, m3d, art } = await setupLocal();
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_test");
+    // Un décor dont la finition résiste : passe 1 refusée.
+    const resists = { ok: false, forme_ok: true, mineur: false, summary: "Béton trop clair.", points: ["Baisser la teinte"] };
+    fake.extractions.push(...(artisanSteps() as never[]), resists as never);
+    fake.replies.push('[[ASSET]] {"name": "Muret", "type": "décor", "usage": "bord de rampe"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 2 | triangles 500 | simple]]');
+    // Dès la première passe, le compte dépasse le plafond (simulé : 6 $ déjà dépensés en essais précédents).
+    art.budget.add("bordee", "A-0001", { usd: 5.999 });
+    art.send(sb.human(), "bordee", "Un muret");
+    await art.idle();
+    const spend = art.state("bordee").spend["A-0001"]!;
+    // Les deux pas de l'artisan et le validateur (0,002 $ chacun) sont comptés sur ce visuel ; pas la réponse du DA.
+    expect(spend.usd).toBeCloseTo(5.999 + 3 * 0.002, 6);
+    expect(spend.over).toBe(true);
+    // Pas de deuxième passe : un seul export, et le DA dit pourquoi il s'arrête.
+    expect(m3d.exports).toHaveLength(1);
+    const stop = art.state("bordee").messages.at(-1)!.text;
+    expect(stop).toMatch(/Je m'arrête sur A-0001 « Muret »[\s\S]*6,0\d \$ de modèles[\s\S]*Béton trop clair[\s\S]*Baisser la teinte[\s\S]*Relever le plafond/);
+    expect(() => art.retouchModel(sb.human(), "bordee", "A-0001")).toThrow(/plafond/);
+    // Votre clic : un plafond de plus, et l'atelier repart.
+    const raised = art.raiseBudget(sb.human(), "bordee", "A-0001");
+    expect(raised).toMatchObject({ capUsd: 12, capCredits: 500, over: false });
+    fake.extractions.push(...(artisanSteps() as never[]), { ok: true, forme_ok: true, summary: "Conforme.", points: [] } as never);
+    art.retouchModel(sb.human(), "bordee", "A-0001");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(() => art.raiseBudget({ id: "faux" } as never, "bordee", "A-0001")).toThrow();
+  }, 30_000);
+
+  it("plafond par visuel (ADR-82) : les crédits Tripo comptent aussi", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_test");
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never, sheetOk as never, ...(artisanSteps() as never[]), { ok: true, forme_ok: true, summary: "Conforme.", points: [] } as never);
+    fake.replies.push('[[ASSET]] {"name": "Canon", "type": "objet", "usage": "sur le pont"} [[/ASSET]]\n[[GENERER: A-0001]] A cannon. [[/GENERER]]\n[[MODELE3D: A-0001 | taille 2 | triangles 3000]]');
+    art.send(sb.human(), "bordee", "Un canon");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(1);
+    expect(art.state("bordee").spend["A-0001"]).toMatchObject({ credits: 30, over: false });
+  }, 30_000);
+
   it("atelier 3D sous Opus : un décor dont la finition résiste deux passes a une dernière passe sous Opus, sans renfort Fable (ADR-62, ADR-67)", async () => {
     const { sb, fake, m3d, art } = await setupLocal();
     art.installBlender(sb.human());

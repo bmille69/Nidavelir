@@ -299,6 +299,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.integrate(req.human!, slug, id);
     });
+    // Plafond par visuel (ADR-82) : seul votre clic le relève.
+    api.post("/projects/:slug/art/assets/:id/budget", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.raiseBudget(req.human!, slug, id);
+    });
     // Le bilan des visuels (ADR-71) : la liste face aux fichiers du jeu et à ce qu'il charge.
     api.get("/projects/:slug/art/bilan", async (req) => hub.art.bilan((req.params as { slug: string }).slug));
     api.post("/projects/:slug/art/bilan/verify", async (req) => hub.art.verifyBilan(req.human!, (req.params as { slug: string }).slug));

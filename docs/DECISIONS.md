@@ -1090,3 +1090,15 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - le nettoyage des tests réessaie plus longtemps, puis laisse le dossier temporaire en cas d'EPERM ou d'EBUSY : ce n'est pas un échec du test ;
   - README réécrit (équipe, lancement, variables, dossiers), feuille de route à jour : phase 3 reportée, phase 4 en partie remplacée par l'atelier, phase 5 faite, **phase 6** ouverte avec les dix idées de l'audit.
 - **Vérifié** : `projects.test.ts` (un projet vide puis son socle Godot : « godot » en lecture et dans la liste), typecheck.
+
+## ADR-82 — Un plafond par visuel : le DA s'arrête et explique au lieu de boucler
+
+- **Contexte** : idée n°1 de la phase 6. A-0013 a été refusé 5 fois de suite pour ~12 $ (ADR-66), et la fenêtre de 5 h a été vidée en 2 h (ADR-67). Rien n'arrêtait un visuel qui ne converge pas : chaque « Refaire » repartait de zéro, sans mémoire de ce qu'il avait déjà coûté.
+- **Décision** :
+  - **un compte par visuel** (`art/budget.ts`, table `art_spend`) : les appels de modèles faits pour lui (validateur, artisan, planche, en équivalent API comme partout dans le hub) et les crédits Tripo (modèle, animations). Il est tenu d'une fabrication à l'autre. Les appels sont comptés à un seul endroit : l'orchestrateur du DA est enrobé, et la fabrication d'un visuel tourne dans son contexte (`AsyncLocalStorage`). La réponse du DA dans sa discussion n'est pas comptée sur un visuel ;
+  - **plafond** : 6 $ et 250 crédits Tripo par défaut (`STUDIO_ART_ASSET_USD`, `STUDIO_ART_ASSET_CREDITS`) ;
+  - **arrivé au plafond**, la fabrication ne lance ni nouveau tour d'images ni nouvelle passe d'atelier. Le DA dit dans sa discussion ce qui a été dépensé et ce qui bloquait au dernier essai (le dernier avis du validateur, sans nouvel appel), et propose « Valider quand même », de changer l'image ou la forme, ou de relever le plafond. Le journal note `art.budget_reached` ;
+  - vos clics « Générer », « Fabriquer / Refaire la 3D », « Reprendre la finition » et « Refaire » sont refusés sur un visuel au plafond, avec la marche à suivre ;
+  - **« Relever le plafond »** (fiche du visuel, `POST /projects/:slug/art/assets/:id/budget`, session humaine) ajoute un plafond de plus (12 $, puis 18 $…). Journal `art.budget_raised`. Aucun agent ne peut le faire ;
+  - la fiche montre « Dépensé : x $ sur y $ · n crédits Tripo sur m », en orange au plafond.
+- **Vérifié** : deux tests dans `art.test.ts`. Un décor dont la finition résiste : les pas de l'artisan et le validateur sont comptés, la 2e passe n'a pas lieu, le message cite la dépense et les remarques, « Reprendre la finition » est refusé, puis accepté après « Relever le plafond » ; un canon : les 30 crédits Tripo sont comptés. 41 tests du DA au vert, typecheck.

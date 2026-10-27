@@ -398,6 +398,18 @@ const MIGRATIONS: string[] = [
     events_json TEXT NOT NULL DEFAULT '[]'
   );
   `,
+  `
+  -- ADR-82 : ce que chaque visuel a coûté (modèles et crédits Tripo), et le plafond que vous avez relevé.
+  CREATE TABLE art_spend (
+    project TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    usd REAL NOT NULL DEFAULT 0,
+    credits INTEGER NOT NULL DEFAULT 0,
+    raises INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project, asset)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

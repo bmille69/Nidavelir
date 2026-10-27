@@ -205,7 +205,10 @@ export type ArtState = {
   queue?: { id: string; need: { id: string; title: string } | null }[];
   generator: ArtGenerator;
   workshop3d: Art3D;
+  /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
+  spend?: Record<string, ArtSpend>;
 };
+export type ArtSpend = { usd: number; credits: number; capUsd: number; capCredits: number; over: boolean };
 /** La direction visuelle (ADR-58) : studio/art/direction.json. */
 export type ArtTaste = "aime" | "evite";
 export type ArtReference = { file: string; board: string; theme: string; source: string; title: string; why: string; verdict: ArtTaste | null; at: string };
@@ -463,6 +466,7 @@ export const api = {
   artLaunch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/launch`, {}),
   artAside: (slug: string, id: string, aside: boolean) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/aside`, { aside }),
   artRetouch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/retouch`, {}),
+  artRaiseBudget: (slug: string, id: string) => request<ArtSpend>("POST", `/projects/${slug}/art/assets/${id}/budget`, {}),
   artIntegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/integrate`, {}),
   artBilan: (slug: string) => request<Bilan>("GET", `/projects/${slug}/art/bilan`),
   artBilanVerify: (slug: string) => request<Bilan>("POST", `/projects/${slug}/art/bilan/verify`, {}),

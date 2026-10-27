@@ -15,6 +15,7 @@ import type { GenState, ImageGenPort } from "./imagegen.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
 import { computeBilan, wasLoaded, type BilanRow } from "./bilan.ts";
+import { AssetBudget, euros, type AssetSpend } from "./budget.ts";
 import { isGodot } from "../godot/toolchain.ts";
 import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
@@ -76,6 +77,8 @@ export type ArtState = {
   generator: GenState;
   /** L'atelier 3D : Blender et Tripo (ADR-47). */
   workshop3d: Model3DState;
+  /** Ce que chaque visuel a coûté et son plafond (ADR-82), pour ceux qui ont déjà dépensé. */
+  spend: Record<string, AssetSpend>;
 };
 /**
  * Où en est la fabrication d'un asset (ADR-52), pour l'onglet Visuels : l'étape du circuit, ce qui se passe en clair, ce
@@ -150,6 +153,8 @@ export class ArtService {
   paused: (() => boolean) | null = null;
   /** Le modèle réglé pour l'atelier 3D : sous Fable, Fable vient en renfort pour une dernière passe (ADR-62). */
   workshopModel: (() => string) | null = null;
+  /** Ce que chaque visuel a coûté, et son plafond (ADR-82). */
+  readonly budget: AssetBudget;
   /** Compétences de la page « Compétences » données au DA, ajoutées à ses consignes. */
   skills: { promptBlock(agent: "art_director", project: string | null): string } | null = null;
 
@@ -172,12 +177,16 @@ export class ArtService {
     vitrine?: (project: string, id: string, file?: string) => Promise<VitrineShot | null>;
     /** Téléchargement des références trouvées sur le web (ADR-58). */
     webRefs?: WebRefsPort;
+    /** Plafond par visuel (ADR-82) ; par défaut STUDIO_ART_ASSET_USD et STUDIO_ART_ASSET_CREDITS. */
+    budget?: { usd?: number; credits?: number };
   }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
     this.#journal = deps.journal;
     this.#projects = deps.projects;
-    this.#orchestrator = deps.orchestrator;
+    this.budget = new AssetBudget(deps.db, deps.clock, deps.budget);
+    // Les appels faits pour un visuel (validateur, artisan) sont comptés sur ce visuel.
+    this.#orchestrator = this.budget.wrap(deps.orchestrator);
     this.#vcs = deps.vcs;
     this.#conversations = deps.conversations;
     this.#imagegen = deps.imagegen;
@@ -218,6 +227,7 @@ export class ArtService {
       },
       generator: this.#imagegen.state(),
       workshop3d: this.#model3d.state(),
+      spend: this.budget.all(project),
     };
   }
 
@@ -280,6 +290,7 @@ export class ArtService {
     const missing = this.#missing3d(!!asset.model3d.simple);
     if (missing) throw new ArtError(missing);
     if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    this.#assertBudget(project, id);
     this.#startModel(project, id);
     return asset;
   }
@@ -295,6 +306,7 @@ export class ArtService {
     if (!asset.model3d || !asset.model) throw new ArtError("Cet asset n'a pas encore de modèle 3D");
     if (!this.#model3d.state().blender.installed) throw new ArtError("Installez d'abord Blender");
     if (!existsSync(join(this.#model3d.atelier(`${project}-${id}`), "scene.blend"))) throw new ArtError("La scène de l'atelier n'existe plus : « Refaire la 3D »");
+    this.#assertBudget(project, id);
     this.#startModel(project, id, true);
     return asset;
   }
@@ -307,6 +319,7 @@ export class ArtService {
     if (!this.#imagegen.state().installed) throw new ArtError("Installez d'abord le générateur d'images");
     if (!asset.prompts.length) throw new ArtError("Pas encore de prompt : demandez-le au Directeur artistique");
     if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    this.#assertBudget(project, id);
     this.#startProduce(project, id);
     return asset;
   }
@@ -522,6 +535,7 @@ export class ArtService {
     const m = readManifest(gameRoot);
     const asset = m.assets.find((a) => a.id === id);
     if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    if (decision === "refaire") this.#assertBudget(project, id);
     const file = asset.verdict?.file ?? asset.renders.at(-1);
     let next: "model" | "integrate" | null = null;
     if (decision === "valider") {
@@ -1493,15 +1507,58 @@ export class ArtService {
 
   // ── Générateur local (ADR-46, ADR-49) ──
 
+  /** Votre clic sur un visuel au plafond : refusé, avec la marche à suivre (ADR-82). */
+  #assertBudget(project: string, id: string): void {
+    const over = this.budget.overMessage(project, id);
+    if (over) throw new ArtError(`${over}. « Relever le plafond » sur sa fiche pour continuer.`);
+  }
+
+  /**
+   * Le plafond atteint (ADR-82) : le DA s'arrête et dit ce qui bloque, d'après le dernier avis du validateur, sans nouvel
+   * appel. true si le travail doit s'arrêter.
+   */
+  #capped(project: string, id: string): boolean {
+    const over = this.budget.overMessage(project, id);
+    if (!over) return false;
+    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    const last = asset?.model?.verdict ?? asset?.verdict ?? null;
+    const why = last && !last.ok ? [`Ce qui bloquait au dernier essai : ${last.summary}`, ...last.points.slice(0, 5).map((p) => `- ${p}`)] : [];
+    this.#insert(
+      project,
+      "art",
+      [
+        `**Je m'arrête sur ${id}${asset ? ` « ${asset.name} »` : ""}** : ${over.replace(`${id} a atteint son plafond : `, "")}.`,
+        ...why,
+        "Recommencer de la même façon coûterait autant sans garantie. Vous pouvez : « Valider quand même » si le dernier essai suffit, me dire ce qu'il faut changer (image, taille, forme plus simple), ou « Relever le plafond » sur sa fiche.",
+      ].join("\n"),
+      null,
+    );
+    this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: "art.budget_reached", subject: id, payload: { ...this.budget.get(project, id) } });
+    return true;
+  }
+
+  /** Votre clic « Relever le plafond » : un plafond de plus pour ce visuel (ADR-82). */
+  raiseBudget(session: HumanSession, project: string, id: string): AssetSpend {
+    assertHumanSession(session);
+    const asset = readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id);
+    if (!asset) throw new ArtError(`Asset introuvable : ${id}`);
+    const s = this.budget.raise(project, id);
+    this.#journal.append({ project, actor: { kind: "human" }, type: "art.budget_raised", subject: id, payload: { capUsd: s.capUsd, capCredits: s.capCredits } });
+    this.#insert(project, "art", `Plafond de ${id} relevé à ${euros(s.capUsd)} et ${s.capCredits} crédits Tripo (${euros(s.usd)} et ${s.credits} crédits déjà dépensés).`, null);
+    return s;
+  }
+
   #startProduce(project: string, id: string): void {
     if (this.#aside(project, id)) return;
+    if (this.#capped(project, id)) return;
     const gens = this.#generating.get(project) ?? new Map<string, Generating>();
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: ROUNDS, step: "En attente de la carte graphique" });
     this.#generating.set(project, gens);
     const job = this.#jobStart(project, "produce", { id }, `${project}/produce/${id}`);
     this.#track(
-      this.#produce(project, id)
+      this.budget
+        .run(project, id, () => this.#produce(project, id))
         .finally(() => (gens.delete(id), this.#jobEnd(job)))
         .then((next) => {
           if (next === "model") this.#startModel(project, id);
@@ -1524,6 +1581,7 @@ export class ArtService {
     try {
       for (let round = 1; round <= ROUNDS; round++) {
         progress.round = round;
+        if (round > 1 && this.#capped(project, id)) return null;
         let asset = readManifest(gameRoot).assets.find((a) => a.id === id);
         if (!asset?.prompts[0]) return null;
         const prompt = asset.prompts[0];
@@ -1639,6 +1697,7 @@ export class ArtService {
 
   #startModel(project: string, id: string, retouch = false): void {
     if (this.#aside(project, id)) return;
+    if (this.#capped(project, id)) return;
     const simple = !!readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.model3d?.simple;
     const missing = this.#missing3d(simple || retouch);
     if (missing) {
@@ -1651,7 +1710,8 @@ export class ArtService {
     this.#generating.set(project, gens);
     const job = this.#jobStart(project, "model", { id, retouch }, `${project}/model/${id}`);
     this.#track(
-      this.#produceModel(project, id, retouch)
+      this.budget
+        .run(project, id, () => this.#produceModel(project, id, retouch))
         .finally(() => (gens.delete(id), this.#jobEnd(job)))
         .then((ok) => (ok ? this.#autoIntegrate(project, id, "system") : undefined)),
     );
@@ -1706,6 +1766,7 @@ export class ArtService {
           progress.stage = "tripo";
           const extra = add.length ? await this.#model3d.animate({ rigTask: kept.rigTask!, names: add, step: (s) => (progress.step = s) }) : { glbs: [], credits: 0 };
           credits = extra.credits;
+          this.budget.add(project, id, { credits });
           mkdirSync(join(dir, ".."), { recursive: true });
           const files = extra.glbs.map((b, i) => {
             const f = `${dir}-anim-${i + 1}.glb`;
@@ -1746,6 +1807,7 @@ export class ArtService {
         });
         if (!t.views) planche.length = 0;
         credits = t.credits;
+        this.budget.add(project, id, { credits });
         animations = t.animations ?? [];
         rigType = t.rigType ?? null;
         rigTask = t.rigTask ?? null;
@@ -1786,6 +1848,7 @@ export class ArtService {
       progress.rounds = last;
       for (let pass = 1; pass <= last; pass++) {
         progress.round = pass;
+        if (pass > 1 && this.#capped(project, id)) return false;
         const renfort = pass > MODEL_ROUNDS && hero;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress, renfort);
         progress.stage = "controle";

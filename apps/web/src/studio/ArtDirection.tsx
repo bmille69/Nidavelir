@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { navigate } from "../App.tsx";
-import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtState, type AssetStatus } from "../api.ts";
+import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtSpend, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
 import { Choices, DirectionView, Moodboard, ReferenceBoard } from "./ArtVision.tsx";
 import { Icon } from "./Icon.tsx";
@@ -258,6 +258,7 @@ export function ArtDirection({ slug }: { slug: string }) {
                 generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
                 local={state.generator.installed}
                 ready3d={state.workshop3d.blender.installed && (state.workshop3d.tripo.configured || !!a.model3d?.simple)}
+                spend={state.spend?.[a.id] ?? null}
                 onUpload={(f) => void upload(f, a.id)}
                 act={act}
               />
@@ -550,6 +551,7 @@ function AssetCard({
   generating,
   local,
   ready3d,
+  spend,
   onUpload,
   act,
 }: {
@@ -561,6 +563,7 @@ function AssetCard({
   generating: ArtGenerating | null;
   local: boolean;
   ready3d: boolean;
+  spend: ArtSpend | null;
   onUpload: (f: FileList) => void;
   act: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
@@ -736,9 +739,20 @@ function AssetCard({
           {need ? ` · attendu par le chantier ${need.id} « ${need.title} »` : ""}. Il partira tout seul à son tour.
         </p>
       )}
+      {spend && (spend.usd > 0 || spend.credits > 0) && (
+        <p className={`small ${spend.over ? "warn" : "muted"}`} title="Modèles en équivalent API (indicatif) et crédits Tripo, toutes fabrications de ce visuel comprises (ADR-82)">
+          Dépensé : {money(spend.usd)} sur {money(spend.capUsd)} · {spend.credits} crédits Tripo sur {spend.capCredits}
+          {spend.over ? " — plafond atteint, le Directeur artistique s'est arrêté" : ""}
+        </p>
+      )}
       {a.status === "ecarte" && <p className="small muted">Mis de côté : personne n'y touche tant que vous ne le remettez pas dans la file.</p>}
 
       <div className="art-actions">
+        {spend?.over && (
+          <button className="secondary small" title="Un plafond de plus pour ce visuel : le Directeur artistique pourra recommencer" onClick={() => void act(() => api.artRaiseBudget(slug, a.id))}>
+            Relever le plafond
+          </button>
+        )}
         {a.status === "propose" && !a.launchedAt && (
           <button className="small" onClick={() => void act(() => api.artLaunch(slug, a.id))}>
             <Icon name="play" size={14} /> Lancer maintenant
@@ -809,3 +823,5 @@ function AssetCard({
     </article>
   );
 }
+
+const money = (usd: number) => `${usd.toFixed(2).replace(".", ",")} $`;
