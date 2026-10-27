@@ -31,6 +31,7 @@ import { ReplayError } from "../quality/replays.ts";
 import { BalanceError } from "../quality/balance.ts";
 import { BenchError } from "../quality/bench.ts";
 import { FeelError } from "../quality/feel.ts";
+import { ExportError } from "../godot/export-service.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
@@ -718,6 +719,15 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
     });
+    // L'export local des jeux Godot (ADR-90) : jamais d'envoi.
+    api.get("/projects/:slug/export", async (req) => hub.exports.state((req.params as { slug: string }).slug));
+    api.post("/projects/:slug/export", async (req) => hub.exports.start(req.human!, (req.params as { slug: string }).slug));
+    api.post("/projects/:slug/export/templates", async (req) => hub.exports.installTemplates(req.human!, (req.params as { slug: string }).slug));
+    api.post("/projects/:slug/export/:id/reveal", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      hub.exports.reveal(req.human!, slug, id);
+      return { ok: true };
+    });
     // Le journal de bord (ADR-89).
     api.get("/projects/:slug/logbook", async (req) => {
       const { slug } = req.params as { slug: string };
@@ -886,7 +896,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError || err instanceof ExportError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

@@ -11,6 +11,8 @@ import { scaffoldGodot } from "../src/godot/scaffold.ts";
 import { findGodot } from "../src/godot/toolchain.ts";
 import { GodotGame, godotImport } from "../src/godot/run.ts";
 import { describeSim, godotSims } from "../src/godot/sim.ts";
+import { ensurePreset, godotExport, listBuilds } from "../src/godot/export.ts";
+import { hasWindowsTemplates } from "../src/godot/templates.ts";
 import { RealChecker } from "../src/quality/checks.ts";
 import { readReplay } from "../src/quality/replays.ts";
 import { RealPlayDriver } from "../src/quality/playtest.ts";
@@ -181,5 +183,18 @@ describe.skipIf(!godot)("Godot dans le studio", () => {
     const broken = await checker.launch("essai/casse", root);
     expect(broken.status).toBe("fail");
     expect(broken.detail).toMatch(/le niveau 1 est introuvable/);
-  }, 240_000);
+
+    // L'export local (ADR-90), avec les modèles d'export installés sur ce PC : le jeu cassé est exporté, mais l'essai
+    // de l'exécutable voit l'erreur ; réparé, il démarre sans erreur.
+    if (hasWindowsTemplates(godot!.version)) {
+      ensurePreset(root);
+      const bad = await godotExport(godot!.exe, root, { name: "Essai Godot", id: "casse", commit: null, at: new Date().toISOString() });
+      expect(bad.smoke).toMatchObject({ ok: false, detail: expect.stringMatching(/le niveau 1 est introuvable/) });
+      writeFileSync(join(root, "scripts", "main.gd"), MAIN);
+      const good = await godotExport(godot!.exe, root, { name: "Essai Godot", id: "bon", commit: null, at: new Date().toISOString() });
+      expect(good).toMatchObject({ exe: "build/bon/Essai_Godot.exe", smoke: { ok: true } });
+      expect(good.bytes).toBeGreaterThan(50_000_000);
+      expect(listBuilds(root).map((b) => b.id)).toEqual(["casse", "bon"].sort().reverse());
+    }
+  }, 400_000);
 });

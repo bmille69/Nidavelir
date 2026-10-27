@@ -39,6 +39,7 @@ import { BalanceService } from "./quality/balance.ts";
 import { BenchService } from "./quality/bench.ts";
 import { FeelService } from "./quality/feel.ts";
 import { LogbookService } from "./journal/logbook.ts";
+import { ExportService } from "./godot/export-service.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
@@ -129,6 +130,8 @@ export type Hub = {
   feel: FeelService;
   /** Le journal de bord : les fusions en images, semaine par semaine (ADR-89). */
   logbook: LogbookService;
+  /** L'export local des jeux Godot (ADR-90). */
+  exports: ExportService;
   gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
@@ -225,6 +228,7 @@ export function createHub(options: HubOptions): Hub {
   const bench = new BenchService({ db, clock, journal, projects, tasks, checker: options.checker ?? null });
   const feel = new FeelService({ projects, tasks, conversations, journal });
   const logbook = new LogbookService({ db, clock, journal, projects, tasks, checks, orchestrator, dataDir });
+  const exports = new ExportService({ projects, vcs, journal, clock, godot: options.godot ?? (() => null) });
   if (checks) {
     // Entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33).
     tasks.beforeVerify = async (task) => {
@@ -408,6 +412,7 @@ export function createHub(options: HubOptions): Hub {
     bench,
     feel,
     logbook,
+    exports,
     quality,
     checks,
     gameState,

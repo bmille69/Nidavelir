@@ -1239,3 +1239,21 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - Un GIF fait des huit dernières captures réelles de Bordée (272 Ko en 0,3 s) est relu par ffmpeg ; une image extraite a été examinée.
   - `pilotage.e2e.ts` : l'onglet Journal avec une fusion, un visuel et le récit (capture examinée).
   - 273 tests au vert, typecheck, construction de l'interface.
+
+## ADR-90 — L'export local des jeux Godot : un .exe autonome dans build/, essayé par le hub, jamais envoyé
+
+- **Contexte** : idée n°9 de la phase 6. Pour jouer à un jeu du studio hors de l'éditeur, ou le donner à quelqu'un, il fallait ouvrir Godot, créer un réglage d'export et télécharger les modèles d'export (1,25 Go pour toutes les plateformes). Vous avez choisi un export local seulement : pas de butler ni d'itch.io, rien n'est envoyé.
+- **Décision** :
+  - **Les modèles d'export** : « Installer les modèles d'export », sur votre clic, pour la version de Godot du PC. L'archive officielle est un zip. Le hub lit son sommaire à la fin du fichier, puis ne télécharge par plages HTTP que les cinq fichiers Windows (exécutables release et debug, leurs consoles, `version.txt`). Cela fait 70 Mo au lieu de 1,25 Go, soit 3 s ici. Ils sont rangés là où Godot les cherche (`%APPDATA%/Godot/export_templates/4.6.2.stable/`), donc l'éditeur en profite aussi. Le dossier n'est rempli qu'à la fin : une interruption ne laisse rien à moitié installé.
+  - **« Exporter le jeu (.exe) »** (Pilotage → Production, jeux Godot) :
+    - le hub ajoute s'il manque un réglage « Windows Desktop » à `export_presets.cfg`, sans toucher aux autres : jeu embarqué dans l'exécutable, `studio/`, `tests/` et `build/` exclus ;
+    - il ajoute `/build/` au `.gitignore` et commite ces deux fichiers ;
+    - il exporte la version actuelle du jeu dans `build/<date-heure>/<Nom>.exe` ;
+    - il ne garde que les 5 derniers exports ;
+    - « Ouvrir le dossier » montre l'exécutable dans l'explorateur.
+  - **L'essai de l'exécutable** : le hub lance le .exe obtenu, sans fenêtre, pendant 240 images. Il doit finir sans erreur et avec le code 0. Un jeu qui s'exporte mais plante au démarrage est signalé (pastille rouge et raison).
+- **Vérifié** :
+  - `export.test.ts` : modèles lus dans un zip par plages (le modèle Linux jamais demandé), rangés au bon endroit. Réglage ajouté à côté d'un réglage Web existant, une seule fois ; `build/` ignoré par Git. Installation puis six exports : 5 gardés, réglage commité, jeu propre. Erreur d'export dite. Refusé pour un jeu web et sans session humaine.
+  - Pour de vrai : modèles Windows de Godot 4.6.2 installés depuis l'archive officielle (tailles conformes au sommaire). Néon Saloon (clone) exporté en 17 s, 108 Mo, et son essai passe.
+  - `godot.e2e.ts` : un jeu qui écrit une erreur au démarrage est exporté, mais l'essai voit l'erreur. Réparé, il démarre sans erreur.
+  - 276 tests au vert, typecheck, construction.

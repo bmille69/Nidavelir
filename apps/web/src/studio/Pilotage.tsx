@@ -5,6 +5,7 @@ import { useNow, useStudio } from "./context.tsx";
 import { Balance } from "./Balance.tsx";
 import { Bench } from "./Bench.tsx";
 import { Logbook } from "./Logbook.tsx";
+import { ExportPanel } from "./ExportPanel.tsx";
 import { Bilan } from "./Bilan.tsx";
 import { Gallery } from "./Gallery.tsx";
 
@@ -349,6 +350,7 @@ function Production({ slug, tasks, art }: { slug: string; tasks: TaskRow[] | nul
         ))}
         {failed.length > 0 && <Relaunch slug={slug} failed={failed} />}
         <FeelPass slug={slug} />
+        <ExportPanel slug={slug} />
         {recent.length > 0 && <p className="pilot-sub">Fusionnés récemment</p>}
         {recent.map((t) => (
           <article key={t.id} className="pilot-row done">

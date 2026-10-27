@@ -223,6 +223,18 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** L'export local des jeux Godot (ADR-90). */
+export type GameBuild = { id: string; exe: string; bytes: number; at: string; commit: string | null; seconds: number; smoke: { ok: boolean; detail: string } };
+export type ExportState = {
+  available: boolean;
+  godot: string | null;
+  templates: boolean;
+  templatesDir: string | null;
+  installing: { step: string; progress: number } | null;
+  running: boolean;
+  error: string | null;
+  builds: GameBuild[];
+};
 /** Le journal de bord (ADR-89). */
 export type LogWeek = {
   week: string;
@@ -615,6 +627,10 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  exportState: (slug: string) => request<ExportState>("GET", `/projects/${slug}/export`),
+  exportStart: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export`, {}),
+  exportTemplates: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export/templates`, {}),
+  exportReveal: (slug: string, id: string) => request<{ ok: boolean }>("POST", `/projects/${slug}/export/${id}/reveal`, {}),
   logbook: (slug: string, week?: string) => request<{ weeks: string[]; current: LogWeek }>("GET", `/projects/${slug}/logbook${week ? `?week=${week}` : ""}`),
   logbookGif: (slug: string, week: string, n: number) => `/api/human/projects/${slug}/logbook/${week}/gif?n=${n}`,
   logbookTell: (slug: string, week: string) => request<LogWeek>("POST", `/projects/${slug}/logbook/${week}/tell`, {}),
