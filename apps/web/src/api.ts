@@ -190,9 +190,24 @@ export type ArtGenerator = {
   kontext?: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
 };
 /** Le bilan des visuels (ADR-71) : chaque visuel donné pour intégré, face aux fichiers du jeu et à ce qu'il charge. */
-export type BilanLevel = "verifie" | "a_retoucher" | "charge" | "non_prouve" | "pas_charge" | "ancienne_version" | "absent" | "source_absente" | "en_cours";
-export type BilanRow = { id: string; name: string; type: string; level: BilanLevel; problem: boolean; text: string; source: string | null; copies: string[]; stale: string[]; thumb: string | null; proofAt: string | null };
-export type Bilan = { rows: BilanRow[]; checking: { done: number; total: number; current: string | null } | null };
+export type BilanLevel = "verifie" | "a_retoucher" | "charge" | "non_prouve" | "pas_charge" | "ancienne_version" | "absent" | "source_absente" | "en_cours" | "aspect_change";
+export type BilanRow = {
+  id: string;
+  name: string;
+  type: string;
+  level: BilanLevel;
+  problem: boolean;
+  text: string;
+  source: string | null;
+  copies: string[];
+  stale: string[];
+  thumb: string | null;
+  proofAt: string | null;
+  /** L'aspect a changé dans le jeu (ADR-84). */
+  look?: { ref: string; file: string; changed: number; where: string | null; tasks: string[] } | null;
+};
+type Progress = { done: number; total: number; current: string | null };
+export type Bilan = { rows: BilanRow[]; checking: Progress | null; looking?: Progress | null };
 
 export type ArtState = {
   bible: string | null;
@@ -471,6 +486,8 @@ export const api = {
   artBilan: (slug: string) => request<Bilan>("GET", `/projects/${slug}/art/bilan`),
   artBilanVerify: (slug: string) => request<Bilan>("POST", `/projects/${slug}/art/bilan/verify`, {}),
   artReintegrate: (slug: string, id: string) => request<{ thread: string }>("POST", `/projects/${slug}/art/assets/${id}/reintegrate`, {}),
+  artLooksCheck: (slug: string) => request<Bilan>("POST", `/projects/${slug}/art/looks/check`, {}),
+  artLookAccept: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/look/accept`, {}),
   artAtelierFile: (slug: string, id: string, name: string) => `/api/human/projects/${slug}/art/atelier/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
   reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),

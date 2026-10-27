@@ -10,7 +10,7 @@ import { artRoot, readManifest, type Asset } from "./manifest.ts";
  * qu'il a été lancé sur sa scène vitrine. Aucun appel à un modèle : des fichiers et des faits.
  */
 
-export type BilanLevel = "verifie" | "a_retoucher" | "charge" | "non_prouve" | "pas_charge" | "ancienne_version" | "absent" | "source_absente" | "en_cours";
+export type BilanLevel = "verifie" | "a_retoucher" | "charge" | "non_prouve" | "pas_charge" | "ancienne_version" | "absent" | "source_absente" | "en_cours" | "aspect_change";
 
 export type BilanRow = {
   id: string;
@@ -29,6 +29,8 @@ export type BilanRow = {
   stale: string[];
   thumb: string | null;
   proofAt: string | null;
+  /** L'aspect a changé dans le jeu (ADR-84) : la photo de référence et la nouvelle. */
+  look?: { ref: string; file: string; changed: number; where: string | null; tasks: string[] } | null;
 };
 
 /** La preuve au lancement : les fichiers que le jeu a chargés sur la scène vitrine de l'asset. */
@@ -137,10 +139,22 @@ export function computeBilan(gameRoot: string): BilanRow[] {
     const loaded = proof ? copies.some((c) => wasLoaded(c, proof.loaded)) : null;
     const seen = a.ingame;
     const row = { ...base, copies };
+    if (loaded === false) return { ...row, level: "pas_charge" as const, problem: true, text: `Copié dans le jeu (${copies[0]}), mais le jeu ne l'a pas chargé sur sa scène vitrine.` };
+    // Le bon fichier, chargé, mais sa scène vitrine ne ressemble plus à la photo validée (ADR-84).
+    const look = a.look?.status === "changed" && a.look.file ? a.look : null;
+    if (look) {
+      return {
+        ...row,
+        thumb: look.file,
+        look: { ref: look.ref, file: look.file!, changed: look.changed, where: look.where, tasks: look.tasks },
+        level: "aspect_change" as const,
+        problem: true,
+        text: `Son aspect dans le jeu a changé${look.tasks.length ? ` après ${look.tasks.join(", ")}` : ""} : ${Math.round(look.changed * 100)} % de sa scène vitrine${look.where ? `, surtout ${look.where}` : ""}, face à la photo validée (${look.ref}). Le fichier est le bon : c'est son branchement, sa scène ou l'éclairage qui a bougé.`,
+      };
+    }
     if (loaded === null) {
       return { ...row, level: "non_prouve" as const, problem: false, text: `Copié dans le jeu (${copies[0]}), mais jamais vu chargé en lançant le jeu.${seen?.visible ? " Le validateur l'a reconnu sur une photo du jeu." : ""}` };
     }
-    if (!loaded) return { ...row, level: "pas_charge" as const, problem: true, text: `Copié dans le jeu (${copies[0]}), mais le jeu ne l'a pas chargé sur sa scène vitrine.` };
     if (seen?.visible && seen.ok) return { ...row, level: "verifie" as const, problem: false, text: `Chargé par le jeu et vu sur sa scène vitrine : ${seen.summary || "rend bien."}` };
     if (seen?.visible) return { ...row, level: "a_retoucher" as const, problem: false, text: `Chargé par le jeu, mais à retoucher : ${seen.summary}` };
     return { ...row, level: "charge" as const, problem: false, text: "Chargé par le jeu ; pas encore regardé sur une photo de sa scène vitrine." };

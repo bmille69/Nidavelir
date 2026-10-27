@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeRel } from "../src/art/art-service.ts";
@@ -1057,6 +1058,98 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integre", ingame: { file: "production/a-0001-vitrine-t-0003.png", ok: true } });
     expect(fake.calls.filter((c) => c.kind === "structured").at(-1)!.prompt).toMatch(/Capture de la scène vitrine du jeu \(\?vitrine=A-0001\)/);
 
+  }, 30_000);
+
+  it("contrôle des vitrines (ADR-84) : même aspect, aspect changé après une fusion, nouvel aspect accepté, vitrine animée", async () => {
+    // De vraies images PNG : un fond bleu nuit et un carré dont la couleur et la place disent l'aspect.
+    const png = (square: [number, number, number], x0: number, noise = 0) => {
+      const w = 320;
+      const h = 180;
+      const rows: Buffer[] = [];
+      for (let y = 0; y < h; y++) {
+        const row = Buffer.alloc(1 + w * 3);
+        for (let x = 0; x < w; x++) {
+          const inside = x >= x0 && x < x0 + 80 && y >= 50 && y < 130;
+          const c = inside ? square : [10, 14, 30];
+          for (let k = 0; k < 3; k++) row[1 + x * 3 + k] = Math.min(255, c[k]! + ((x * 7 + y * 13 + noise) % 5));
+        }
+        rows.push(row);
+      }
+      const chunk = (type: string, data: Buffer) => {
+        const len = Buffer.alloc(4);
+        len.writeUInt32BE(data.length);
+        return Buffer.concat([len, Buffer.from(type, "latin1"), data, Buffer.alloc(4)]);
+      };
+      const ihdr = Buffer.alloc(13);
+      ihdr.writeUInt32BE(w, 0);
+      ihdr.writeUInt32BE(h, 4);
+      ihdr[8] = 8;
+      ihdr[9] = 2;
+      return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+    };
+    const RED = png([220, 40, 40], 120);
+    let next: Buffer[] = [];
+    const launches: (string | undefined)[] = [];
+    const checker: CheckerPort = {
+      tests: async () => ({ status: "none", detail: "" }),
+      launch: async (_key, _cwd, screenshot, path) => {
+        launches.push(path);
+        if (screenshot) writeFileSync(screenshot, next.shift() ?? RED);
+        return { status: "pass", detail: "", screenshot: screenshot ?? null, loaded: ["/drapeau.png"] };
+      },
+    };
+    const { sb, fake, gen, repo, art } = await setupLocal(checker);
+    art.lookIntervalMs = 0;
+    gen.installed = true;
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.replies.push('[[ASSET]] {"name": "Drapeau", "type": "icône", "usage": "HUD"} [[/ASSET]]\n[[GENERER: A-0001]] A flag. [[/GENERER]]');
+    art.send(sb.human(), "bordee", "Un drapeau");
+    await art.idle();
+    // L'intégration : la photo de sa vitrine, jugée bonne, devient la référence.
+    fake.extractions.push({ visible: true, ok: true, summary: "Net.", points: [] } as never);
+    art.onTaskStatus({ id: "T-0003", project: "bordee", title: "A-0001 : brancher le drapeau", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    expect(launches).toEqual(["?vitrine=A-0001"]);
+    const ref = art.state("bordee").assets[0]!.ingame!.file;
+    mkdirSync(join(repo, "public"), { recursive: true });
+    copyFileSync(join(repo, "studio", "art", art.state("bordee").assets[0]!.verdict!.file), join(repo, "public", "drapeau.png"));
+
+    // Un chantier sans rapport : même aspect (au grain près), rien ne bouge.
+    next = [png([220, 40, 40], 122, 3)];
+    art.onTaskStatus({ id: "T-0004", project: "bordee", title: "Musique du menu", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    expect(launches.slice(1)).toEqual(["?vitrine=A-0001"]);
+    expect(art.state("bordee").assets[0]!.look ?? null).toBeNull();
+
+    // Un chantier qui l'a changé : deux photos identiques entre elles, différentes de la référence.
+    const GREEN = png([40, 200, 60], 200);
+    next = [GREEN, GREEN];
+    art.onTaskStatus({ id: "T-0005", project: "bordee", title: "Éclairage du port", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    const look = art.state("bordee").assets[0]!.look!;
+    expect(look).toMatchObject({ status: "changed", ref, tasks: ["T-0005"], file: "production/a-0001-aspect.png" });
+    expect(readFileSync(join(repo, "studio", "art", look.file!)).equals(GREEN)).toBe(true);
+    const row = art.bilan("bordee").rows[0]!;
+    expect(row).toMatchObject({ level: "aspect_change", problem: true, look: { ref, file: look.file } });
+    expect(row.text).toMatch(/aspect dans le jeu a changé après T-0005 : \d+ % de sa scène vitrine, surtout au centre/);
+    expect(art.state("bordee").messages.at(-1)!.text).toMatch(/Contrôle des vitrines après T-0005 : 1 visuel[\s\S]*Accepter le nouvel aspect/);
+    expect(log(repo)).toMatch(/contrôle des vitrines après T-0005, 1 aspect\(s\) changé\(s\)/);
+
+    // Vous l'acceptez : la nouvelle photo devient la référence ; la même photo ensuite ne signale plus rien.
+    await art.acceptLook(sb.human(), "bordee", "A-0001");
+    expect(art.bilan("bordee").rows[0]!.level).not.toBe("aspect_change");
+    next = [GREEN];
+    art.checkLooks(sb.human(), "bordee");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.look).toMatchObject({ status: "same", ref: look.file });
+
+    // Une vitrine animée : deux photos qui diffèrent entre elles ne disent rien de l'aspect.
+    next = [RED, png([40, 40, 220], 20)];
+    art.checkLooks(sb.human(), "bordee");
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.look).toMatchObject({ status: "unstable" });
+    expect(art.bilan("bordee").rows[0]!.level).not.toBe("aspect_change");
+    await expect(art.acceptLook(sb.human(), "bordee", "A-0001")).rejects.toThrow(/Aucun nouvel aspect/);
   }, 30_000);
 
   it("bilan des visuels (ADR-71) : copie exacte dans le jeu, preuve au lancement, ancienne version, réintégration", async () => {

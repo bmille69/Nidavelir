@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join, normalize, relative } from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import type { Task } from "@studio/contracts";
@@ -16,6 +17,7 @@ import { directionContext, nextId, readDirection, recordChoice, writeDirection, 
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
 import { computeBilan, wasLoaded, type BilanRow } from "./bilan.ts";
 import { AssetBudget, euros, type AssetSpend } from "./budget.ts";
+import { compareShots, LOOK_CHANGED, LOOK_UNSTABLE } from "./visual-diff.ts";
 import { isGodot } from "../godot/toolchain.ts";
 import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
 import {
@@ -57,7 +59,12 @@ export type QueuedVisual = { id: string; need: { id: string; title: string } | n
 export type VitrineShot = { shot: string | null; loaded: string[] | null };
 
 /** Le bilan des visuels (ADR-71) et, pendant une vérification au lancement, où elle en est. */
-export type BilanState = { rows: BilanRow[]; checking: { done: number; total: number; current: string | null } | null };
+export type BilanState = {
+  rows: BilanRow[];
+  checking: { done: number; total: number; current: string | null } | null;
+  /** Le contrôle des vitrines en cours (ADR-84). */
+  looking?: { done: number; total: number; current: string | null } | null;
+};
 
 export type ArtState = {
   bible: string | null;
@@ -145,6 +152,10 @@ export class ArtService {
   readonly #webRefs: WebRefsPort;
   /** Les vérifications du bilan en cours, par projet (ADR-71). */
   readonly #bilanChecks = new Map<string, { done: number; total: number; current: string | null }>();
+  /** Contrôle des vitrines (ADR-84), par projet : les chantiers fusionnés depuis le dernier passage, et l'avancement. */
+  readonly #looks = new Map<string, { tasks: Set<string>; timer: ReturnType<typeof setTimeout> | null; running: { done: number; total: number; current: string | null } | null; last: number }>();
+  /** Au plus un contrôle automatique des vitrines par projet dans cet intervalle : les fusions rapprochées sont groupées. */
+  lookIntervalMs = 20 * 60_000;
   /** Planches, duels et vignettes en cours, par projet : clé → ce qui se passe, en clair (ADR-58). */
   readonly #exploring = new Map<string, Map<string, string>>();
   /** Les chantiers du projet, pour savoir quand un visuel validé a sa place dans le jeu (ADR-60). */
@@ -572,7 +583,7 @@ export class ArtService {
   }
 
   bilan(project: string): BilanState {
-    return { rows: computeBilan(this.#projects.get(project).root), checking: this.#bilanChecks.get(project) ?? null };
+    return { rows: computeBilan(this.#projects.get(project).root), checking: this.#bilanChecks.get(project) ?? null, looking: this.#looks.get(project)?.running ?? null };
   }
 
   /**
@@ -631,6 +642,153 @@ export class ArtService {
     return this.bilan(project);
   }
 
+  /** La photo de référence de la scène vitrine d'un visuel (ADR-84) : celle que vous avez acceptée, sinon celle jugée bonne. */
+  #lookRef(a: Asset): string | null {
+    return a.lookRef ?? (a.ingame?.visible && a.ingame.ok && a.ingame.file.startsWith("production/") && a.ingame.file.includes("-vitrine-") ? a.ingame.file : null);
+  }
+
+  #scheduleLooks(project: string, task: string): void {
+    const st = this.#looks.get(project) ?? { tasks: new Set<string>(), timer: null, running: null, last: 0 };
+    this.#looks.set(project, st);
+    st.tasks.add(task);
+    if (st.running || st.timer) return;
+    const wait = Math.max(0, st.last + this.lookIntervalMs - Date.now());
+    const go = () => {
+      st.timer = null;
+      this.#track(this.#runLooks(project));
+    };
+    if (wait === 0) go();
+    else {
+      st.timer = setTimeout(go, wait);
+      st.timer.unref?.();
+    }
+  }
+
+  /** « Comparer aux photos de référence » (Bilan) : tout de suite, sans attendre l'intervalle. */
+  checkLooks(session: HumanSession, project: string): BilanState {
+    assertHumanSession(session);
+    const gameRoot = this.#projects.get(project).root;
+    if (!readManifest(gameRoot).assets.some((a) => a.status === "integre" && this.#lookRef(a))) throw new ArtError("Aucun visuel du jeu n'a encore de photo de référence validée");
+    const st = this.#looks.get(project) ?? { tasks: new Set<string>(), timer: null, running: null, last: 0 };
+    this.#looks.set(project, st);
+    if (!st.running) {
+      if (st.timer) clearTimeout(st.timer);
+      st.timer = null;
+      this.#track(this.#runLooks(project));
+    }
+    return this.bilan(project);
+  }
+
+  /**
+   * Contrôle des vitrines (ADR-84), sans modèle : chaque visuel du jeu qui a une photo de référence est rephotographié sur
+   * sa scène vitrine et comparé case par case. Un écart fait reprendre une seconde photo : si les deux diffèrent entre
+   * elles, la vitrine est animée et la comparaison ne dit rien ; sinon l'aspect a changé, et la nouvelle photo est gardée.
+   */
+  async #runLooks(project: string): Promise<void> {
+    const st = this.#looks.get(project)!;
+    const tasks = [...st.tasks].sort();
+    st.tasks.clear();
+    let gameRoot: string;
+    try {
+      gameRoot = this.#projects.get(project).root;
+    } catch {
+      return;
+    }
+    const root = artRoot(gameRoot);
+    // Les visuels que ces chantiers viennent d'intégrer sont jugés par ailleurs (#checkInGame) : pas ici.
+    const fresh = new Set(tasks.flatMap((t) => (this.tasks?.list(project).find((x) => x.id === t)?.title.match(/A-\d{4,}/g) ?? [])));
+    const todo = readManifest(gameRoot).assets.filter((a) => a.status === "integre" && !fresh.has(a.id) && this.#lookRef(a) && existsSync(join(root, this.#lookRef(a)!)));
+    if (!todo.length) {
+      st.last = Date.now();
+      return;
+    }
+    const dir = mkdtempSync(join(tmpdir(), "studio-looks-"));
+    st.running = { done: 0, total: todo.length, current: null };
+    const results = new Map<string, { status: "same" | "changed" | "unstable"; shot: string | null; ref: string; changed: number; where: string | null }>();
+    try {
+      for (const a of todo) {
+        st.running.current = a.id;
+        const ref = this.#lookRef(a)!;
+        try {
+          const first = await this.#vitrine(project, a.id, join(dir, `${a.id}-1.png`)).catch(() => null);
+          if (!first?.shot || !existsSync(first.shot)) continue;
+          const reference = readFileSync(join(root, ref));
+          const d = compareShots(reference, readFileSync(first.shot));
+          if (d.changed < LOOK_CHANGED) {
+            results.set(a.id, { status: "same", shot: null, ref, changed: d.changed, where: null });
+            continue;
+          }
+          const second = await this.#vitrine(project, a.id, join(dir, `${a.id}-2.png`)).catch(() => null);
+          const steady = second?.shot && existsSync(second.shot) ? compareShots(readFileSync(first.shot), readFileSync(second.shot)).changed < LOOK_UNSTABLE : false;
+          results.set(a.id, { status: steady ? "changed" : "unstable", shot: first.shot, ref, changed: d.changed, where: d.where });
+        } catch {
+          /* photo illisible : ce visuel n'est pas comparé cette fois */
+        } finally {
+          st.running.done++;
+        }
+      }
+      if (!results.size) return;
+      const m = readManifest(gameRoot);
+      const changed: Asset[] = [];
+      let touched = false;
+      for (const a of m.assets) {
+        const r = results.get(a.id);
+        if (!r) continue;
+        const before = a.look?.status ?? "same";
+        if (r.status === "same" && before === "same") continue;
+        touched = true;
+        let file: string | null = null;
+        if (r.status === "changed" && r.shot) {
+          file = this.#free(root, "production", `${a.id.toLowerCase()}-aspect`, ".png");
+          copyFileSync(r.shot, join(root, file));
+          changed.push(a);
+        }
+        a.look = { status: r.status, file, ref: r.ref, changed: Math.round(r.changed * 1000) / 1000, where: r.where, tasks: r.status === "same" ? [] : tasks, at: this.#clock.now() };
+      }
+      if (!touched) return;
+      writeManifest(gameRoot, m);
+      await this.#commit(gameRoot, `art: contrôle des vitrines${tasks.length ? ` après ${tasks.join(", ")}` : ""}, ${changed.length} aspect(s) changé(s)`);
+      for (const a of changed) this.#journal.append({ project, actor: { kind: "system" }, type: "art.look_changed", subject: a.id, payload: { changed: a.look!.changed, tasks } });
+      if (changed.length) {
+        this.#insert(
+          project,
+          "art",
+          [
+            `**Contrôle des vitrines${tasks.length ? ` après ${tasks.join(", ")}` : ""} : ${changed.length} visuel(s) n'a(ont) plus le même aspect dans le jeu.**`,
+            ...changed.flatMap((a) => [
+              `${IMAGE_MARK}${a.look!.ref}`,
+              `${IMAGE_MARK}${a.look!.file}`,
+              `- ${a.id} « ${a.name} » : ${Math.round(a.look!.changed * 100)} % de la scène vitrine a changé${a.look!.where ? `, surtout ${a.look!.where}` : ""} (avant, puis maintenant).`,
+            ]),
+            "Onglet Bilan : « Faire réintégrer » si c'est une erreur, « Accepter le nouvel aspect » si c'est voulu.",
+          ].join("\n"),
+          null,
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      st.running = null;
+      st.last = Date.now();
+      if (st.tasks.size) this.#scheduleLooks(project, [...st.tasks][0]!);
+    }
+  }
+
+  /** « Accepter le nouvel aspect » : la nouvelle photo devient la référence de ce visuel (ADR-84). */
+  async acceptLook(session: HumanSession, project: string, id: string): Promise<Asset> {
+    assertHumanSession(session);
+    const gameRoot = this.#projects.get(project).root;
+    const m = readManifest(gameRoot);
+    const a = m.assets.find((x) => x.id === id);
+    if (!a) throw new ArtError(`Asset introuvable : ${id}`);
+    if (a.look?.status !== "changed" || !a.look.file) throw new ArtError("Aucun nouvel aspect à accepter pour ce visuel");
+    a.lookRef = a.look.file;
+    a.look = { ...a.look, status: "same", ref: a.look.file, changed: 0, where: null, tasks: [], at: this.#clock.now() };
+    writeManifest(gameRoot, m);
+    await this.#commit(gameRoot, `art: nouvel aspect de ${id} accepté (directeur créatif)`);
+    this.#journal.append({ project, actor: { kind: "human" }, type: "art.look_accepted", subject: id, payload: { ref: a.lookRef } });
+    return a;
+  }
+
   /** Un visuel que le bilan trouve absent, périmé ou pas chargé repart en intégration, avec ce que le bilan a vu (ADR-71). */
   async reintegrate(session: HumanSession, project: string, id: string): Promise<{ thread: string }> {
     assertHumanSession(session);
@@ -641,7 +799,10 @@ export class ArtService {
     const asset = m.assets.find((a) => a.id === id)!;
     this.#setStatus(asset, "valide");
     writeManifest(gameRoot, m);
-    return this.#requestIntegration(project, id, "human", row.text);
+    const finding = row.look
+      ? `${row.text} Photo validée : studio/art/${row.look.ref} ; photo actuelle de la scène vitrine : studio/art/${row.look.file}. Regarde les deux, trouve ce qui a changé (échelle, orientation, matériau, éclairage, caméra, objet qui le cache) et rends-lui son aspect validé, sans changer le fichier.`
+      : `${row.text} Copie ce fichier-là, tel quel, et vérifie que le jeu le charge bien sur sa scène vitrine.`;
+    return this.#requestIntegration(project, id, "human", finding);
   }
 
   /** L'intégration lancée en arrière-plan : un échec s'affiche dans la discussion au lieu de se perdre. */
@@ -715,7 +876,7 @@ export class ArtService {
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
-      finding ? `- Le bilan du hub a vérifié le jeu : ${finding} Copie ce fichier-là, tel quel, et vérifie que le jeu le charge bien sur sa scène vitrine.` : "",
+      finding ? `- Le bilan du hub a vérifié le jeu : ${finding}` : "",
       this.#replacing.delete(`${project}/${id}`)
         ? "- C'est une version retouchée d'un modèle déjà branché : remplace l'ancien fichier par celui-ci (mêmes mesures, même squelette, mêmes animations), sans rien changer d'autre au branchement."
         : "",
@@ -745,6 +906,8 @@ export class ArtService {
     // Un chantier qui bouge change l'ordre de la file des visuels, ou la jauge a pu redescendre.
     this.#track(Promise.resolve().then(() => this.#advance(task.project)));
     if (task.status !== "merged") return;
+    // Tout chantier fusionné peut changer l'aspect d'un visuel déjà dans le jeu (ADR-84).
+    this.#scheduleLooks(task.project, task.id);
     // Un chantier qui pose un provisoire cite les visuels attendus sans les brancher (ADR-60) : seul son titre compte.
     const ids = new Set(`${task.title} ${task.goal.includes(PENDING_VISUALS) ? "" : task.goal}`.match(/A-\d{4,}/g) ?? []);
     if (!ids.size) return;
@@ -808,6 +971,9 @@ export class ArtService {
       const missing = !v.visible && shotVitrine;
       const retry = (missing || (!!v.visible && !v.ok)) && !a.ingame?.retried;
       if (run?.loaded) a.proof = { loaded: run.loaded, at: this.#clock.now() };
+      // Une nouvelle photo jugée devient la référence du contrôle des vitrines (ADR-84).
+      a.look = null;
+      a.lookRef = null;
       a.ingame = { task, file, visible: !!v.visible, ok: !!v.visible && !!v.ok, summary: String(v.summary ?? "").slice(0, 400), points: (v.points ?? []).slice(0, 6), retried: retry || !!a.ingame?.retried, at: this.#clock.now() };
       // Le chantier de retouche porte l'identifiant : à sa fusion, l'asset doit repasser par « intégration ». Écrit avant
       // le commit : un manifeste modifié sans commit bloquerait toutes les fusions du projet.

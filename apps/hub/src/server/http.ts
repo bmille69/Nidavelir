@@ -307,6 +307,12 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     // Le bilan des visuels (ADR-71) : la liste face aux fichiers du jeu et à ce qu'il charge.
     api.get("/projects/:slug/art/bilan", async (req) => hub.art.bilan((req.params as { slug: string }).slug));
     api.post("/projects/:slug/art/bilan/verify", async (req) => hub.art.verifyBilan(req.human!, (req.params as { slug: string }).slug));
+    // Contrôle des vitrines (ADR-84) : comparer tout de suite, ou accepter un nouvel aspect.
+    api.post("/projects/:slug/art/looks/check", async (req) => hub.art.checkLooks(req.human!, (req.params as { slug: string }).slug));
+    api.post("/projects/:slug/art/assets/:id/look/accept", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.art.acceptLook(req.human!, slug, id);
+    });
     api.post("/projects/:slug/art/assets/:id/reintegrate", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       return hub.art.reintegrate(req.human!, slug, id);

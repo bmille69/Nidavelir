@@ -1130,3 +1130,19 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `godot.e2e.ts` avec le vrai Godot 4.6.2 : 1 198 images/s sur le socle 2D, 3 593 images mesurées ; `vitrines/perf.tscn` mesurée à la place de la scène de départ.
   - Essai sur une copie de Néon Saloon (relais mis à jour) : menu titre à 1 411 images/s, 135 appels de dessin, 2 827 triangles, 172 Mo de mémoire vidéo.
   - 256 tests au vert, typecheck.
+
+## ADR-84 — Contrôle des vitrines : chaque visuel du jeu rephotographié et comparé à sa photo validée
+
+- **Contexte** : idée n°3 de la phase 6. Le bilan (ADR-71) prouve que le bon fichier est dans le jeu et qu'il est chargé, mais pas qu'il a encore l'air juste. Un chantier qui change l'éclairage, la caméra, une échelle ou un matériau partagé peut défigurer un visuel validé sans que personne le voie avant de jouer.
+- **Décision** :
+  - **La référence** : la photo de la scène vitrine jugée bonne par le validateur à l'intégration (`ingame`, ADR-49), ou celle que vous avez acceptée (`lookRef`).
+  - **Après chaque fusion** (et sur « Comparer aux photos validées » dans le Bilan), le hub relance le jeu sur la scène vitrine de chaque visuel intégré qui a une référence et le photographie. Les visuels que le chantier vient lui-même d'intégrer sont exclus : ils sont jugés à part. Les fusions rapprochées sont **groupées** : au plus un passage automatique toutes les 20 minutes par projet, qui cite tous les chantiers fusionnés depuis.
+  - **La comparaison, sans modèle** (`art/visual-diff.ts`) : un petit décodeur PNG sans dépendance. Chaque photo est réduite à une grille de 32 × 18 cases de couleur moyenne ; une case change si une couleur bouge de plus de 12 %. Le grain, l'anticrénelage ou un pixel de décalage disparaissent dans la moyenne. Au-delà de **6 %** de cases changées, l'aspect a changé ; le hub dit aussi où (« au centre à droite »).
+  - **Contre les vitrines animées** : un écart fait prendre une seconde photo. Si les deux diffèrent entre elles (plus de 3 %), la vitrine bouge toute seule et la comparaison ne dit rien (« unstable », pas une alerte).
+  - **Un aspect changé** : la nouvelle photo est gardée dans `production/<id>-aspect.png` (seulement dans ce cas, pour ne pas alourdir le dépôt). Le Bilan montre « Aspect changé » avec les deux photos, avant puis maintenant. Le DA le dit dans sa discussion. Le journal note `art.look_changed`.
+  - **Deux suites** : « Faire réintégrer » (le directeur reçoit les deux photos et la consigne de rendre au visuel son aspect validé sans changer le fichier) ou « Accepter le nouvel aspect » (le changement est voulu : la nouvelle photo devient la référence, `art.look_accepted`). Une nouvelle intégration jugée remet la référence à zéro.
+  - Pas de nouvel appel de modèle, et pas d'image ajoutée au dépôt tant que rien ne change.
+- **Vérifié** :
+  - `art.test.ts`, avec de vraies images PNG : même aspect au grain près après une fusion sans rapport (rien ne bouge) ; aspect changé après T-0005 (Bilan, deux photos, message, commit) ; nouvel aspect accepté puis retrouvé identique ; vitrine animée non signalée. 42 tests du DA au vert.
+  - Sur les vraies photos de Survivor Destiny : deux photos d'A-0005 prises à deux fusions d'écart, 1,7 % de cases changées (même aspect) ; A-0008 avant et après la réparation de sa vitrine (T-0096 → T-0097), 99,8 % (changé). Les photos du vrai Godot se lisent aussi.
+  - typecheck.

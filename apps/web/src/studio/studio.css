@@ -1527,6 +1527,9 @@ a.pilot-row-title:hover { color: var(--accent); }
 .bilan-title { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-sm); }
 .bilan-title b { font-weight: 600; }
 .bilan-text { color: var(--text-2); }
+.bilan-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.bilan-look { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
+.bilan-look img { width: 160px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--surface-2); }
 .bilan-badge { flex: none; padding: 3px 10px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .bilan-badge.tone-ok { background: var(--ok-bg); color: var(--ok); }
 .bilan-badge.tone-warn { background: var(--ember-soft); color: var(--ember); }

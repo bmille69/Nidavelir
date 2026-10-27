@@ -50,6 +50,10 @@ export type Asset = {
   ingame?: InGame | null;
   /** Les fichiers que le jeu a chargés sur la scène vitrine de l'asset, au dernier lancement par le hub (bilan, ADR-71). */
   proof?: { loaded: string[]; at: string } | null;
+  /** La dernière comparaison de sa scène vitrine à la photo de référence (ADR-84). */
+  look?: Look | null;
+  /** Une nouvelle photo de référence que vous avez acceptée (« Accepter le nouvel aspect ») ; sinon celle de `ingame`. */
+  lookRef?: string | null;
   /** Validé, mais son intégration attend que ce chantier ait posé sa place dans le jeu (ADR-60). */
   waitsFor?: string | null;
   /** Confié au Directeur artistique par la file des visuels ou par « Lancer » (ADR-62) : il est en cours tant qu'il n'est pas validé. */
@@ -95,6 +99,12 @@ export type ModelInfo = {
   animations: string[];
   verdict: Verdict | null;
 };
+
+/**
+ * Contrôle des vitrines (ADR-84). « same » : comme la référence ; « changed » : l'aspect a changé, `file` est la nouvelle
+ * photo (dans production/) ; « unstable » : la vitrine bouge d'une photo à l'autre, la comparaison ne dit rien.
+ */
+export type Look = { status: "same" | "changed" | "unstable"; file: string | null; ref: string; changed: number; where: string | null; tasks: string[]; at: string };
 
 export type InGame = { task: string; file: string; visible: boolean; ok: boolean; summary: string; points: string[]; retried: boolean; at: string };
 
