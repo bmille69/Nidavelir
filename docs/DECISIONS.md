@@ -1068,3 +1068,13 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - Les vrais .glb du Héron, du Titan (41 os) et du Grouillot (22 os) passent le contrôle.
   - 251 tests au vert, typecheck.
 - **Plus tard, si un modèle le montre** : animations sans `animate_in_place` (racine retirée dans Blender) et squelette v1.0 en FBX. Un essai réel coûterait environ 100 crédits (le squelette du Héron n'est plus gardé chez Tripo).
+
+## ADR-80 — Jamais « simple » pour ce qui se voit de près ; l'arme vue à la première personne a un vrai budget
+
+- **Contexte** : le 27/10, sur Néon Saloon, le directeur créatif trouve la texture de la carabine A-0004 « grossière ». Le modèle Tripo est intégré, mais sa surface est bosselée et ses couleurs bavent. Le DA conclut que la méthode est en cause et fait refaire l'arme en « simple » : l'artisan l'assemble à la main dans Blender. Il obtient des tiges et des blocs, refusés deux fois par le validateur (« trop primitive »). Le directeur créatif : « bien pire qu'avant ».
+- **Cause** : le budget, pas Tripo. 3000 triangles et des textures de 1024 pour une arme qui remplit l'écran en vue à la première personne écrasent les formes, d'où une surface molle et des couleurs qui bavent. Le mode « simple » ne sait faire que des boîtes et des cylindres.
+- **Décision** :
+  - Consigne du DA : jamais « simple » pour l'arme du joueur, un personnage, un ennemi ou un objet héros. Un modèle Tripo « mou » se reprend par Tripo, avec plus de triangles et une image plus nette. Budget de l'arme en vue à la première personne : 8000 à 15000 triangles.
+  - `closeUp` (model3d.ts) : un modèle à squelette, ou à 8000 triangles et plus, prend la géométrie détaillée de Tripo et des textures de 2048.
+  - La fiche d'A-0004 est revenue au modèle Tripo intégré (a-0004-3d-3.glb, celui du jeu), commit 23ab8ef du jeu. Les versions faites main restent dans models/ sans servir.
+- **Vérifié** : 251 tests au vert, typecheck. Le jeu n'avait jamais reçu la version faite main : l'arme du jeu est identique à a-0004-3d-3.glb (même empreinte).

@@ -122,9 +122,13 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   (c'est l'image qui décide de tout : soigne-la), l'artisan 3D la range dans Blender (orientation, matière, lueurs) sans la
   repeindre, le validateur juge les photos. Ajoute « simple » pour un objet fait de formes simples (mur, caisse, étagère,
   borne, coffre, rocher stylisé) : pas d'image ni de Tripo, l'artisan le modélise directement dans Blender d'après la
-  fiche ; la 3D part tout de suite. « taille » : plus grande dimension en mètres dans le jeu ; « triangles » : budget, que le
-  jeu web affiche sans peine : 15000 à 25000 pour un personnage principal, 8000 à 15000 pour un ennemi ou un PNJ, 1000 à
-  5000 pour un objet ou un décor (trop peu écrase les détails) ; « squelette » s'il doit être animé ; « animations » : 8 au
+  fiche ; la 3D part tout de suite. JAMAIS « simple » pour ce qui se voit de près ou porte le jeu (l'arme du joueur en vue
+  à la première personne, un personnage, un ennemi, un objet héros) : l'artisan n'assemble que des boîtes et des cylindres,
+  bien plus pauvres qu'un modèle Tripo. Un modèle Tripo jugé « mou » ou « baveux » se reprend par Tripo, avec un budget
+  plus haut et une image plus nette, pas en le remplaçant par une version faite main. « taille » : plus grande dimension en mètres dans le jeu ; « triangles » : budget, que le
+  jeu web affiche sans peine : 15000 à 25000 pour un personnage principal, 8000 à 15000 pour un ennemi ou un PNJ, 8000 à
+  15000 pour l'arme du joueur en vue à la première personne (elle remplit l'écran), 1000 à 5000 pour un objet ou un décor
+  (trop peu écrase les détails : surface bosselée, couleurs qui bavent) ; « squelette » s'il doit être animé ; « animations » : 8 au
   plus, choisies dans le CATALOGUE ci-dessous par leur SENS (pense au minimum du jeu : attente, marche ou course, coup
   donné, coup reçu) ; pour les autres formes : quadruped:walk, hexapod:walk, octopod:walk, serpentine:march, aquatic:march.
   Un humanoïde dont les animations sont TOUTES de base (idle, walk, run, dive, climb, jump, slash, shoot, hurt, fall, turn)

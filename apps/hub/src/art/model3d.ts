@@ -323,9 +323,10 @@ export class RealModel3D implements Model3DPort {
     let uploaded: Promise<string> | null = null;
     const token = () => (uploaded ??= this.#upload(key, req.image, req.ext));
     // La texture de Tripo porte les détails du modèle, Blender ne la repeint plus (ADR-54) : toujours détaillée. Un modèle
-    // à squelette se déforme en bougeant : géométrie détaillée aussi (ADR-52). Les graines ne font pas partie de l'empreinte :
-    // une fabrication interrompue reprend sa commande, quelle que soit la graine tirée à la relance.
-    const quality = { face_limit: Math.max(1000, req.spec.tris), texture_quality: "detailed", ...(req.spec.rig ? { geometry_quality: "detailed" } : {}) };
+    // à squelette se déforme en bougeant, un objet vu de près remplit l'écran : géométrie détaillée aussi (ADR-52, ADR-80).
+    // Les graines ne font pas partie de l'empreinte : une fabrication interrompue reprend sa commande, quelle que soit la
+    // graine tirée à la relance.
+    const quality = { face_limit: Math.max(1000, req.spec.tris), texture_quality: "detailed", ...(closeUp(req.spec) ? { geometry_quality: "detailed" } : {}) };
     const shape = { ...quality, model_seed: req.seed, texture_seed: req.seed };
     let model: TripoTask | null = null;
     let views: ViewImage[] | undefined;
@@ -617,9 +618,16 @@ export function rigProblem(joints: string[], type: string): string | null {
   return null;
 }
 
-/** Les textures gardées dans le .glb : un personnage animé, vu de près, garde plus de détail qu'un décor. */
+/**
+ * Vu de près : un personnage animé, ou un objet à gros budget (l'arme du joueur en vue à la première personne remplit
+ * l'écran). Il prend la géométrie détaillée de Tripo et garde des textures plus fines qu'un décor.
+ */
+function closeUp(spec: Model3DSpec): boolean {
+  return spec.rig || spec.tris >= 8000;
+}
+
 function maxTexture(spec: Model3DSpec): number {
-  return spec.rig ? 2048 : 1024;
+  return closeUp(spec) ? 2048 : 1024;
 }
 
 /**
