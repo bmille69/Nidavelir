@@ -410,6 +410,20 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project, asset)
   );
   `,
+  `
+  -- ADR-86 : les passages de l'équilibreur, des centaines de parties simulées sans écran.
+  CREATE TABLE sim_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    at TEXT NOT NULL,
+    commit_sha TEXT,
+    runs INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL DEFAULT '[]',
+    error TEXT
+  );
+  CREATE INDEX sim_runs_project ON sim_runs (project, id);
+  `,
 ];
 
 export function openDatabase(path: string): Db {

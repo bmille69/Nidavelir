@@ -28,6 +28,7 @@ import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
 import { ArtError } from "../art/art-service.ts";
 import { ReplayError } from "../quality/replays.ts";
+import { BalanceError } from "../quality/balance.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
@@ -60,6 +61,8 @@ const Body = {
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
   artAside: z.object({ aside: z.boolean() }),
+  balanceRun: z.object({ runs: z.number().int().min(10).max(2000).optional() }),
+  balanceSend: z.object({ question: z.string().max(2000).optional() }),
   replaySave: z.object({ name: z.string().min(1).max(80), note: z.string().max(500).optional() }),
   tripoKey: z.object({ key: z.string().min(8).max(200) }),
   artReact: z.object({
@@ -711,6 +714,16 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
     });
+    // L'équilibreur (ADR-86) : des centaines de parties simulées sans écran, puis le directeur sur votre demande.
+    api.get("/projects/:slug/balance", async (req) => hub.balance.state((req.params as { slug: string }).slug));
+    api.post("/projects/:slug/balance/run", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return hub.balance.start(req.human!, slug, Body.balanceRun.parse(req.body).runs);
+    });
+    api.post("/projects/:slug/balance/:id/send", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.balance.send(req.human!, slug, Number(id), Body.balanceSend.parse(req.body).question ?? "");
+    });
     // Vos parties enregistrées, et celles gardées comme tests (ADR-85).
     api.get("/projects/:slug/replays", async (req) => {
       const { slug } = req.params as { slug: string };
@@ -835,7 +848,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

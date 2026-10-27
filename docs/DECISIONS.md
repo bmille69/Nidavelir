@@ -1177,3 +1177,19 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `godot.e2e.ts` avec le vrai Godot 4.6.2, deux fois : partie enregistrée par le relais (clics, touche maintenue), rejouée à l'identique ; le carré ralenti (300 → 200), la même partie diverge.
   - Essais préalables : 3 enregistrements sur 3 rejoués à l'identique avec des touches. Avec l'outil du testeur pour une action de l'Input Map (`Input.action_press`, état posé sans événement), le rejeu avait 1 image d'écart : ce n'est pas le cas d'une vraie partie, faite de vrais événements.
   - 263 tests au vert, typecheck.
+
+## ADR-86 — L'équilibreur : des centaines de parties simulées sans écran, des distributions, puis le directeur
+
+- **Contexte** : idée n°5 de la phase 6. L'équilibrage se faisait au ressenti : le testeur joue une partie, vous en jouez quelques-unes. Néon Saloon est un tower defense : vagues, économie et dégâts se règlent sur des centaines de parties, pas sur une.
+- **Décision** :
+  - **Une simulation** est un fichier `tests/sims/sim_*.gd` du jeu qui « extends StudioSim » (nouvel outil du studio, `addons/studio_tests/studio_sim.gd`) et définit `simulate(graine) -> Dictionary`. Elle joue une partie entière sans écran, avec une stratégie simple, et rend ce qu'elle mesure : nombres, vrai/faux, textes courts. Elle peut appeler la logique du jeu directement (le plus rapide), ou instancier de vraies scènes et les laisser tourner (`add_scene`, `wait_frames`, à 60 images fixes par seconde, aussi vite que possible).
+  - **Le lanceur** (`addons/studio_tests/sim.gd`) joue N parties par simulation, une graine par partie (`seed()` global et `rng` de la simulation), et écrit une ligne `STUDIO_SIM:` par simulation. Mêmes graines, mêmes parties.
+  - **Le hub** (`godot/sim.ts`, `quality/balance.ts`, table `sim_runs`) en tire des distributions : pour un nombre, moyenne, minimum, maximum, 10e, 50e et 90e centiles, histogramme ; pour vrai/faux, un taux ; pour un texte, les valeurs les plus fréquentes. Il les compare au passage précédent (écart de moyenne de plus de 10 %, de taux de plus de 5 points) et garde la version du jeu mesurée.
+  - **Pilotage → Équilibrage** : « Jouer les parties » (50 à 1 000, en arrière-plan), une carte par simulation (gros chiffre, histogramme, fourchette des 9 parties sur 10, écart avec le passage précédent). « Demander des réglages au directeur » envoie les chiffres dans une discussion « Équilibrage », avec votre question : il propose des valeurs précises et prépare le chantier ; vous relancez l'équilibreur pour vérifier.
+  - **Les agents écrivent les simulations** : la consigne Godot (`GODOT_RULES`) et la section CLAUDE.md d'un nouveau jeu les décrivent, et le gardien laisse lancer le lanceur des simulations (`-s addons/studio_tests/sim.gd`, `--fixed-fps`, `--runs`, `--seed`, `--only`) comme celui des tests. Un jeu sans simulation reçoit dans l'onglet la phrase à dire au directeur.
+  - Aucun modèle ne joue : ce sont des chiffres. Le directeur ne les reçoit que sur votre demande.
+- **Vérifié** :
+  - `balance.test.ts` : distributions, centiles, histogramme, taux, textes ; comparaison en clair ; deux passages en arrière-plan (le second plafonné à 2 000 parties), version du jeu gardée, chiffres envoyés au directeur avec votre question ; un jeu web refusé ; un passage sans simulation dit pourquoi. `policy.test.ts` : lanceur des simulations permis, autre script ou argument refusés.
+  - `godot.e2e.ts` avec le vrai Godot 4.6.2 : 300 parties d'une simulation qui instancie aussi la scène principale, en 0,38 s ; vague atteinte de 4 à 10 ; les mêmes graines redonnent exactement les mêmes chiffres.
+  - `pilotage.e2e.ts` : l'onglet Équilibrage, deux passages comparés (capture examinée).
+  - 267 tests au vert, typecheck, construction de l'interface.

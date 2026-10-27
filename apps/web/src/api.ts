@@ -223,6 +223,14 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** L'équilibreur (ADR-86) : des centaines de parties simulées sans écran. */
+export type MetricStats =
+  | { kind: "number"; n: number; mean: number; min: number; max: number; p10: number; p50: number; p90: number; histogram: { from: number; to: number; count: number }[] }
+  | { kind: "bool"; n: number; rate: number }
+  | { kind: "text"; n: number; top: { value: string; count: number }[] };
+export type SimSummary = { name: string; runs: number; seconds: number; seed: number; metrics: Record<string, MetricStats>; error?: string };
+export type SimRun = { id: number; at: string; commit: string | null; runs: number; status: "running" | "done" | "failed"; sims: SimSummary[]; error: string | null };
+export type BalanceState = { available: boolean; hasSims: boolean; running: boolean; latest: SimRun | null; previous: SimRun | null; history: { id: number; at: string; commit: string | null; status: string }[] };
 /** Vos parties enregistrées en essayant un jeu Godot, et celles gardées comme tests (ADR-85). */
 export type Recording = { id: string; task: string | null; at: string; seconds: number; inputs: number; checkpoints: number; finalState: string | null };
 export type SavedReplay = { file: string; name: string; note: string; seconds: number; inputs: number; saved_at: string | null };
@@ -575,6 +583,9 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  balance: (slug: string) => request<BalanceState>("GET", `/projects/${slug}/balance`),
+  balanceRun: (slug: string, runs: number) => request<BalanceState>("POST", `/projects/${slug}/balance/run`, { runs }),
+  balanceSend: (slug: string, id: number, question: string) => request<{ thread: string }>("POST", `/projects/${slug}/balance/${id}/send`, { question }),
   replays: (slug: string) => request<{ recordings: Recording[]; saved: SavedReplay[] }>("GET", `/projects/${slug}/replays`),
   saveRecording: (slug: string, id: string, name: string, note: string) => request<SavedReplay>("POST", `/projects/${slug}/recordings/${id}/save`, { name, note }),
   deleteRecording: (slug: string, id: string) => request<{ ok: true }>("POST", `/projects/${slug}/recordings/${id}/delete`, {}),

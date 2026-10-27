@@ -212,6 +212,9 @@ describe("Godot (ADR-73)", () => {
       "godot --headless --path . -s addons/studio_tests/run.gd -- --only=joueur",
       "godot --headless --path . res://scenes/main.tscn --quit-after 120",
       "godot --headless --path . --import && godot --headless --path . -s res://addons/studio_tests/run.gd 2>&1 | tail -40",
+      // Les simulations d'équilibrage (ADR-86).
+      "godot --headless --fixed-fps 60 --path . -s res://addons/studio_tests/sim.gd -- --runs=50",
+      "godot --headless --path . -s addons/studio_tests/sim.gd -- --runs=50 --only=vagues --seed=7",
     ]) {
       expect(d(exec, "Bash", { command: c }), c).toBe("allow");
       expect(d(verify, "Bash", { command: c }), c).toBe("allow");
@@ -226,6 +229,8 @@ describe("Godot (ADR-73)", () => {
       "godot --headless --path . --export-release Windows jeu.exe",
       "godot --headless --path . --remote-debug tcp://1.2.3.4:6007 --quit",
       "godot --headless --path . -s res://addons/studio_tests/run.gd -- --rm=tout",
+      "godot --headless --path . -s res://addons/studio_tests/sim.gd -- --runs=tout",
+      "godot --headless --fixed-fps 60 --path . -s res://outils/sim.gd",
       "godot --headless --path .",
     ]) expect(d(exec, "Bash", { command: c }), c).toBe("ask");
     expect(d(exec, "Bash", { command: "godot --headless --path ../.. --import" })).toBe("deny");

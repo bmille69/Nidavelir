@@ -35,6 +35,7 @@ import { PreviewService } from "./executor/preview.ts";
 import { QualityService } from "./quality/quality-service.ts";
 import { CheckService, checksForTester, type CheckerPort } from "./quality/checks.ts";
 import { ReplayService } from "./quality/replays.ts";
+import { BalanceService } from "./quality/balance.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
@@ -117,6 +118,8 @@ export type Hub = {
   checks: CheckService | null;
   /** Vos parties enregistrées, et celles gardées comme tests (ADR-85). */
   replays: ReplayService;
+  /** L'équilibreur : des centaines de parties simulées sans écran (ADR-86). */
+  balance: BalanceService;
   gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
@@ -209,6 +212,7 @@ export function createHub(options: HubOptions): Hub {
   const checks = options.checker ? new CheckService({ db, clock, journal, projects, checker: options.checker, shotsDir: join(dataDir, "shots") }) : null;
   if (autopilot) autopilot.checks = checks;
   const replays = new ReplayService({ dataDir, projects, vcs, journal, clock, godot: options.godot ?? (() => null) });
+  const balance = new BalanceService({ db, clock, journal, projects, vcs, conversations, godot: options.godot ?? (() => null) });
   if (checks) {
     // Entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33).
     tasks.beforeVerify = async (task) => {
@@ -383,6 +387,7 @@ export function createHub(options: HubOptions): Hub {
     autopilot,
     previews,
     replays,
+    balance,
     quality,
     checks,
     gameState,

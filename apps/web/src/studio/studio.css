@@ -1778,3 +1778,18 @@ a.pilot-row-title:hover { color: var(--accent); }
 .replay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .replay-list li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .replay-form { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }
+
+/* L'équilibreur (ADR-86) */
+.balance { display: flex; flex-direction: column; gap: var(--space-3); }
+.sim-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.sim-card header { display: flex; justify-content: space-between; gap: var(--space-2); }
+.sim-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); }
+.sim-metric { display: flex; flex-direction: column; gap: 2px; }
+.sim-big { font-size: 1.4rem; font-weight: 600; }
+.sim-bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.sim-bar span { display: block; height: 100%; background: var(--accent); }
+.sim-hist { display: flex; align-items: flex-end; gap: 2px; height: 36px; }
+.sim-hist span { flex: 1; background: var(--accent); opacity: 0.8; border-radius: 2px 2px 0 0; }
+.sim-metric .up { color: var(--ok, #3fb950); }
+.sim-metric .down { color: var(--warn); }
+.balance-send { display: flex; flex-direction: column; gap: var(--space-2); }

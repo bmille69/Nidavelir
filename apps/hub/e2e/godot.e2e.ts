@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { scaffoldGodot } from "../src/godot/scaffold.ts";
 import { findGodot } from "../src/godot/toolchain.ts";
-import { GodotGame } from "../src/godot/run.ts";
+import { GodotGame, godotImport } from "../src/godot/run.ts";
+import { describeSim, godotSims } from "../src/godot/sim.ts";
 import { RealChecker } from "../src/quality/checks.ts";
 import { readReplay } from "../src/quality/replays.ts";
 import { RealPlayDriver } from "../src/quality/playtest.ts";
@@ -144,6 +145,24 @@ describe.skipIf(!godot)("Godot dans le studio", () => {
     expect(diverged.detail).toMatch(/✗ « Compter deux fois » : à [\d.]+ s, l'état du jeu était \{.*"x":\d+.*\} quand vous avez joué/);
     writeFileSync(join(root, "scripts", "main.gd"), MAIN);
     rmSync(join(root, "studio"), { recursive: true, force: true });
+
+    // L'équilibreur (ADR-86) : une simulation du jeu, jouée 300 fois sans écran, une graine par partie.
+    mkdirSync(join(root, "tests", "sims"), { recursive: true });
+    writeFileSync(
+      join(root, "tests", "sims", "sim_vagues.gd"),
+      `extends StudioSim\n\nfunc simulate(_graine: int) -> Dictionary:\n\tvar pv := 20\n\tvar vague := 0\n\twhile pv > 0 and vague < 20:\n\t\tvague += 1\n\t\tpv -= maxi(0, 3 + vague - rng.randi_range(0, 8))\n\tvar main := add_scene("res://scenes/main.tscn")\n\tawait wait_frames(2)\n\treturn {"vague_atteinte": vague, "victoire": pv > 0, "scene": main.snapshot().scene}\n`,
+    );
+    await godotImport(godot!.exe, root);
+    const sims = await godotSims(godot!.exe, root, { runs: 300 });
+    expect(sims.errors).toEqual([]);
+    expect(sims.sims).toHaveLength(1);
+    const vagues = sims.sims[0]!.metrics.vague_atteinte!;
+    expect(vagues).toMatchObject({ kind: "number", n: 300 });
+    expect(vagues.kind === "number" && vagues.max > vagues.min).toBe(true);
+    expect(sims.sims[0]!.metrics.scene).toMatchObject({ kind: "text", top: [{ value: "main", count: 300 }] });
+    // Même graines, mêmes parties.
+    expect((await godotSims(godot!.exe, root, { runs: 300 })).sims[0]!.metrics).toEqual(sims.sims[0]!.metrics);
+    writeFileSync(join(shots, "godot-sims.txt"), describeSim(sims.sims[0]!));
 
     // Un test qui échoue et un script qui plante : les vérifications du hub le voient.
     writeFileSync(join(root, "tests", "test_faux.gd"), `extends StudioTest\n\nfunc test_faux() -> void:\n\tassert_eq(1 + 1, 3, "arithmétique")\n`);

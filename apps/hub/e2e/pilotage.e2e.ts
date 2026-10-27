@@ -11,6 +11,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PENDING_VISUALS, readManifest, writeManifest } from "../src/art/manifest.ts";
 import { createHub, type Hub } from "../src/hub.ts";
+import { summarize } from "../src/godot/sim.ts";
 import { buildServer } from "../src/server/http.ts";
 import { FakeOrchestrator } from "../test/fake-orchestrator.ts";
 import { FakeExecutor } from "../test/fake-executor.ts";
@@ -177,6 +178,22 @@ describe("poste de pilotage", () => {
     await expect(page.locator(".bilan-row").nth(1).textContent()).resolves.toMatch(/Gardien Titan[\s\S]*assets\/studio\/guardian_titan\.glb[\s\S]*Pas vérifié/);
     expect(await page.locator(".pilot-head .segmented button.on").textContent()).toBe("Bilan");
     await page.screenshot({ path: join(shots, "pilot-9-bilan.png") });
+
+    // L'équilibreur (ADR-86) : deux passages, le dernier comparé au précédent.
+    writeFileSync(join(hub.projects.get(P).root, "project.godot"), "config_version=5\n");
+    mkdirSync(join(hub.projects.get(P).root, "tests", "sims"), { recursive: true });
+    const runs = (shift: number) =>
+      Array.from({ length: 200 }, (_, i) => ({ vague_atteinte: 5 + ((i * 7 + shift) % 6), victoire: (i + shift) % 3 === 0, or_final: 150 + ((i * 13) % 200) + shift * 20, cause: i % 3 ? "fuite" : "boss" }));
+    for (const shift of [0, 2]) {
+      hub.db
+        .prepare("INSERT INTO sim_runs (project, at, commit_sha, runs, status, data_json) VALUES (?, ?, ?, 200, 'done', ?)")
+        .run(P, `2026-10-27T1${shift}:00:00.000Z`, `abc123${shift}`.padEnd(40, "0"), JSON.stringify([{ name: "res://tests/sims/sim_vagues.gd", runs: 200, seconds: 0.4, seed: 1, metrics: summarize(runs(shift)) }]));
+    }
+    await page.locator(".pilot-head .segmented button", { hasText: "Équilibrage" }).click();
+    await page.locator(".sim-card").first().waitFor();
+    await expect(page.locator(".sim-card").first().textContent()).resolves.toMatch(/sim_vagues\.gd[\s\S]*200 parties[\s\S]*or_final[\s\S]*victoire/);
+    expect(await page.locator(".sim-hist span").count()).toBeGreaterThan(3);
+    await page.screenshot({ path: join(shots, "pilot-11-equilibrage.png"), fullPage: true });
 
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);

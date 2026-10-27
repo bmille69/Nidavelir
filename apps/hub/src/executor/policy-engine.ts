@@ -422,12 +422,17 @@ function godotCommand(words: string[]): string | null {
   const own = sep >= 0 ? args.slice(0, sep) : args;
   const user = sep >= 0 ? args.slice(sep + 1) : [];
   if (!own.includes("--headless")) return null;
-  if (!user.every((a) => /^--only=[\w./-]+$/.test(a))) return null;
-  let what: "import" | "tests" | "scene" | null = null;
+  if (!user.every((a) => /^--only=[\w./-]+$/.test(a) || /^--(runs|seed)=\d{1,6}$/.test(a))) return null;
+  let what: "import" | "tests" | "sims" | "scene" | null = null;
   for (let i = 0; i < own.length; i++) {
     const a = own[i]!;
     if (a === "--headless" || a === "--verbose" || a === "--quit") continue;
     if (a === "--path" && own[i + 1] && !own[i + 1]!.startsWith("-")) {
+      i++;
+      continue;
+    }
+    // Les simulations d'équilibrage tournent à 60 images fixes par seconde, aussi vite que possible (ADR-86).
+    if (a === "--fixed-fps" && /^\d{1,4}$/.test(own[i + 1] ?? "")) {
       i++;
       continue;
     }
@@ -445,6 +450,11 @@ function godotCommand(words: string[]): string | null {
       what = "tests";
       continue;
     }
+    if ((a === "-s" || a === "--script") && /^(res:\/\/)?addons\/studio_tests\/sim\.gd$/.test(own[i + 1] ?? "")) {
+      i++;
+      what = "sims";
+      continue;
+    }
     if (/^[\w./:-]+\.tscn$/i.test(a) && !a.startsWith("-")) {
       what ??= "scene";
       continue;
@@ -453,6 +463,7 @@ function godotCommand(words: string[]): string | null {
   }
   if (what === "import") return "Godot : import du projet";
   if (what === "tests") return "Godot : tests du jeu (lanceur du studio)";
+  if (what === "sims") return "Godot : simulations d'équilibrage (lanceur du studio)";
   if (what === "scene" && (own.includes("--quit-after") || own.includes("--quit"))) return "Godot : la scène tourne quelques images, sans fenêtre";
   return null;
 }
