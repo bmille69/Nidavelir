@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ExecRequest, ExecResult, ExecutorPort } from "./port.ts";
 
 /**
- * Essai de Caveman (ADR-88) : un relais local (caveman-proxy) qui compresse ce que relit le Développeur
+ * Essai de Caveman (ADR-90) : un relais local (caveman-proxy) qui compresse ce que relit le Développeur
  * (journaux, sorties de tests, diffs). Éteint par défaut. Allumé, une part des chantiers seulement y passe,
  * pour comparer avec ceux restés en direct, et tout passage repart en direct si le relais ne répond pas.
  *
@@ -24,6 +24,11 @@ export type CavemanSettings = {
   port: number;
   /** caveman-proxy, ou null s'il n'est pas installé (`caveman setup --install`). */
   binary: string | null;
+  /**
+   * caveman-mcp : l'outil de relecture des passages compressés. Avec un abonnement Claude, le relais ne compresse
+   * que si l'agent l'a (sinon il transmet tel quel, constaté le 27/10/2026).
+   */
+  mcpBinary: string | null;
 };
 
 export type CavemanStatus = {
@@ -44,8 +49,10 @@ export function cavemanSettings(env: NodeJS.ProcessEnv = process.env): CavemanSe
   // Pas le 8787 de `caveman claude` : un relais lancé à la main, peut-être dans un autre mode, ne doit pas servir au hub.
   const p = Number(env.STUDIO_CAVEMAN_PORT);
   const port = Number.isInteger(p) && p > 0 && p < 65536 ? p : 8797;
-  const candidate = env.STUDIO_CAVEMAN_BIN ?? join(homedir(), ".caveman", "bin", process.platform === "win32" ? "caveman-proxy.exe" : "caveman-proxy");
-  return { mode, share, url: `http://127.0.0.1:${port}`, port, binary: existsSync(candidate) ? candidate : null };
+  const exe = (name: string) => join(homedir(), ".caveman", "bin", process.platform === "win32" ? `${name}.exe` : name);
+  const proxy = env.STUDIO_CAVEMAN_BIN ?? exe("caveman-proxy");
+  const mcp = exe("caveman-mcp");
+  return { mode, share, url: `http://127.0.0.1:${port}`, port, binary: existsSync(proxy) ? proxy : null, mcpBinary: existsSync(mcp) ? mcp : null };
 }
 
 /** Le même chantier prend toujours le même chemin : la comparaison se fait chantier par chantier. */
@@ -55,6 +62,10 @@ export function routeOf(taskId: string, share: number): Route {
   const h = createHash("sha1").update(taskId).digest().readUInt32BE(0) / 0x1_0000_0000;
   return h < share ? "caveman" : "direct";
 }
+
+/** Consigne ajoutée au Développeur routé en mode « compress » : les passages abrégés se relisent, ils ne mentent pas. */
+export const RELAY_NOTE =
+  "Le relais Caveman peut abréger ce que tu lis : un passage remplacé par « caveman: body elided » ou une marque <<ccr:…>> n'est pas le vrai contenu du fichier. Avant de citer ou de modifier ce passage, appelle l'outil mcp__caveman__caveman_retrieve avec cette marque pour obtenir l'original exact.";
 
 /** Une coupure du relais, pas une erreur du travail : le passage est refait en direct. */
 export function isRelayFailure(err: unknown): boolean {
@@ -112,8 +123,8 @@ export class CavemanRouter {
           ...process.env,
           CAVEMAN_MODE: this.settings.mode,
           CAVEMAN_LISTEN: `127.0.0.1:${this.settings.port}`,
-          // Pas d'outil de récupération chez le Développeur : le relais ne doit rien cacher derrière une marque à déplier.
-          CAVEMAN_RECOVERY: "",
+          // Le relais ne cache un passage derrière une marque que si le Développeur a l'outil pour le relire.
+          CAVEMAN_RECOVERY: this.settings.mcpBinary ? "mcp" : "",
           CAVEMAN_HOME: this.#home,
         },
       });
@@ -160,6 +171,12 @@ export class CavemanRouter {
     return false;
   }
 
+  /** L'outil de relecture donné au Développeur, branché sur le magasin du relais du hub. */
+  retrieveServer(): Record<string, { command: string; args: string[]; env: Record<string, string> }> {
+    const bin = this.settings.mcpBinary;
+    return bin ? { caveman: { command: bin, args: [], env: { CAVEMAN_HOME: this.#home } } } : {};
+  }
+
   stop(): void {
     this.#child?.kill();
     this.#child = null;
@@ -191,9 +208,22 @@ export class CavemanExecutor implements ExecutorPort {
     }
     req.onEvent("info", `Ce chantier passe par Caveman (mode ${this.#router.settings.mode}), pour l'essai de mesure.`);
     try {
-      return { ...(await this.#inner.run({ ...req, baseUrl: this.#router.settings.url })), route: "caveman" };
+      const retrieve = this.#router.retrieveServer();
+      const routed: ExecRequest = {
+        ...req,
+        baseUrl: this.#router.settings.url,
+        // Comme l'outil « jouer » du testeur : servi par la configuration MCP, permis outil par outil par le Gardien.
+        extraMcp: { ...req.extraMcp, ...retrieve },
+        // Sans cette consigne, un modèle qui lit un passage abrégé croit le fichier altéré (essai du 27/10/2026).
+        systemPrompt: this.#router.settings.mode === "compress" && retrieve.caveman ? `${req.systemPrompt}\n\n${RELAY_NOTE}` : req.systemPrompt,
+      };
+      return { ...(await this.#inner.run(routed)), route: "caveman" };
     } catch (err) {
-      if (req.signal.aborted || !isRelayFailure(err)) throw err;
+      if (req.signal.aborted || !isRelayFailure(err)) {
+        // Un échec passé par le relais compte pour le relais dans la comparaison.
+        if (err && typeof err === "object") (err as { route?: string }).route = "caveman";
+        throw err;
+      }
       req.onEvent("info", "Le relais Caveman a lâché : le passage est refait en direct.");
       return direct();
     }

@@ -6,11 +6,12 @@ import { Balance } from "./Balance.tsx";
 import { Bench } from "./Bench.tsx";
 import { Logbook } from "./Logbook.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
+import { SoundDirection } from "./SoundDirection.tsx";
 import { Bilan } from "./Bilan.tsx";
 import { Gallery } from "./Gallery.tsx";
 
 const LAST_PROJECT = "studio:last-project";
-type View = "production" | "galerie" | "bilan" | "journal" | "equilibrage" | "banc";
+type View = "production" | "galerie" | "son" | "bilan" | "journal" | "equilibrage" | "banc";
 const STAGE: Record<string, string> = { croquis: "Croquis", image: "Image", planche: "Planche 4 vues", tripo: "Tripo (3D)", atelier: "Atelier Blender", controle: "Contrôle" };
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const usd = (n: number) => `${n.toFixed(2).replace(".", ",")} $`;
@@ -81,6 +82,9 @@ export function Pilotage() {
             <button role="tab" aria-selected={view === "galerie"} className={view === "galerie" ? "on" : ""} onClick={() => setView("galerie")}>
               Galerie
             </button>
+            <button role="tab" aria-selected={view === "son"} className={view === "son" ? "on" : ""} onClick={() => setView("son")}>
+              Son
+            </button>
             <button role="tab" aria-selected={view === "bilan"} className={view === "bilan" ? "on" : ""} onClick={() => setView("bilan")}>
               Bilan
             </button>
@@ -119,7 +123,9 @@ function ProjectPilot({ slug, view }: { slug: string; view: View }) {
           ))}
         </section>
       )}
-      {view === "journal" ? (
+      {view === "son" ? (
+        <SoundDirection slug={slug} />
+      ) : view === "journal" ? (
         <Logbook slug={slug} />
       ) : view === "banc" ? (
         <Bench slug={slug} />

@@ -227,6 +227,26 @@ describe("poste de pilotage", () => {
     await page.locator(".logbook-text").waitFor();
     await page.screenshot({ path: join(shots, "pilot-14-journal.png"), fullPage: true });
 
+    // Le directeur sonore (ADR-91) : sans clé, le champ de la clé ; trois sons à des étapes différentes.
+    const snd = (id: string, name: string, kind: string, status: string, extra: Record<string, unknown> = {}) => ({ id, name, kind, usage: "à chaque tir d'une tourelle", prompt: "short gatling burst, electric crackle", seconds: kind === "musique" ? 60 : 0.6, loop: kind === "musique", status, takes: [], chosen: null, path: null, task: null, note: null, ...extra });
+    const repo = hub.projects.get(P).root;
+    mkdirSync(join(repo, "studio", "sound"), { recursive: true });
+    writeFileSync(
+      join(repo, "studio", "sound", "sounds.json"),
+      JSON.stringify({
+        sounds: [
+          snd("S-0001", "Tir de tourelle", "effet", "a_choisir", { takes: [{ file: "S-0001-1.mp3", at: "2026-10-27T10:00:00.000Z", bytes: 9000, credits: 48 }, { file: "S-0001-2.mp3", at: "2026-10-27T10:00:05.000Z", bytes: 9000, credits: 48 }], chosen: "S-0001-2.mp3" }),
+          snd("S-0002", "Thème du saloon", "musique", "integre", { path: "assets/audio/musique/theme_du_saloon.mp3", task: "T-0009" }),
+          snd("S-0003", "Clic de menu", "interface", "non_branche", { task: "T-0009", note: "copié dans le jeu, mais aucun script ni scène ne le joue" }),
+        ],
+      }),
+    );
+    await page.locator(".pilot-head .segmented button", { hasText: "Son" }).click();
+    await page.locator(".sound-card").first().waitFor();
+    expect(await page.locator(".sound-card").count()).toBe(3);
+    expect(await page.locator(".sound-key input[type=password]").count()).toBe(1);
+    await page.screenshot({ path: join(shots, "pilot-15-son.png"), fullPage: true });
+
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);

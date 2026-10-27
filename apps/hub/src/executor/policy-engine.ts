@@ -23,6 +23,9 @@ export const STUDIO_PLUGIN = "studio-skills";
 /** Outil « jouer » du relais MCP du studio, tel que Claude Code le nomme (ADR-69). */
 export const PLAY_TOOL = "mcp__studio__jouer";
 
+/** Relecture d'un passage compressé par le relais Caveman (ADR-90) : lecture seule, dans son magasin local. */
+export const CAVEMAN_RETRIEVE_TOOL = "mcp__caveman__caveman_retrieve";
+
 /** Outils intégrés que l'agent peut recevoir (vérifié : ADR-15). */
 export const TOOLS_BY_MODE: Record<RunMode, string[]> = {
   plan: ["Read", "Grep", "Glob", "Bash"],
@@ -187,6 +190,7 @@ export class PolicyEngine {
     if (tool === "StructuredOutput") return allow("rendu du résultat final");
     // La manette du testeur (ADR-69) : le hub ouvre lui-même le jeu de la copie ; aucune écriture, aucune autre adresse.
     if (tool === PLAY_TOOL) return this.#mode === "verify" ? allow("le testeur joue au jeu") : deny("seul le testeur joue au jeu");
+    if (tool === CAVEMAN_RETRIEVE_TOOL) return this.#mode === "verify" ? deny("le testeur ne passe pas par Caveman") : allow("relit un passage que le relais Caveman a compressé");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);
     if (WRITE_TOOLS.has(tool)) return this.#write(tool, input);
     if (tool === "Bash") return this.#bash(String(input.command ?? ""), cwd);

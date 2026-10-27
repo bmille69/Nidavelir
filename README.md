@@ -2,7 +2,7 @@
 
 Studio personnel de développement de jeux vidéo assisté par IA, pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**. Le hub (un processus Node local) fait travailler une équipe d'agents sur vos jeux, sous son contrôle : c'est lui qui applique les règles, pas les consignes données aux modèles.
 
-> État au 27/10/2026 : phases 1 et 2 de la [feuille de route](docs/ROADMAP.md) terminées, puis une soixantaine de décisions nées de l'usage réel (ADR-19 à ADR-80). Trois jeux pilotés (Survivor Destiny et Bordée en web, Néon Saloon sous Godot), 186 chantiers fusionnés. Le détail de chaque choix est dans [docs/DECISIONS.md](docs/DECISIONS.md).
+> État au 27/10/2026 : phases 1 et 2 de la [feuille de route](docs/ROADMAP.md) terminées, puis une soixantaine de décisions nées de l'usage réel (ADR-19 à ADR-80), et la phase 6 « le studio mesure le jeu » (ADR-81 à ADR-91). Trois jeux pilotés (Survivor Destiny et Bordée en web, Néon Saloon sous Godot), 186 chantiers fusionnés. Le détail de chaque choix est dans [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## L'équipe
 
@@ -13,9 +13,12 @@ Studio personnel de développement de jeux vidéo assisté par IA, pour **un seu
 | **Développeur** | Réalise un chantier dans une copie isolée (worktree Git) (ADR-04, 25, 26) | Claude Code filtré par le **Gardien** (hook + outil de permission) |
 | **Testeur** | Vérifie le chantier et **joue au jeu** (web dans Edge, ou le vrai Godot via un relais) avant de donner son avis (ADR-69, 73) | Lecture, commandes de test, outil « jouer » |
 | **Directeur artistique** | Visuels : images, planches, 3D Tripo + atelier Blender, intégration et bilan dans le jeu (ADR-43 à 71, 79, 80) | Ses outils seulement, crédits Tripo comptés et plafonnés |
+| **Directeur sonore** | Effets, ambiances et musiques : il propose, vous écoutez des essais ElevenLabs et choisissez, un chantier les branche, le hub vérifie qu'ils sont joués (ADR-91) | Proposition seulement ; génération sur votre clic |
 | **Archéologue** | Atelier de démontage de jeux du commerce (Godot, Unity) pour s'en inspirer (ADR-40, 42, 45) | Lecture seule |
 
 Autour d'eux : une file de chantiers fusionnés automatiquement en atelier (ADR-31), un poste de **Pilotage** (ADR-68), une page **Qualité** fondée sur des faits (ADR-27, 32), des **compétences** par agent (ADR-29, 78), le **téléphone** via Tailscale avec notifications (ADR-30), le **Jeu express** (ADR-44) et un **studio de modding** pour vos jeux Steam (ADR-65).
+
+Phase 6 (ADR-81 à 91) : plafond de coût par visuel, budget de performance Godot, contrôle des vitrines après fusion, vos parties rejouées comme tests, **équilibreur** par simulation, **banc d'essai** des agents, passe **game feel**, **journal de bord** (GIF de la semaine), **export** Windows local (`build/`), **directeur sonore**. Tout est dans Pilotage (onglets Son, Journal, Équilibrage, Banc d'essai).
 
 ## Lancer le studio
 
@@ -33,6 +36,7 @@ Variables facultatives :
 - modèles : `STUDIO_MODEL_CHAT`, `STUDIO_MODEL_STRUCTURED`, `STUDIO_MODEL_CONCEPT`, `STUDIO_MODEL_DEV`, `STUDIO_MODEL_DEV_BIG`, `STUDIO_MODEL_QA`, `STUDIO_MODEL_ART`, `STUDIO_MODEL_ARCHEOLOGUE` (ils se règlent aussi dans « Le studio en direct ») ;
 - 3D : `STUDIO_TRIPO_MODEL`, `STUDIO_TRIPO_MULTIVIEW_MODEL`, `STUDIO_TRIPO_MONTHLY_CREDITS` ; plafond par visuel `STUDIO_ART_ASSET_USD` (défaut 6) et `STUDIO_ART_ASSET_CREDITS` (défaut 250) ;
 - Godot : `STUDIO_GODOT` (l'exécutable), `STUDIO_PERF_MIN_FPS` (plancher du budget de performance, défaut 60). Les clés des services se saisissent dans l'interface.
+- Son : `STUDIO_ELEVENLABS_KEY` (sinon la clé saisie dans Pilotage → Son, gardée dans `.data/elevenlabs/`).
 
 ## Développement
 
@@ -53,6 +57,7 @@ npm run build && npm run test:e2e   # parcours dans Edge (headless) et le vrai G
 | `apps/hub/src/autonomy` | File de chantiers, fusion automatique, carnet « État du jeu » |
 | `apps/hub/src/quality` | Contrôles du hub (tests, lancement, photo), manette du testeur, tableau Qualité |
 | `apps/hub/src/godot` | Godot : outillage, socle d'un nouveau jeu, tests StudioTest, relais du testeur |
+| `apps/hub/src/sound` | Directeur sonore : ElevenLabs, essais, intégration et vérification |
 | `apps/hub/src/art` | Directeur artistique : images, Tripo, atelier Blender (`blender/workshop.py`), carnet Tripo, bilan |
 | `apps/hub/src/reverse`, `express`, `mods` | Atelier de démontage, Jeu express, studio de modding |
 | `apps/hub/src/skills`, `usage`, `remote` | Compétences des agents, compteur d'utilisation, téléphone et notifications |

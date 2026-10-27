@@ -121,20 +121,20 @@ Le hub reste son propre chef d'orchestre : il appelle Claude Code directement, r
 
 ---
 
-## Phase 6 : le studio mesure le jeu, pas seulement le code (ouverte le 27/10/2026)
+## Phase 6 : le studio mesure le jeu, pas seulement le code ✅ (27/10/2026)
 
-Idées retenues après l'audit du 27/10, dans l'ordre de réalisation. Chacune a son ADR.
+Idées retenues après l'audit du 27/10, toutes réalisées le jour même (ADR-82 à ADR-91, une par idée, dans cet ordre).
 
-1. Plafond de coût par visuel : le DA s'arrête et explique au lieu de boucler.
-2. Budget de performance Godot : le relais mesure, le hub refuse un chantier qui fait chuter le jeu.
-3. Comparaison visuelle des scènes vitrines après chaque fusion.
-4. Vos parties enregistrées puis rejouées comme tests de non-régression.
-5. Équilibreur par simulation : des centaines de parties sans écran, des courbes.
-6. Banc d'essai des agents : chantiers de référence rejoués à chaque changement de modèle ou de consignes.
-7. Passe « game feel » à la demande.
-8. Journal de bord : les fusions visibles en images, un résumé de la semaine.
-9. Export Godot local (`build/`), sans envoi.
-10. Directeur sonore (ElevenLabs) : effets et musique, intégrés et vérifiés comme les visuels.
+1. ✅ Plafond de coût par visuel : le DA s'arrête et explique au lieu de boucler.
+2. ✅ Budget de performance Godot : le relais mesure, le hub refuse un chantier qui fait chuter le jeu.
+3. ✅ Comparaison visuelle des scènes vitrines après chaque fusion.
+4. ✅ Vos parties enregistrées puis rejouées comme tests de non-régression.
+5. ✅ Équilibreur par simulation : des centaines de parties sans écran, des courbes.
+6. ✅ Banc d'essai des agents : chantiers de référence rejoués à chaque changement de modèle ou de consignes.
+7. ✅ Passe « game feel » à la demande.
+8. ✅ Journal de bord : les fusions visibles en images, un résumé de la semaine.
+9. ✅ Export Godot local (`build/`), sans envoi.
+10. ✅ Directeur sonore (ElevenLabs) : effets et musique, intégrés et vérifiés comme les visuels. Reste à l'essayer avec votre clé.
 
 ---
 

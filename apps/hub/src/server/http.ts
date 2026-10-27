@@ -32,11 +32,14 @@ import { BalanceError } from "../quality/balance.ts";
 import { BenchError } from "../quality/bench.ts";
 import { FeelError } from "../quality/feel.ts";
 import { ExportError } from "../godot/export-service.ts";
+import { SoundError } from "../sound/sound-service.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
 import { median, taskProgress, touchedFiles } from "../executor/progress.ts";
 import { PlayRequest } from "../quality/playtest.ts";
+import { routeReport } from "../quality/route-report.ts";
+import type { CavemanRouter } from "../executor/caveman.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -64,6 +67,11 @@ const Body = {
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
   artAside: z.object({ aside: z.boolean() }),
+  soundKey: z.object({ key: z.string().min(10).max(200) }),
+  soundPropose: z.object({ request: z.string().max(2000).optional() }),
+  soundEdit: z.object({ prompt: z.string().min(5).max(450).optional(), seconds: z.number().min(0.5).max(180).nullable().optional(), loop: z.boolean().optional(), usage: z.string().max(300).optional(), name: z.string().min(1).max(60).optional() }),
+  soundGenerate: z.object({ count: z.number().int().min(1).max(3).optional() }),
+  soundChoose: z.object({ file: z.string().regex(/^S-\d{4}-\d+\.mp3$/) }),
   feel: z.object({ moments: z.string().max(400).optional(), intensity: z.enum(["discret", "marque", "genereux"]).optional() }),
   benchCase: z.object({ task: z.string().regex(/^T-\d{4,}$/) }),
   balanceRun: z.object({ runs: z.number().int().min(10).max(2000).optional() }),
@@ -719,6 +727,43 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
     });
+    // Le directeur sonore (ADR-91).
+    api.get("/projects/:slug/sound", async (req) => hub.sound.state((req.params as { slug: string }).slug));
+    api.post("/sound/key", async (req) => {
+      await hub.sound.setKey(req.human!, Body.soundKey.parse(req.body).key);
+      return { ok: true };
+    });
+    api.post("/projects/:slug/sound/propose", async (req) => {
+      const { slug } = req.params as { slug: string };
+      hub.sound.propose(req.human!, slug, Body.soundPropose.parse(req.body).request ?? "");
+      return hub.sound.state(slug);
+    });
+    api.post("/projects/:slug/sound/integrate", async (req) => hub.sound.integrate(req.human!, (req.params as { slug: string }).slug));
+    api.patch("/projects/:slug/sound/:id", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.sound.edit(req.human!, slug, id, Body.soundEdit.parse(req.body));
+    });
+    api.delete("/projects/:slug/sound/:id", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      hub.sound.remove(req.human!, slug, id);
+      return { ok: true };
+    });
+    api.post("/projects/:slug/sound/:id/generate", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      hub.sound.generate(req.human!, slug, id, Body.soundGenerate.parse(req.body).count ?? 2);
+      return hub.sound.state(slug);
+    });
+    api.post("/projects/:slug/sound/:id/choose", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return hub.sound.choose(req.human!, slug, id, Body.soundChoose.parse(req.body).file);
+    });
+    api.get("/projects/:slug/sound/takes/:file", async (req, reply) => {
+      const { slug, file } = req.params as { slug: string; file: string };
+      hub.projects.get(slug);
+      const path = hub.sound.takeFile(slug, file);
+      if (!path) return reply.code(404).send({ error: "Essai introuvable" });
+      return reply.type("audio/mpeg").header("cache-control", "private, max-age=3600").send(readFileSync(path));
+    });
     // L'export local des jeux Godot (ADR-90) : jamais d'envoi.
     api.get("/projects/:slug/export", async (req) => hub.exports.state((req.params as { slug: string }).slug));
     api.post("/projects/:slug/export", async (req) => hub.exports.start(req.human!, (req.params as { slug: string }).slug));
@@ -896,7 +941,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError || err instanceof ExportError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError || err instanceof ExportError || err instanceof SoundError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

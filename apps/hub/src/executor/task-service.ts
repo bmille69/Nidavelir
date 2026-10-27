@@ -905,6 +905,8 @@ export class TaskService {
       let status: "done" | "failed" | "cancelled" = "done";
       let error: string | null = null;
       let cost: number | null = null;
+      let route: string | null = null;
+      let tokens: string | null = null;
       let outcome: RunOutcome | null = null;
       try {
         const runDir = join(this.#opts.dataDir, "runs", id);
@@ -935,13 +937,18 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           token,
           onEvent: (type, text) => this.#event(run, type, text),
           signal: run.abort.signal,
+          taskId: task.id,
         });
         cost = result.costUsd;
+        // Mesure par passage (ADR-90) : jetons réels rapportés par Claude Code et chemin pris.
+        route = result.route ?? "direct";
+        tokens = result.tokens ? JSON.stringify(result.tokens) : null;
         this.usage?.record({ project: task.project, agent: kind === "verify" ? "qa" : "developer", model: result.model ?? null, tokens: result.tokens ?? null, costUsd: cost, limits: result.limits });
         outcome = await spec.onResult(result);
         if (outcome.text) this.#event(run, "result", outcome.text);
       } catch (err) {
         status = run.abort.signal.aborted ? "cancelled" : "failed";
+        route = (err as { route?: string }).route ?? "direct";
         error = (err as Error).message.slice(0, 500);
         this.#event(run, "error", error);
         if (status === "failed") spec.onFailure(error);
@@ -950,8 +957,8 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
         // Partie laissée ouverte par le testeur : navigateur et serveur du jeu fermés.
         await this.playtest?.closeRun(id).catch(() => {});
         this.#db
-          .prepare("UPDATE runs SET status = ?, finished_at = ?, cost_usd = ?, error = ?, result_json = ? WHERE project = ? AND id = ?")
-          .run(status, this.#clock.now(), cost, error, outcome ? JSON.stringify(outcome) : null, task.project, id);
+          .prepare("UPDATE runs SET status = ?, finished_at = ?, cost_usd = ?, error = ?, result_json = ?, route = ?, tokens_json = ? WHERE project = ? AND id = ?")
+          .run(status, this.#clock.now(), cost, error, outcome ? JSON.stringify(outcome) : null, route, tokens, task.project, id);
         this.#active.delete(id);
         this.#finished.set(id, run.events);
         this.#log(task.project, `run.${status}`, task.id, { run: id, kind, cost_usd: cost, error });

@@ -223,6 +223,29 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** Le directeur sonore (ADR-91). */
+export type Sound = {
+  id: string;
+  name: string;
+  kind: "effet" | "musique" | "ambiance" | "interface";
+  usage: string;
+  prompt: string;
+  seconds: number | null;
+  loop: boolean;
+  status: "propose" | "a_choisir" | "choisi" | "en_integration" | "integre" | "non_branche";
+  takes: { file: string; at: string; bytes: number; credits: number | null }[];
+  chosen: string | null;
+  path: string | null;
+  task: string | null;
+  note: string | null;
+};
+export type SoundState = {
+  configured: boolean;
+  credits: { used: number; limit: number; tier: string; resetsAt: string | null } | null;
+  sounds: Sound[];
+  busy: { proposing: boolean; generating: string[] };
+  error: string | null;
+};
 /** L'export local des jeux Godot (ADR-90). */
 export type GameBuild = { id: string; exe: string; bytes: number; at: string; commit: string | null; seconds: number; smoke: { ok: boolean; detail: string } };
 export type ExportState = {
@@ -627,6 +650,15 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  sound: (slug: string) => request<SoundState>("GET", `/projects/${slug}/sound`),
+  soundKey: (key: string) => request<{ ok: boolean }>("POST", "/sound/key", { key }),
+  soundPropose: (slug: string, req: string) => request<SoundState>("POST", `/projects/${slug}/sound/propose`, { request: req }),
+  soundEdit: (slug: string, id: string, patch: Partial<Pick<Sound, "prompt" | "seconds" | "loop" | "usage" | "name">>) => request<Sound>("PATCH", `/projects/${slug}/sound/${id}`, patch),
+  soundRemove: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/projects/${slug}/sound/${id}`),
+  soundGenerate: (slug: string, id: string, count: number) => request<SoundState>("POST", `/projects/${slug}/sound/${id}/generate`, { count }),
+  soundChoose: (slug: string, id: string, file: string) => request<Sound>("POST", `/projects/${slug}/sound/${id}/choose`, { file }),
+  soundIntegrate: (slug: string) => request<{ task: { id: string }; after: string | null }>("POST", `/projects/${slug}/sound/integrate`, {}),
+  soundTake: (slug: string, file: string) => `/api/human/projects/${slug}/sound/takes/${file}`,
   exportState: (slug: string) => request<ExportState>("GET", `/projects/${slug}/export`),
   exportStart: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export`, {}),
   exportTemplates: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export/templates`, {}),

@@ -36,9 +36,24 @@ export type ExecRequest = {
   token: string;
   onEvent(type: RunEvent["type"], text: string): void;
   signal: AbortSignal;
+  /** Le chantier du run : l'essai Caveman (ADR-90) choisit son chemin chantier par chantier. */
+  taskId?: string;
+  /** Adresse de base de l'API pour ce run (relais Caveman, ADR-90). Absente : Anthropic en direct. */
+  baseUrl?: string;
+  /** Serveurs MCP ajoutés à celui du studio pour ce run (l'outil de relecture de Caveman, ADR-90). */
+  extraMcp?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
 };
 
-export type ExecResult = { structured: unknown; text: string; costUsd: number | null; tokens?: TokenUsage | null; limits?: RateLimits | null; model?: string | null };
+export type ExecResult = {
+  structured: unknown;
+  text: string;
+  costUsd: number | null;
+  tokens?: TokenUsage | null;
+  limits?: RateLimits | null;
+  model?: string | null;
+  /** Chemin réellement pris par le run (ADR-90). */
+  route?: "direct" | "caveman";
+};
 
 /** Exécuteur de tâches (docs/ARCHITECTURE.md §3.5). */
 export interface ExecutorPort {

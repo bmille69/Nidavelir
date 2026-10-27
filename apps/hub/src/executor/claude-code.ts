@@ -79,7 +79,12 @@ export class ClaudeCodeExecutor implements ExecutorPort {
     writeFileSync(
       mcp,
       JSON.stringify(
-        { mcpServers: { studio: { type: "stdio", command: node, args: [join(BRIDGE, "gate.mjs"), req.bridgeUrl], env: { STUDIO_RUN_TOKEN: req.token, ...(req.play ? { STUDIO_PLAY: "1" } : {}) } } } },
+        {
+          mcpServers: {
+            ...Object.fromEntries(Object.entries(req.extraMcp ?? {}).map(([name, s]) => [name, { type: "stdio", ...s }])),
+            studio: { type: "stdio", command: node, args: [join(BRIDGE, "gate.mjs"), req.bridgeUrl], env: { STUDIO_RUN_TOKEN: req.token, ...(req.play ? { STUDIO_PLAY: "1" } : {}) } },
+          },
+        },
         null,
         2,
       ),
@@ -94,7 +99,8 @@ export class ClaudeCodeExecutor implements ExecutorPort {
         cwd: req.cwd,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, STUDIO_RUN_TOKEN: req.token },
+        // Relais Caveman (ADR-90) : seulement l'adresse, aucun identifiant, l'abonnement reste celui de Claude Code.
+        env: { ...process.env, STUDIO_RUN_TOKEN: req.token, ...(req.baseUrl ? { ANTHROPIC_BASE_URL: req.baseUrl } : {}) },
       });
       let buffer = "";
       let stderr = "";

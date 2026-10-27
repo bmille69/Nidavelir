@@ -1823,3 +1823,17 @@ a.pilot-row-title:hover { color: var(--accent); }
 /* L'export local (ADR-90) */
 .pilot-export { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); align-items: flex-start; }
 .pilot-export .pilot-row { align-self: stretch; }
+
+/* Le directeur sonore (ADR-91) */
+.sound-key { display: flex; flex-direction: column; gap: var(--space-2); }
+.sound-key input { min-width: 280px; }
+.sound-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: var(--space-3); }
+.sound-card p { margin: 0; }
+.sound-card textarea { width: 100%; }
+.sound-takes { display: flex; flex-direction: column; gap: var(--space-2); }
+.sound-take { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-2); align-items: center; padding: 4px; border-radius: 8px; }
+.sound-take.on { background: var(--surface-2); outline: 1px solid var(--accent); }
+.sound-take audio { width: 100%; height: 32px; }
+.sound-status.integre { color: var(--ok, #3fb950); }
+.sound-status.non_branche { color: var(--warn); }
+.sound-status.choisi { color: var(--accent); }

@@ -1257,3 +1257,40 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - Pour de vrai : modèles Windows de Godot 4.6.2 installés depuis l'archive officielle (tailles conformes au sommaire). Néon Saloon (clone) exporté en 17 s, 108 Mo, et son essai passe.
   - `godot.e2e.ts` : un jeu qui écrit une erreur au démarrage est exporté, mais l'essai voit l'erreur. Réparé, il démarre sans erreur.
   - 276 tests au vert, typecheck, construction.
+
+## ADR-91 — Le directeur sonore : des sons proposés, écoutés, choisis, branchés par un chantier, vérifiés après la fusion
+
+- **Contexte** : idée n°10 de la phase 6. Les jeux du studio n'avaient pas de son, ou des sons synthétisés à la volée. Vous avez choisi ElevenLabs, avec votre clé. Les visuels ont déjà leur chaîne (le DA, des essais, votre choix, l'intégration par un chantier, le bilan) ; le son suit le même chemin, sans les boucles automatiques : chaque essai coûte des crédits ElevenLabs.
+- **Décision** :
+  - **Pilotage → Son**.
+    - Sans clé : un champ masqué pour la coller. Elle est vérifiée auprès d'ElevenLabs (`/v1/user/subscription`), puis gardée dans `.data/elevenlabs/key.json`, ou lue dans `STUDIO_ELEVENLABS_KEY`. Elle n'est écrite ni dans le jeu ni dans le journal.
+    - Avec la clé : les crédits utilisés sur le total, et la date de remise à zéro.
+  - **Proposer** : « Demander des sons ». Le directeur sonore lit la bible et l'état du jeu, plus les sons déjà prévus. Il propose au plus 12 sons, chacun avec :
+    - un nom en français et un genre : effet, interface, ambiance ou musique ;
+    - le moment où le joueur l'entend ;
+    - une description pour le générateur, en anglais ;
+    - une durée, et s'il tourne en boucle.
+
+    Vous pouvez retoucher la description avant de générer. La liste est versionnée dans le jeu (`studio/sound/sounds.json`).
+  - **Écouter** : « Générer deux essais », sur votre clic seulement. Les effets passent par `/v1/sound-generation` (durée, boucle, influence du texte 0,5), la musique par `/v1/music` (instrumentale, 10 s à 5 min).
+    - Une génération à la fois, pour savoir ce que chaque essai a coûté : les crédits sont lus avant et après.
+    - Les essais restent dans les données du hub. Le jeu ne reçoit que le son choisi.
+  - **Choisir puis intégrer** : « Intégrer les sons » copie les sons choisis dans le jeu (`assets/audio/<genre>/` pour Godot, `public/audio/<genre>/` pour le web), les commite, puis lance un chantier « S-0001, S-0002 : brancher… ». Sa consigne :
+    - un seul point d'entrée, l'autoload `Sound` ou `src/sound.ts` ;
+    - des lecteurs réutilisés, des bus « SFX » et « Musique », et les volumes dans un fichier ;
+    - musique et ambiances en boucle, avec un fondu ;
+    - une légère variation de hauteur pour les sons fréquents ;
+    - les points d'accroche laissés par la passe game feel (ADR-88) ;
+    - aucune règle du jeu touchée.
+  - **Vérifier** : après la fusion de ce chantier, le hub cherche dans les scripts et les scènes du jeu (hors `studio/`, outils du hub et exports) si chaque son est appelé. S'il l'est, il est « dans le jeu, joué ». Sinon, il est « copié, jamais joué », comme un visuel intégré que le jeu ne charge pas (ADR-71). Un son dans ce cas repart dans un nouveau chantier au prochain « Intégrer », sans être recopié.
+- **Vérifié** :
+  - `sound.test.ts` (ElevenLabs simulé) :
+    - une clé mal formée est refusée ; une clé refusée par ElevenLabs n'est pas gardée ; une clé acceptée l'est ;
+    - les crédits sont lus ;
+    - l'adresse, l'en-tête `xi-api-key` et le corps exacts des appels effet et musique sont vérifiés ; une limite atteinte est dite ;
+    - parcours complet : liste proposée à partir de la bible, retouche, rien sans clé, essais et leurs crédits, essai introuvable refusé, aucun essai dans le jeu, intégration par un vrai chantier fusionné ;
+    - le son branché est « joué », la musique oubliée est « jamais jouée », puis rebranchée par un second chantier ;
+    - la clé n'apparaît ni dans le jeu ni dans le journal.
+  - `pilotage.e2e.ts` : onglet Son sans clé, trois sons à des étapes différentes (capture examinée).
+  - 278 tests au vert, typecheck, construction de l'interface.
+  - Pas encore essayé avec le vrai service : il faut votre clé ElevenLabs. À la première génération, vérifier qu'un essai s'écoute et que le coût en crédits correspond à votre compte.

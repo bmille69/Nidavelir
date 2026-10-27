@@ -457,6 +457,11 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project, week)
   );
   `,
+  `
+  -- ADR-90 : chaque passage d'un agent garde ses jetons réels et son chemin (direct ou relais Caveman), pour comparer.
+  ALTER TABLE runs ADD COLUMN route TEXT;
+  ALTER TABLE runs ADD COLUMN tokens_json TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): Db {

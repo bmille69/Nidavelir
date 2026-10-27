@@ -40,6 +40,8 @@ import { BenchService } from "./quality/bench.ts";
 import { FeelService } from "./quality/feel.ts";
 import { LogbookService } from "./journal/logbook.ts";
 import { ExportService } from "./godot/export-service.ts";
+import { ElevenLabs, type SoundGenPort } from "./sound/elevenlabs.ts";
+import { SoundService } from "./sound/sound-service.ts";
 import { GameStateService } from "./autonomy/game-state.ts";
 import { ConceptionService } from "./conception/conception-service.ts";
 import { PlaytestService, type PlayDriver } from "./quality/playtest.ts";
@@ -85,6 +87,8 @@ export type HubOptions = {
   imagegen?: ImageGenPort;
   /** Atelier 3D du Directeur artistique : Tripo et Blender (ADR-47). Défaut : les vrais, sur votre clic et votre clé. */
   model3d?: Model3DPort;
+  /** Générateur de sons du directeur sonore (ElevenLabs par défaut, ADR-91). */
+  soundGen?: SoundGenPort;
   /** Téléchargement des références web du Directeur artistique (ADR-58). Défaut : le vrai, adresses publiques seulement. */
   webRefs?: WebRefsPort;
   /** Test du Jeu express dans un navigateur (ADR-44). Défaut : le vrai si les vérifications sont actives, sinon aucun test. */
@@ -132,6 +136,8 @@ export type Hub = {
   logbook: LogbookService;
   /** L'export local des jeux Godot (ADR-90). */
   exports: ExportService;
+  /** Le directeur sonore (ADR-91). */
+  sound: SoundService;
   gameState: GameStateService;
   conceptions: ConceptionService;
   skills: SkillService;
@@ -339,6 +345,13 @@ export function createHub(options: HubOptions): Hub {
     artHook?.(task);
     art.onTaskStatus(task);
   };
+  // Le directeur sonore (ADR-91) : après la fusion du chantier qui branche des sons, le hub vérifie qu'ils sont joués.
+  const sound = new SoundService({ projects, tasks, conversations, orchestrator, vcs, journal, clock, gen: options.soundGen ?? new ElevenLabs(dataDir), dataDir });
+  const soundHook = tasks.onStatus;
+  tasks.onStatus = (task) => {
+    soundHook?.(task);
+    sound.onTaskStatus(task);
+  };
   // Le Jeu express (ADR-44) : de l'idée à un jeu jouable en quelques minutes.
   const express = new ExpressService({
     db,
@@ -413,6 +426,7 @@ export function createHub(options: HubOptions): Hub {
     feel,
     logbook,
     exports,
+    sound,
     quality,
     checks,
     gameState,
