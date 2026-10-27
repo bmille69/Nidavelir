@@ -26,6 +26,8 @@ const PATHS = {
   upload: "M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
   cube: "M12 2 3 7v10l9 5 9-5V7zm0 0v0M3 7l9 5 9-5M12 12v10",
   copy: "M9 9h10v12H9zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9 3-4.2-4.2",
+  motion: "M3 12h3m3 0h3m3 0h6M14 7l5 5-5 5",
 } as const;
 
 export type IconName = keyof typeof PATHS;

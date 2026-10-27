@@ -54,7 +54,15 @@
   --accent-text: #04121a;
   --accent-soft: rgba(0, 229, 255, 0.12);
   --ember-soft: rgba(255, 90, 0, 0.12);
-  --grad: linear-gradient(#00e5ff, #00e5ff);
+  /* Refonte « Obsidienne » (ADR-93) : le bouton principal a du relief, une glace polie plutôt qu'un aplat. */
+  --grad: linear-gradient(180deg, #4ff0ff 0%, #00d6f0 55%, #00bcd6 100%);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --hairline: rgba(255, 255, 255, 0.065);
+  --hairline-strong: rgba(255, 255, 255, 0.11);
+  --lift: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -16px rgba(0, 0, 0, 0.7);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, 0.35), 0 22px 48px -20px rgba(0, 0, 0, 0.8);
+  --plate: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.008) 70%), #0d121b;
   --grad-text: linear-gradient(#ecedf0, #ecedf0);
   --grad-brand: linear-gradient(90deg, #00e5ff, #ff5a00);
   --grad-brand-soft: linear-gradient(90deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1));
@@ -192,14 +200,15 @@ button {
   border-radius: 11px;
   padding: 0.52rem 1.05rem;
   cursor: pointer;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 6px 20px rgba(0, 229, 255, 0.13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 0 rgba(0, 60, 80, 0.35), 0 0 0 1px rgba(0, 229, 255, 0.35), 0 8px 22px -10px rgba(0, 229, 255, 0.6);
   font-family: var(--font-display);
   letter-spacing: 0.01em;
-  transition: transform 0.14s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease, color 0.15s ease, opacity 0.15s ease;
+  transition: transform 0.16s var(--ease), box-shadow 0.22s var(--ease), background 0.2s ease, border-color 0.2s ease, color 0.15s ease, opacity 0.15s ease, filter 0.2s ease;
 }
 button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 0 0 1px rgba(0, 229, 255, 0.3), 0 10px 32px rgba(0, 229, 255, 0.2);
+  filter: brightness(1.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 0 rgba(0, 60, 80, 0.35), 0 0 0 1px rgba(0, 229, 255, 0.55), 0 12px 30px -10px rgba(0, 229, 255, 0.75);
 }
 button:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 button.secondary {

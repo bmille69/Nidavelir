@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { navigate } from "../App.tsx";
 import { api, slugify, type TaskRow } from "../api.ts";
 import { AgentAvatar } from "./AgentAvatar.tsx";
@@ -67,6 +67,26 @@ export function Home() {
     .filter((x) => x.d)
     .slice(0, 7);
 
+  const createBox = creating && (
+    <div className="create-box">
+      <label>
+        Nom du jeu
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ombres du Nord" autoFocus />
+      </label>
+      {name.trim() && (
+        <p className="muted small">
+          Dossier créé : <code>{slugify(name)}</code> dans la racine des jeux, avec un dépôt Git et un dossier <code>studio/</code>.
+        </p>
+      )}
+      <button disabled={!name.trim() || busy} onClick={create}>
+        {busy ? "Création…" : "Créer le projet"}
+      </button>
+    </div>
+  );
+  const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
+
+  // Mise en page ADR-94 : un en-tête court, les raccourcis de création juste dessous, puis deux colonnes :
+  // ce qui vous attend et vos jeux à gauche, ce qui vient de se passer à droite.
   return (
     <main className="studio-page home">
       <header className="home-hero">
@@ -82,14 +102,11 @@ export function Home() {
               : "Rien ne vous attend. "}
             {team.length > 0 ? `${team.length} agent${team.length > 1 ? "s" : ""} au travail.` : "L'équipe est au repos."}
           </p>
-          <p className="brand-flow" aria-hidden="true">
-            <b>Idées</b> <i>›</i> <b>Outils</b> <i>›</i> <b>Jeux</b>
-          </p>
         </div>
         <a className={`team-live ${team.length ? "on" : ""}`} href="#/direct" title="Voir le studio en direct">
           <span className="team-faces">
             {(team.length ? team : snap.agents.filter((a) => a.id !== "you").slice(0, 4)).slice(0, 5).map((a) => (
-              <AgentAvatar key={a.id} agent={a.id} state={a.state} size={40} />
+              <AgentAvatar key={a.id} agent={a.id} state={a.state} size={32} />
             ))}
           </span>
           <span className="team-live-text">
@@ -101,167 +118,162 @@ export function Home() {
         </a>
       </header>
 
-      {forYou.length > 0 && (
-        <section className="attention">
-          <h2>
-            <Icon name="bell" size={18} /> Pour vous
-          </h2>
-          <div className="attention-list">
-            {forYou.map((a, k) => (
-              <a key={k} href={a.href} className="attention-card">
-                <span className="attention-project">{names.get(a.project) ?? (a.project || "Studio")}</span>
-                <strong>{a.text}</strong>
-                {a.detail && <span className="muted small">{a.detail}</span>}
-                <span className="attention-go">
-                  Ouvrir <Icon name="arrow" size={14} />
-                </span>
-              </a>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section>
-        <div className="section-head">
-          <h2>Vos projets</h2>
-        </div>
-        {snap.projects.length === 0 && (
-          <div className="empty-state">
-            <p>Aucun projet pour l'instant.</p>
-            <p className="muted">Concevez un nouveau jeu avec le Concepteur, ou importez un jeu existant.</p>
-          </div>
-        )}
-        <div className="project-grid">
-          {snap.projects.map((p) => {
-            const list = tasks[p.slug] ?? [];
-            const merged = list.filter((t) => t.status === "merged");
-            const latest = [...list].filter((t) => t.status === "merged" || t.status === "review").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1))[0];
-            const running = list.find((t) => ["running", "approved", "planning"].includes(t.status));
-            return (
-              <article key={p.slug} className={`project-tile ${p.busy ? "busy" : ""}`}>
-                <a className="tile-cover" data-engine={p.engine} href={`#/p/${p.slug}`} aria-hidden="true" tabIndex={-1}>
-                  <span className="tile-initial">{p.name.slice(0, 1).toUpperCase()}</span>
-                  <TileImage slug={p.slug} shot={latestShot(p.slug, list)} />
-                  {p.busy && (
-                    <span className="tile-live">
-                      <span className="live-dot" /> au travail
-                    </span>
-                  )}
-                  {p.waiting > 0 && <span className="tile-wait">{p.waiting} pour vous</span>}
-                </a>
-                <div className="tile-body">
-                  <div className="tile-title">
-                    <h3>
-                      <a href={`#/p/${p.slug}`}>{p.name}</a>
-                    </h3>
-                    <span className="badge">{AUTONOMY[p.autonomy].label}</span>
-                  </div>
-                  <p className="muted small">
-                    {running ? `En cours : ${running.title}` : latest ? `Dernier chantier : ${latest.title}` : ENGINE[p.engine]}
-                  </p>
-                  <div className="tile-stats">
-                    <span>
-                      <b>{merged.length}</b> chantier(s) fusionné(s)
-                    </span>
-                    {p.decisions > 0 && (
-                      <span>
-                        <b>{p.decisions}</b> décisions
-                      </span>
-                    )}
-                    {p.proposals > 0 && (
-                      <span>
-                        <b>{p.proposals}</b> propositions
-                      </span>
-                    )}
-                    <span>
-                      <b>{p.tasks}</b> tâches
-                    </span>
-                  </div>
-                  <div className="tile-actions">
-                    <a href={`#/p/${p.slug}`}>
-                      <Icon name="chat" size={16} /> Discuter
-                    </a>
-                    <a href={`#/p/${p.slug}/tasks`}>
-                      <Icon name="hammer" size={16} /> Chantiers
-                    </a>
-                    <a href={`#/p/${p.slug}/vision`}>
-                      <Icon name="book" size={16} /> Le jeu
-                    </a>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section>
+      <section className="home-create" aria-label="Créer">
         <div className="section-head">
           <h2>Créer</h2>
+          <button className="link small palette-hint" onClick={() => window.dispatchEvent(new Event("studio:palette"))}>
+            ou <kbd>Ctrl K</kbd> pour aller partout
+          </button>
         </div>
         <div className="create-grid">
-          <a className="create-tile express" href="#/express">
-            <Icon name="bolt" size={26} />
+          <a className="create-tile express" href="#/express" style={stagger(0)}>
+            <Icon name="bolt" size={20} />
             <strong>Jeu express</strong>
             <span className="muted small">Une idée, quelques minutes : un jeu jouable tout de suite. Pour essayer une idée ou faire une démonstration.</span>
           </a>
-          <a className="create-tile concept" href="#/concevoir">
-            <Icon name="sparkle" size={26} />
+          <a className="create-tile concept" href="#/concevoir" style={stagger(1)}>
+            <Icon name="sparkle" size={20} />
             <strong>Concevoir un nouveau jeu</strong>
             <span className="muted small">Le Concepteur part de votre idée, pose les bonnes questions et prépare les premiers chantiers.</span>
           </a>
-          <button className="create-tile" onClick={() => navigate({ page: "import" })}>
-            <Icon name="download" size={26} />
+          <button className="create-tile" onClick={() => navigate({ page: "import" })} style={stagger(2)}>
+            <Icon name="download" size={20} />
             <strong>Importer un projet existant</strong>
             <span className="muted small">Un jeu déjà commencé dans un dossier : le studio lit ses documents et son code.</span>
           </button>
-          <button className={`create-tile ${creating ? "on" : ""}`} onClick={() => setCreating((c) => !c)}>
-            <Icon name="folder" size={26} />
+          <button className={`create-tile ${creating ? "on" : ""}`} onClick={() => setCreating((c) => !c)} style={stagger(3)}>
+            <Icon name="folder" size={20} />
             <strong>Nouveau projet vide</strong>
             <span className="muted small">Un dossier, un dépôt Git et c'est parti, sans conception.</span>
           </button>
         </div>
-        {creating && (
-          <div className="create-box">
-            <label>
-              Nom du jeu
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ombres du Nord" autoFocus />
-            </label>
-            {name.trim() && (
-              <p className="muted small">
-                Dossier créé : <code>{slugify(name)}</code> dans la racine des jeux, avec un dépôt Git et un dossier <code>studio/</code>.
-              </p>
-            )}
-            <button disabled={!name.trim() || busy} onClick={create}>
-              {busy ? "Création…" : "Créer le projet"}
-            </button>
-          </div>
-        )}
+        {createBox}
         {error && <p className="error">{error}</p>}
       </section>
 
-      <section className="panel-card feed">
-        <div className="section-head">
-          <h2>Ce qui vient de se passer</h2>
-          <a href="#/direct" className="small">
-            Tout le journal en direct <Icon name="arrow" size={14} />
-          </a>
-        </div>
-        {events.length === 0 && <p className="muted small">Rien pour l'instant. Les actions de l'équipe apparaîtront ici.</p>}
-        <ol className="feed-list">
-          {events.map(({ e, d }) => (
-            <li key={e.seq} className={d!.tone ? `tone-${d!.tone}` : ""}>
-              <span className={`feed-dot agent-${d!.agent}`} />
-              <div>
-                <p>{d!.text}</p>
-                <span className="muted small">
-                  {names.get(e.project ?? "") ?? e.project} · {ago(e.at, now)}
-                </span>
+      <div className="home-grid">
+        <div className="home-main">
+          {forYou.length > 0 && (
+            <section className="attention">
+              <h2>
+                <Icon name="bell" size={16} /> Pour vous
+              </h2>
+              <div className="attention-list">
+                {forYou.map((a, k) => (
+                  <a key={k} href={a.href} className="attention-card" style={stagger(k)}>
+                    <span className="attention-project">{names.get(a.project) ?? (a.project || "Studio")}</span>
+                    <strong>{a.text}</strong>
+                    {a.detail && <span className="muted small">{a.detail}</span>}
+                    <span className="attention-go">
+                      Ouvrir <Icon name="arrow" size={14} />
+                    </span>
+                  </a>
+                ))}
               </div>
-            </li>
-          ))}
-        </ol>
-      </section>
+            </section>
+          )}
+
+          <section>
+            <div className="section-head">
+              <h2>Vos projets</h2>
+              <span className="muted small">{snap.projects.length} jeu{snap.projects.length > 1 ? "x" : ""}</span>
+            </div>
+            {snap.projects.length === 0 && (
+              <div className="empty-state">
+                <p>Aucun projet pour l'instant.</p>
+                <p className="muted">Concevez un nouveau jeu avec le Concepteur, ou importez un jeu existant.</p>
+              </div>
+            )}
+            <div className="project-grid">
+              {snap.projects.map((p, k) => {
+                const list = tasks[p.slug] ?? [];
+                const merged = list.filter((t) => t.status === "merged");
+                const latest = [...list].filter((t) => t.status === "merged" || t.status === "review").sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1))[0];
+                const running = list.find((t) => ["running", "approved", "planning"].includes(t.status));
+                return (
+                  <article key={p.slug} className={`project-tile ${p.busy ? "busy" : ""}`} style={stagger(k)}>
+                    <a className="tile-cover" data-engine={p.engine} href={`#/p/${p.slug}`} aria-hidden="true" tabIndex={-1}>
+                      <span className="tile-initial">{p.name.slice(0, 1).toUpperCase()}</span>
+                      <TileImage slug={p.slug} shot={latestShot(p.slug, list)} />
+                      {p.busy && (
+                        <span className="tile-live">
+                          <span className="live-dot" /> au travail
+                        </span>
+                      )}
+                      {p.waiting > 0 && <span className="tile-wait">{p.waiting} pour vous</span>}
+                    </a>
+                    <div className="tile-body">
+                      <div className="tile-title">
+                        <h3>
+                          <a href={`#/p/${p.slug}`}>{p.name}</a>
+                        </h3>
+                        <span className="badge">{AUTONOMY[p.autonomy].label}</span>
+                      </div>
+                      <p className="muted small">
+                        {running ? `En cours : ${running.title}` : latest ? `Dernier chantier : ${latest.title}` : ENGINE[p.engine]}
+                      </p>
+                      <div className="tile-stats">
+                        <span>
+                          <b>{merged.length}</b> chantier(s) fusionné(s)
+                        </span>
+                        {p.decisions > 0 && (
+                          <span>
+                            <b>{p.decisions}</b> décisions
+                          </span>
+                        )}
+                        {p.proposals > 0 && (
+                          <span>
+                            <b>{p.proposals}</b> propositions
+                          </span>
+                        )}
+                        <span>
+                          <b>{p.tasks}</b> tâches
+                        </span>
+                      </div>
+                      <div className="tile-actions">
+                        <a href={`#/p/${p.slug}`}>
+                          <Icon name="chat" size={15} /> Discuter
+                        </a>
+                        <a href={`#/p/${p.slug}/tasks`}>
+                          <Icon name="hammer" size={15} /> Chantiers
+                        </a>
+                        <a href={`#/p/${p.slug}/vision`}>
+                          <Icon name="book" size={15} /> Le jeu
+                        </a>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        <aside className="home-side">
+          <section className="panel-card feed">
+            <div className="section-head">
+              <h2>Ce qui vient de se passer</h2>
+              <a href="#/direct" className="small">
+                Tout voir <Icon name="arrow" size={14} />
+              </a>
+            </div>
+            {events.length === 0 && <p className="muted small">Rien pour l'instant. Les actions de l'équipe apparaîtront ici.</p>}
+            <ol className="feed-list">
+              {events.map(({ e, d }, k) => (
+                <li key={e.seq} className={d!.tone ? `tone-${d!.tone}` : ""} style={stagger(k)}>
+                  <span className={`feed-dot agent-${d!.agent}`} />
+                  <div>
+                    <p>{d!.text}</p>
+                    <span className="muted small">
+                      {names.get(e.project ?? "") ?? e.project} · {ago(e.at, now)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </aside>
+      </div>
     </main>
   );
 }

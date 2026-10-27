@@ -1837,3 +1837,243 @@ a.pilot-row-title:hover { color: var(--accent); }
 .sound-status.integre { color: var(--ok, #3fb950); }
 .sound-status.non_branche { color: var(--warn); }
 .sound-status.choisi { color: var(--accent); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Refonte « Obsidienne » (ADR-93) : la forge de la DA, en plus précis.
+   Des plaques d'obsidienne (dégradé de lumière à peine perceptible, un liseré clair en haut, une ombre longue),
+   des filets nets, une seule lueur par écran sur ce qui est actif, des mouvements courts et amortis.
+   Rien ne change de place : les mêmes boutons au même endroit, seulement mieux finis.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Lettres : des titres serrés, des chiffres alignés ── */
+h1, .studio-hero h1, .home-hero h1, .live-hero h1 { letter-spacing: -0.02em; }
+h2, h3 { letter-spacing: -0.01em; }
+.stat b, .kpi b, .mon-value, .count, .qtable td, .meter-head b, .big { font-variant-numeric: tabular-nums; }
+.eyebrow, .side-title, .mon-label, .qtable th, .threads h2 { letter-spacing: 0.16em; }
+
+/* ── Les plaques : toutes les surfaces de premier niveau partagent la même matière ── */
+.card,
+.panel-card,
+.stat,
+.project-tile,
+.art-asset,
+.art-gen,
+.create-tile,
+.escalation,
+.batch-bar,
+.team-live,
+.monitor {
+  background: var(--plate);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--lift), var(--elev-1);
+}
+.card, .panel-card, .project-tile, .art-asset, .create-tile { border-radius: 16px; }
+.panel-card, .card { transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease); }
+/* Les plaques posées dans une plaque restent plates : une seule profondeur à la fois. */
+.card .card, .panel-card .panel-card, .card .panel-card, .panel-card .card, .art-asset .art-gen, .panel-card .art-gen {
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: none;
+}
+.item, .verdict, .notice, .sources li, .filters, .art-progress, .viewer-verdict {
+  background: rgba(255, 255, 255, 0.022);
+  border-color: var(--hairline);
+}
+.escalation { border-color: rgba(255, 90, 0, 0.35); background: linear-gradient(160deg, rgba(255, 90, 0, 0.08), transparent 55%), var(--plate); }
+
+/* ── Survols : ce qui se clique se soulève, tout le reste reste immobile ── */
+.project-tile, .create-tile, .art-asset, .team-live { transition: transform 0.28s var(--ease), border-color 0.25s var(--ease), box-shadow 0.28s var(--ease); }
+.project-tile:hover, .create-tile:hover:not(:disabled) { transform: translateY(-3px); border-color: var(--hairline-strong); box-shadow: var(--lift), var(--elev-2); }
+
+/* ── Boutons ── */
+button { min-height: 36px; border-radius: 10px; }
+button.small { min-height: 28px; border-radius: 8px; }
+button.link, .tab, .viewer-nav, .viewer-close, .art-chip .icon-btn, .viewer-thumbs button, .art-vignette, .rate { min-height: 0; }
+button.secondary, .chip, .icon-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border-color: var(--hairline-strong);
+  box-shadow: var(--lift);
+}
+button.secondary:hover:not(:disabled), .chip:hover:not(:disabled), .icon-btn:hover:not(:disabled) {
+  border-color: rgba(0, 229, 255, 0.4);
+  background: linear-gradient(180deg, rgba(0, 229, 255, 0.1), rgba(0, 229, 255, 0.04));
+  color: var(--text);
+  box-shadow: var(--lift);
+  filter: none;
+}
+.chip.on { background: linear-gradient(180deg, rgba(0, 229, 255, 0.16), rgba(0, 229, 255, 0.06)); border-color: rgba(0, 229, 255, 0.6); color: var(--text); box-shadow: var(--lift), 0 0 16px -4px rgba(0, 229, 255, 0.45); }
+button.danger { background: linear-gradient(180deg, rgba(229, 138, 143, 0.08), rgba(229, 138, 143, 0.03)); }
+/* « Essayer » : ce qui vous attend, donc la braise (le vert reste réservé au validé). */
+.try-btn {
+  background: linear-gradient(180deg, #ff8a4c 0%, #ff5a00 60%, #e84f00 100%);
+  color: #1a0700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(255, 90, 0, 0.45), 0 8px 22px -10px rgba(255, 90, 0, 0.7);
+}
+.try-btn:hover:not(:disabled) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(255, 122, 51, 0.7), 0 12px 30px -10px rgba(255, 90, 0, 0.85); }
+/* Le bouton flottant « à vous » : la braise, comme tout ce qui vous attend. */
+.for-you.floating .for-you-btn {
+  background: linear-gradient(180deg, #ff8a4c, #ff5a00);
+  color: #1a0700;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 0 1px rgba(255, 90, 0, 0.5), 0 14px 34px -10px rgba(255, 90, 0, 0.75);
+}
+
+/* ── Champs ── */
+input, textarea, select { background: rgba(5, 8, 13, 0.7); border-color: var(--hairline-strong); border-radius: 10px; }
+input:hover, textarea:hover, select:hover { border-color: rgba(255, 255, 255, 0.18); }
+input:focus, textarea:focus, select:focus { border-color: rgba(0, 229, 255, 0.7); box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.14); }
+:focus-visible { outline: 2px solid rgba(0, 229, 255, 0.85); outline-offset: 2px; border-radius: 6px; }
+
+/* ── Pastilles ── */
+.badge { border-color: var(--hairline-strong); background: rgba(255, 255, 255, 0.04); font-weight: 600; letter-spacing: 0.01em; }
+.badge.warn, .status-warn { background: rgba(255, 90, 0, 0.12); border-color: rgba(255, 90, 0, 0.35); }
+.count.warn { background: linear-gradient(180deg, #ff7a33, #ff5a00); color: #1a0700; box-shadow: 0 0 0 2px rgba(255, 90, 0, 0.18), 0 0 14px rgba(255, 90, 0, 0.35); }
+
+/* ── Menu latéral : plus dense, plus net, le jeu actif bien visible ── */
+.sidebar {
+  background:
+    linear-gradient(180deg, rgba(0, 229, 255, 0.05), transparent 200px),
+    linear-gradient(0deg, rgba(255, 90, 0, 0.04), transparent 220px),
+    #070a10;
+  border-right: 1px solid transparent;
+  border-image: linear-gradient(180deg, rgba(0, 229, 255, 0.22), rgba(255, 255, 255, 0.05) 30%, rgba(255, 255, 255, 0.05) 70%, rgba(255, 90, 0, 0.18)) 1;
+  padding: 1.05rem 0.75rem 0.85rem;
+}
+.side-nav a, .side-projects a { padding: 0.44rem 0.6rem; border-radius: 10px; font-weight: 500; transition: background 0.18s var(--ease), color 0.18s var(--ease); }
+.side-nav a.active, .side-projects a.active {
+  background: linear-gradient(90deg, rgba(0, 229, 255, 0.13), rgba(0, 229, 255, 0.025) 80%);
+  box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.14), var(--lift);
+}
+.side-nav a.active::before, .side-projects a.active::before { left: -0.75rem; width: 3px; box-shadow: 0 0 12px rgba(0, 229, 255, 0.6); }
+.side-title { margin: 1rem 0.6rem 0.3rem; font-size: 0.58rem; color: rgba(128, 133, 143, 0.85); }
+/* « Créer » : des raccourcis, plus discrets que la navigation. */
+.side-create a { padding: 0.32rem 0.6rem; font-size: 0.88rem; color: var(--muted); }
+.side-create a .nav-icon { width: 17px; height: 17px; }
+.side-create a:hover { color: var(--text); }
+.proj-initial { border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.06); font-family: var(--font-title); }
+.usage { margin: 0.2rem 0 0; padding: 0.65rem 0.7rem 0.6rem; border-radius: 12px; border: 1px solid var(--hairline); background: rgba(255, 255, 255, 0.02); }
+.side-foot { border-top-color: var(--hairline); font-size: 0.7rem; opacity: 0.75; }
+
+/* ── En-tête de projet ── */
+.project-head { padding-top: 1.1rem; }
+.project-title h1 { font-family: var(--font-title); font-size: 1.5rem; letter-spacing: -0.02em; }
+.crumb { font-size: 0.72rem; letter-spacing: 0.04em; }
+.monitor { border-radius: 14px; overflow: hidden; }
+.mon-tile { border-left-color: var(--hairline); padding: 0.55rem 0.8rem; }
+.mon-label { font-size: 0.6rem; font-weight: 600; color: rgba(128, 133, 143, 0.9); }
+.mon-value { font-size: 0.82rem; font-weight: 600; }
+.mon-meter { height: 3px; background: rgba(255, 255, 255, 0.06); }
+.mon-meter > span { background: linear-gradient(90deg, var(--ok), #a6e8bf); }
+.mon-spark > span { background: linear-gradient(180deg, var(--accent), rgba(0, 229, 255, 0.35)); border-radius: 1px 1px 0 0; }
+.team-mini { background: var(--plate); border-color: var(--hairline); box-shadow: var(--lift); }
+
+/* ── Onglets ── */
+.project-tabs { gap: 0.15rem; border-bottom-color: var(--hairline); }
+.project-tabs a { border-radius: 10px 10px 0 0; transition: color 0.18s var(--ease), background 0.18s var(--ease); }
+.project-tabs a:hover { background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.03)); }
+.project-tabs a.active { background: linear-gradient(180deg, transparent 30%, rgba(0, 229, 255, 0.06)); }
+.project-tabs a.active .icon { color: var(--accent); opacity: 1; }
+.tabs { background: rgba(3, 5, 9, 0.6); border-color: var(--hairline); border-radius: 12px; padding: 3px; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4); }
+.tab { border-radius: 9px; transition: color 0.18s var(--ease), background 0.18s var(--ease); }
+.tab.active { background: linear-gradient(180deg, #1d2532, #161c27); color: var(--text); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05); }
+
+/* ── Colonnes de la vue projet ── */
+.threads, .panel { background: rgba(6, 9, 14, 0.55); }
+.threads { border-right-color: var(--hairline); }
+.panel { border-left-color: var(--hairline); }
+.threads li a.active, .tasks-layout .threads li a.active { background: linear-gradient(90deg, rgba(0, 229, 255, 0.12), rgba(0, 229, 255, 0.02)); box-shadow: inset 2px 0 0 var(--accent); }
+.mode-bar { background: transparent; border-bottom-color: var(--hairline); }
+
+/* ── Discussion ── */
+.msg { background: var(--plate); border-color: var(--hairline); box-shadow: var(--lift); }
+.msg.human { background: linear-gradient(180deg, rgba(0, 229, 255, 0.12), rgba(0, 229, 255, 0.06)), #0e1824; border-color: rgba(0, 229, 255, 0.16); }
+.msg .who { color: var(--muted); }
+.composer { background: var(--plate); border-color: var(--hairline-strong); border-radius: 16px; box-shadow: var(--lift), var(--elev-2); }
+.composer:focus-within { border-color: rgba(0, 229, 255, 0.45); box-shadow: var(--lift), var(--elev-2), 0 0 0 3px rgba(0, 229, 255, 0.1); }
+
+/* ── Accueil ── */
+.home-hero { border-color: var(--hairline); box-shadow: var(--lift), var(--elev-2); border-radius: 20px; }
+.home-hero h1 { font-family: var(--font-title); font-size: clamp(2.4rem, 4vw, 3.2rem); background: linear-gradient(180deg, #ffffff, #b9c3d1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.tile-cover {
+  --c1: rgba(0, 229, 255, 0.35);
+  --c2: rgba(255, 90, 0, 0.28);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 22px 22px,
+    radial-gradient(90% 120% at 0% 0%, var(--c1), transparent 60%),
+    radial-gradient(90% 120% at 100% 100%, var(--c2), transparent 60%),
+    #0a0f17;
+}
+.tile-cover[data-engine="godot"] { --c1: rgba(0, 229, 255, 0.4); --c2: rgba(70, 130, 255, 0.22); }
+.tile-cover[data-engine="web"] { --c1: rgba(0, 229, 255, 0.3); --c2: rgba(255, 90, 0, 0.32); }
+.tile-initial {
+  font: 800 3.4rem/1 var(--font-title);
+  background: linear-gradient(180deg, #ffffff, rgba(255, 255, 255, 0.55));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.5));
+}
+.tile-body { gap: 0.3rem; }
+.tile-title h3 { font-family: var(--font-title); font-size: 1.12rem; }
+.project-tile.busy { box-shadow: var(--lift), var(--elev-1), 0 0 0 1px rgba(124, 199, 154, 0.25); }
+.create-tile { background: linear-gradient(160deg, rgba(0, 229, 255, 0.07), transparent 55%), var(--plate); }
+.create-tile.concept { background: linear-gradient(160deg, rgba(255, 90, 0, 0.12), transparent 55%), var(--plate); }
+.create-tile .icon { filter: drop-shadow(0 0 8px currentColor); }
+
+/* ── Chiffres et tableaux ── */
+.stat b, .kpi b { font-family: var(--font-title); letter-spacing: -0.02em; }
+.qtable th { font-size: 0.64rem; border-bottom-color: var(--hairline-strong); background: rgba(255, 255, 255, 0.015); }
+.qtable td { border-bottom-color: var(--hairline); }
+.qtable tr:hover td { background: rgba(0, 229, 255, 0.035); }
+.table-wrap { border-radius: 12px; border: 1px solid var(--hairline); overflow: auto; }
+
+/* ── Arrivée d'un écran : un fondu court, rien qui ralentisse ── */
+@keyframes view-in { from { opacity: 0; transform: translateY(4px); } }
+/* Seulement au changement de page : jamais sur un panneau qui se rafraîchit pendant que vous lisez. */
+.studio-page, .shell > .page, .vision-layout > .page { animation: view-in 0.28s var(--ease) both; }
+
+/* ── Barres de défilement fines ── */
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.12) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+
+
+/* ── Obsidienne, signature (ADR-93) : une aube glace et braise en haut de chaque écran, des arêtes qui s'allument au survol ── */
+.main {
+  background:
+    radial-gradient(900px 340px at 30% -140px, rgba(0, 229, 255, 0.11), transparent 70%),
+    radial-gradient(700px 300px at 95% -120px, rgba(255, 90, 0, 0.09), transparent 70%);
+}
+.mon-label { letter-spacing: 0.06em; }
+.section-head h2, .studio-page > section > h2 { display: flex; align-items: center; gap: 0.6rem; font-family: var(--font-title); }
+.section-head h2::before {
+  content: "";
+  width: 18px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--grad-brand);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.35);
+}
+/* Arête lumineuse : un filet glace → braise qui apparaît sur la tuile survolée. */
+.project-tile::before,
+.create-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.9), rgba(255, 255, 255, 0.08) 40%, rgba(255, 255, 255, 0.04) 60%, rgba(255, 90, 0, 0.85));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s var(--ease);
+  pointer-events: none;
+}
+.create-tile { position: relative; }
+.project-tile:hover::before, .create-tile:hover::before { opacity: 1; }
+.project-tile:hover, .create-tile:hover:not(:disabled) { box-shadow: var(--lift), var(--elev-2), 0 18px 50px -24px rgba(0, 229, 255, 0.45); }
+.tile-initial { bottom: 16px; left: 18px; }
+/* Le titre du jeu dans l'en-tête : la même lumière que le « Bonjour » de l'accueil. */
+.project-title h1 { background: linear-gradient(180deg, #ffffff, #c3ccd8); -webkit-background-clip: text; background-clip: text; color: transparent; }

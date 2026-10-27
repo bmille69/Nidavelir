@@ -17,6 +17,7 @@ import { QualityView } from "./studio/Quality.tsx";
 import { SkillsView } from "./studio/Skills.tsx";
 import { PhoneView } from "./studio/Phone.tsx";
 import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
+import { CommandPalette } from "./studio/CommandPalette.tsx";
 
 export type Route =
   | { page: "dashboard" }
@@ -157,6 +158,7 @@ export function App() {
           <LiveBadge />
         </header>
         <ForYou floating />
+        <CommandPalette />
         <Sidebar route={route} session={session} onClose={() => setMenu(false)} />
         <div className="menu-backdrop" onClick={() => setMenu(false)} />
         <div className="main">

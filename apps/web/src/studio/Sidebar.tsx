@@ -1,10 +1,10 @@
 import type { Route } from "../App.tsx";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import logoMark from "../assets/logo-mark.png";
-import logoWord from "../assets/logo-word.png";
 import { api, type Conception, type SessionInfo } from "../api.ts";
 import { useStudio } from "./context.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
+import { useGlider, useMotion } from "./motion.tsx";
 import { UsageMeter } from "./UsageMeter.tsx";
 
 const ORCHESTRATOR: Record<string, string> = { "direct-claude": "Claude (direct)", hermes: "Hermes", none: "aucun" };
@@ -23,6 +23,10 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
   const active = route.page === "project" ? route.slug : null;
   const working = snap?.agents.filter((a) => a.id !== "you" && a.state !== "idle").length ?? 0;
   const forYou = snap?.agents.find((a) => a.id === "you")?.activities.length ?? 0;
+  const [motion, setMotion] = useMotion();
+  // Un seul repère glisse d'une entrée active à l'autre (ADR-94).
+  const aside = useRef<HTMLElement>(null);
+  useGlider(aside, ".side-nav a.active, .side-projects a.active", [route, snap?.projects.length, conceptions.length]);
 
   const item = (to: string, icon: IconName, label: string, on: boolean, extra?: ReactNode) => (
     <a href={to} className={on ? "active" : ""}>
@@ -33,11 +37,15 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" ref={aside}>
+      <span className="glider" aria-hidden="true" />
       <div className="brand-row">
-        <a href="#/" className="brand">
-          <Logo size={40} />
-          <img className="brand-word" src={logoWord} alt="Nidavellir — le hub de création de jeux vidéo" width={362} height={78} />
+        <a href="#/" className="brand" aria-label="Nidavellir — le hub de création de jeux vidéo">
+          <Logo size={30} />
+          <span className="brand-text">
+            <b>Nidavellir</b>
+            <small>Studio de jeux</small>
+          </span>
         </a>
         {onClose && (
           <button className="icon-btn drawer-close" aria-label="Fermer le menu" onClick={onClose}>
@@ -46,9 +54,26 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
         )}
       </div>
 
+      <button className="side-search" onClick={() => window.dispatchEvent(new Event("studio:palette"))}>
+        <Icon name="search" size={15} />
+        <span>Rechercher…</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
       <nav className="side-nav">
         {item("#/", "home", "Accueil", route.page === "dashboard", forYou > 0 ? <span className="count warn">{forYou}</span> : null)}
         {item("#/pilotage", "chart", "Pilotage", route.page === "pilot")}
+        {item(
+          "#/direct",
+          "live",
+          "En direct",
+          route.page === "live",
+          working > 0 ? (
+            <span className="live-chip">
+              <span className="live-dot" /> {working}
+            </span>
+          ) : null,
+        )}
       </nav>
 
       <p className="side-title">
@@ -87,7 +112,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
       )}
 
       <p className="side-title">Créer</p>
-      <nav className="side-nav">
+      <nav className="side-nav side-create">
         {item("#/express", "bolt", "Jeu express", route.page === "express" || route.page === "expressGame")}
         {item("#/concevoir", "sparkle", "Nouveau projet", route.page === "conceive" && !route.project)}
         {item("#/import", "download", "Importer un jeu", route.page === "import")}
@@ -99,17 +124,6 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 
       <p className="side-title">Studio</p>
       <nav className="side-nav">
-        {item(
-          "#/direct",
-          "live",
-          "En direct",
-          route.page === "live",
-          working > 0 ? (
-            <span className="live-chip">
-              <span className="live-dot" /> {working}
-            </span>
-          ) : null,
-        )}
         {item("#/qualite", "chart", "Qualité", route.page === "quality")}
         {item("#/competences", "puzzle", "Compétences", route.page === "skills")}
         {item("#/telephone", "phone", "Téléphone", route.page === "phone")}
@@ -117,6 +131,11 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 
       <UsageMeter />
       <div className="side-foot">
+        <label className="motion-switch" title="Coupe les animations et les effets de survol, sur ce poste">
+          <span>Animations</span>
+          <input type="checkbox" role="switch" checked={motion === "full"} onChange={(e) => setMotion(e.target.checked ? "full" : "reduced")} />
+          <i aria-hidden="true" />
+        </label>
         <span>
           Directeur : <b>{ORCHESTRATOR[session.orchestrator] ?? session.orchestrator}</b>
         </span>

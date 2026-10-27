@@ -115,7 +115,23 @@ describe("vue Studio", () => {
     await page.getByRole("heading", { name: "Vos projets" }).waitFor();
     await page.locator(".attention-card", { hasText: "1 proposition(s) à arbitrer" }).waitFor();
     await page.screenshot({ path: join(shots, "accueil.png") });
-    // Le studio en direct, plus bas dans le menu.
+    // La palette de commandes (ADR-94) : Ctrl+K, quelques lettres sans accent, Entrée.
+    await page.keyboard.press("Control+k");
+    await page.locator(".palette input").fill("qualite");
+    await page.locator(".palette-item.on", { hasText: "Qualité" }).waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "palette.png") });
+    await page.keyboard.press("Enter");
+    await page.waitForURL(/#\/qualite$/);
+    expect(await page.locator(".palette").count()).toBe(0);
+    // L'interrupteur des animations est gardé sur ce poste.
+    await page.locator(".motion-switch").click();
+    expect(await page.evaluate('document.documentElement.dataset.motion')).toBe("reduced");
+    await page.locator(".motion-switch").click();
+    expect(await page.evaluate('localStorage.getItem("studio:motion")')).toBe("full");
+    await page.goto(page.url().replace(/#.*$/, "#/"));
+    await page.getByRole("heading", { name: "Vos projets" }).waitFor();
+    // Le studio en direct, dans le menu.
     await page.locator(".side-nav a", { hasText: "En direct" }).click();
     await page.getByRole("heading", { name: "Le studio en direct" }).waitFor();
     for (const name of ["Vous", "Le Directeur", "L'Archiviste", "Le Développeur", "Le Testeur", "Le Gardien"]) {

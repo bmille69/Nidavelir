@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { AgentAvatar } from "../studio/AgentAvatar.tsx";
 import { ArtDirection } from "../studio/ArtDirection.tsx";
@@ -8,6 +8,7 @@ import { useStudio } from "../studio/context.tsx";
 import { Icon, type IconName } from "../studio/Icon.tsx";
 import { KeyImage, useKeyImages } from "../studio/KeyImage.tsx";
 import { MonitorBar, MonitorPill } from "../studio/Monitor.tsx";
+import { useGlider } from "../studio/motion.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
 import { TasksView } from "./TasksView.tsx";
@@ -48,6 +49,9 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
     })
     .filter((a) => a.state !== "idle");
   const keyImages = useKeyImages(slug, view);
+  // Le soulignement de l'onglet actif glisse d'un onglet à l'autre (ADR-94).
+  const tabs = useRef<HTMLElement>(null);
+  useGlider(tabs, "a.active", [view, project?.autonomy]);
 
   return (
     <div className="shell">
@@ -70,13 +74,6 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
             </a>
             <h1>{project?.name ?? slug}</h1>
           </div>
-          <div className="project-actions">
-            <MonitorPill slug={slug} />
-            {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
-            <a className="concevoir-btn" href={`#/p/${slug}/concevoir${view === "discussion" && threadId ? `/${threadId}` : ""}`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
-              <Icon name="sparkle" size={15} /> Concevoir
-            </a>
-          </div>
         </div>
         <div className="team-strip" aria-label="Agents au travail sur ce projet">
           {team.length === 0 ? (
@@ -93,11 +90,20 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
             ))
           )}
         </div>
+        {/* À droite de l'en-tête (ADR-94) : les réglages du projet, toujours au même endroit. */}
+        <div className="project-actions">
+          <MonitorPill slug={slug} />
+          {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
+          <a className="concevoir-btn" href={`#/p/${slug}/concevoir${view === "discussion" && threadId ? `/${threadId}` : ""}`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
+            <Icon name="sparkle" size={15} /> Concevoir
+          </a>
+        </div>
       </header>
       <div className="project-monitor">
         <MonitorBar slug={slug} />
       </div>
-      <nav className="project-tabs">
+      <nav className="project-tabs" ref={tabs}>
+        <span className="glider" aria-hidden="true" />
         {TABS.filter((t) => !t.supervisedOnly || project?.autonomy === "supervised" || view === t.view).map((t) => (
           <a key={t.view} className={t.view === view ? "active" : ""} href={t.view === "discussion" ? `#/p/${slug}` : `#/p/${slug}/${t.view}`}>
             <Icon name={t.icon} size={17} />
