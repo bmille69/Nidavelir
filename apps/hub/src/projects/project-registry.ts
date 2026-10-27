@@ -68,13 +68,25 @@ export class ProjectRegistry {
   }
 
   list(): Project[] {
-    return this.#db.prepare("SELECT * FROM projects ORDER BY name").all() as Project[];
+    return (this.#db.prepare("SELECT * FROM projects ORDER BY name").all() as Project[]).map((p) => this.#withEngine(p));
   }
 
   get(slug: string): Project {
     const p = this.#db.prepare("SELECT * FROM projects WHERE slug = ?").get(slug) as Project | undefined;
     if (!p) throw new ProjectError(`Projet inconnu : ${slug}`);
-    return p;
+    return this.#withEngine(p);
+  }
+
+  /**
+   * Un projet créé vide (« Créer le projet ») est enregistré avant que son socle existe :
+   * son moteur reste « unknown ». Il est reconnu dès que le socle est là, et noté.
+   */
+  #withEngine(p: Project): Project {
+    if (p.engine !== "unknown") return p;
+    const engine = existsSync(p.root) ? detectEngine(p.root) : "unknown";
+    if (engine === "unknown") return p;
+    this.#db.prepare("UPDATE projects SET engine = ? WHERE slug = ?").run(engine, p.slug);
+    return { ...p, engine };
   }
 
   /** Votre choix du niveau d'autonomie du directeur pour ce projet (ADR-20). */

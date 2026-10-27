@@ -37,6 +37,16 @@ describe("import d'un projet existant (ADR-12)", () => {
     expect((await sb.hub.projects.analyze(root)).engine).toBe("godot");
   });
 
+  it("un projet créé vide reconnaît son moteur dès que le socle est posé", async () => {
+    sb = sandbox();
+    const root = sb.makeGameRepo("vide");
+    await sb.hub.projects.register(sb.human(), { path: root, slug: "vide", name: "Vide" });
+    expect(sb.hub.projects.get("vide").engine).toBe("unknown");
+    writeFileSync(join(root, "project.godot"), "[application]");
+    expect(sb.hub.projects.get("vide").engine).toBe("godot");
+    expect(sb.hub.projects.list().find((p) => p.slug === "vide")?.engine).toBe("godot");
+  });
+
   it("l'enregistrement ne commite que studio/, même avec des modifications en cours", async () => {
     sb = sandbox();
     const root = sb.makeGameRepo("survivor", { "src/main.ts": "v1" });

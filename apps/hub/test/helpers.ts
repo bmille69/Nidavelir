@@ -82,7 +82,13 @@ function makeSandbox(orchestrator?: OrchestratorPort): Sandbox {
     cleanup() {
       hub.close();
       self.hub.close();
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // Windows : un processus enfant (Blender factice, git) peut tenir le dossier quelques
+      // instants de plus. Un dossier temporaire restant n'est pas un échec du test.
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EPERM" && (err as NodeJS.ErrnoException).code !== "EBUSY") throw err;
+      }
     },
   };
   return self;

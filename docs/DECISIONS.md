@@ -1078,3 +1078,15 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `closeUp` (model3d.ts) : un modèle à squelette, ou à 8000 triangles et plus, prend la géométrie détaillée de Tripo et des textures de 2048.
   - La fiche d'A-0004 est revenue au modèle Tripo intégré (a-0004-3d-3.glb, celui du jeu), commit 23ab8ef du jeu. Les versions faites main restent dans models/ sans servir.
 - **Vérifié** : 251 tests au vert, typecheck. Le jeu n'avait jamais reçu la version faite main : l'arme du jeu est identique à a-0004-3d-3.glb (même empreinte).
+
+## ADR-81 — Audit du 27/10 : le moteur d'un projet créé vide, des tests sans faux échec, une documentation à jour
+
+- **Contexte** : audit du projet à la demande du directeur créatif. Trois défauts, sans conséquence sur les jeux :
+  - Néon Saloon (Godot) et Bordée (web) étaient enregistrés avec le moteur « unknown » : « Créer le projet » enregistre le dossier vide, avant que le socle existe. Le hub reconnaissait Godot à la volée (`isGodot`), mais l'affichage et le journal disaient « unknown » ;
+  - la suite échouait parfois sur un EPERM de Windows en effaçant le dossier temporaire d'un test (un processus enfant le tenait encore) ;
+  - le README et la feuille de route s'arrêtaient à la phase 2 (14/10), alors que tout le reste n'était que dans ce fichier.
+- **Décision** :
+  - le registre reconnaît le moteur d'un projet « unknown » à chaque lecture (`#withEngine`) et le note dès qu'il est trouvé ;
+  - le nettoyage des tests réessaie plus longtemps, puis laisse le dossier temporaire en cas d'EPERM ou d'EBUSY : ce n'est pas un échec du test ;
+  - README réécrit (équipe, lancement, variables, dossiers), feuille de route à jour : phase 3 reportée, phase 4 en partie remplacée par l'atelier, phase 5 faite, **phase 6** ouverte avec les dix idées de l'audit.
+- **Vérifié** : `projects.test.ts` (un projet vide puis son socle Godot : « godot » en lecture et dans la liste), typecheck.

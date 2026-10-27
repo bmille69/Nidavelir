@@ -82,9 +82,9 @@ C'est le cœur du studio : le moteur de vision, sans aucune exécution de code.
 
 ---
 
-## Phase 3 : Hermes comme orchestrateur
+## Phase 3 : Hermes comme orchestrateur ⏸ (reportée, ADR-18)
 
-Elle est fusionnée avec la phase 1 si vous choisissez Hermes dès le départ (A2).
+Le hub reste son propre chef d'orchestre : il appelle Claude Code directement, rôle par rôle. Hermes ne sera branché que s'il apporte quelque chose que le hub n'a pas, et sur un fournisseur conforme (ADR-11).
 
 **Préalable** : Hermes est passé sur une clé API ou un autre fournisseur, plus l'OAuth de l'abonnement (ADR-11).
 
@@ -99,7 +99,9 @@ Elle est fusionnée avec la phase 1 si vous choisissez Hermes dès le départ (A
 
 ---
 
-## Phase 4 : cohérence avancée et spécialistes
+## Phase 4 : cohérence avancée et spécialistes (en partie remplacée par l'atelier)
+
+> Le mode atelier (ADR-24) a remplacé fiches, objections et analyse d'impact par un directeur qui rédige des consignes. Les spécialistes sont arrivés autrement : Concepteur (ADR-28), testeur qui joue (ADR-69), Directeur artistique (ADR-43 et suivantes), Archéologue (ADR-40). La bibliothèque de skills existe (ADR-29, 78).
 
 - Game designer, architecte et QA sur les propositions, selon les règles de sollicitation ; objections `O-`.
 - Analyse d'impact (graphe, `needs_review`, `blocked:vision_changed`), rapport d'impact.
@@ -111,11 +113,28 @@ Elle est fusionnée avec la phase 1 si vous choisissez Hermes dès le départ (A
 
 ---
 
-## Phase 5 : intégrations moteur
+## Phase 5 : intégrations moteur ✅ (Godot, ADR-73 à 77 ; Blender pour la 3D du DA, ADR-47 et suivantes)
 
 - **Godot** : `GodotAdapter` (chemin de l'exécutable configurable, actuellement sur le Bureau), modèle de projet, exécution de tests headless comme commande N2, skill Godot.
 - **Blender** : seulement après installation et besoin réel (scripts `--background --python`, commande N3 par défaut).
 - Autres moteurs : à la demande.
+
+---
+
+## Phase 6 : le studio mesure le jeu, pas seulement le code (ouverte le 27/10/2026)
+
+Idées retenues après l'audit du 27/10, dans l'ordre de réalisation. Chacune a son ADR.
+
+1. Plafond de coût par visuel : le DA s'arrête et explique au lieu de boucler.
+2. Budget de performance Godot : le relais mesure, le hub refuse un chantier qui fait chuter le jeu.
+3. Comparaison visuelle des scènes vitrines après chaque fusion.
+4. Vos parties enregistrées puis rejouées comme tests de non-régression.
+5. Équilibreur par simulation : des centaines de parties sans écran, des courbes.
+6. Banc d'essai des agents : chantiers de référence rejoués à chaque changement de modèle ou de consignes.
+7. Passe « game feel » à la demande.
+8. Journal de bord : les fusions visibles en images, un résumé de la semaine.
+9. Export Godot local (`build/`), sans envoi.
+10. Directeur sonore (ElevenLabs) : effets et musique, intégrés et vérifiés comme les visuels.
 
 ---
 

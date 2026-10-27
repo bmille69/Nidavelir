@@ -1,10 +1,21 @@
-# Game Studio Hub (projet « Ambition »)
+# Nidavellir : Game Studio Hub (projet « Ambition »)
 
-Studio personnel de développement de jeux vidéo assisté par IA, conçu pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**.
+Studio personnel de développement de jeux vidéo assisté par IA, pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**. Le hub (un processus Node local) fait travailler une équipe d'agents sur vos jeux, sous son contrôle : c'est lui qui applique les règles, pas les consignes données aux modèles.
 
-> État actuel : **Phases 1 et 2 terminées**.
-> - Phase 1 : importer ou créer un projet, discuter librement, faire regrouper les fiches en propositions, décider, consulter la vision validée et le « Pourquoi ? ».
-> - Phase 2 : faire implémenter une décision par Claude Code sous contrôle. Le développeur propose un plan, vous le validez ; il travaille dans une copie isolée et chaque action est filtrée ; il vous demande pour tout imprévu ; le QA vérifie ; vous fusionnez ou abandonnez.
+> État au 27/10/2026 : phases 1 et 2 de la [feuille de route](docs/ROADMAP.md) terminées, puis une soixantaine de décisions nées de l'usage réel (ADR-19 à ADR-80). Trois jeux pilotés (Survivor Destiny et Bordée en web, Néon Saloon sous Godot), 186 chantiers fusionnés. Le détail de chaque choix est dans [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## L'équipe
+
+| Agent | Rôle | Ce que le hub lui permet |
+|---|---|---|
+| **Concepteur** | Idée floue → dossier de conception complet, choix de la technologie, chantiers de la première version jouable (ADR-28, 73, 74) | Recherche web en lecture seule, aucun fichier |
+| **Directeur** | Chef de projet et lead game designer au quotidien ; rédige les consignes de chantier (« go ») (ADR-24) | Lecture de `CLAUDE.md` et de la liste des fichiers |
+| **Développeur** | Réalise un chantier dans une copie isolée (worktree Git) (ADR-04, 25, 26) | Claude Code filtré par le **Gardien** (hook + outil de permission) |
+| **Testeur** | Vérifie le chantier et **joue au jeu** (web dans Edge, ou le vrai Godot via un relais) avant de donner son avis (ADR-69, 73) | Lecture, commandes de test, outil « jouer » |
+| **Directeur artistique** | Visuels : images, planches, 3D Tripo + atelier Blender, intégration et bilan dans le jeu (ADR-43 à 71, 79, 80) | Ses outils seulement, crédits Tripo comptés et plafonnés |
+| **Archéologue** | Atelier de démontage de jeux du commerce (Godot, Unity) pour s'en inspirer (ADR-40, 42, 45) | Lecture seule |
+
+Autour d'eux : une file de chantiers fusionnés automatiquement en atelier (ADR-31), un poste de **Pilotage** (ADR-68), une page **Qualité** fondée sur des faits (ADR-27, 32), des **compétences** par agent (ADR-29, 78), le **téléphone** via Tailscale avec notifications (ADR-30), le **Jeu express** (ADR-44) et un **studio de modding** pour vos jeux Steam (ADR-65).
 
 ## Lancer le studio
 
@@ -15,85 +26,55 @@ npm start          # compile l'interface puis lance le hub sur http://127.0.0.1:
 ```
 
 Le navigateur s'ouvre sur un **lien de connexion à usage unique**, également affiché dans le terminal. Arrêt : `Ctrl+C`.
-Les appels à Claude passent par votre Claude Code (votre abonnement), sans outils et sans accès à vos fichiers.
+Les appels aux modèles passent par votre Claude Code (votre abonnement). Godot est trouvé tout seul (bureau, téléchargements) ou via `STUDIO_GODOT`.
 
-Variables facultatives : `STUDIO_PORT`, `STUDIO_GAMES_ROOT` (défaut `C:\Games`), `STUDIO_DATA_DIR` (défaut `.data`), `STUDIO_MODEL_CHAT` et `STUDIO_MODEL_STRUCTURED` (défaut `sonnet`), `STUDIO_NO_BROWSER=1`.
+Variables facultatives :
+- serveur : `STUDIO_PORT`, `STUDIO_GAMES_ROOT` (défaut `C:\Games`), `STUDIO_DATA_DIR` (défaut `.data`), `STUDIO_NO_BROWSER=1` ;
+- modèles : `STUDIO_MODEL_CHAT`, `STUDIO_MODEL_STRUCTURED`, `STUDIO_MODEL_CONCEPT`, `STUDIO_MODEL_DEV`, `STUDIO_MODEL_DEV_BIG`, `STUDIO_MODEL_QA`, `STUDIO_MODEL_ART`, `STUDIO_MODEL_ARCHEOLOGUE` (ils se règlent aussi dans « Le studio en direct ») ;
+- 3D : `STUDIO_TRIPO_MODEL`, `STUDIO_TRIPO_MULTIVIEW_MODEL`, `STUDIO_TRIPO_MONTHLY_CREDITS`. Les clés des services se saisissent dans l'interface.
 
 ## Développement
 
-Prérequis : Node.js 24 et Git (vérifiés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §1).
+Prérequis : Node.js 24 et Git (voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §1) ; Blender et Godot pour les tests qui les utilisent.
 
 ```powershell
 npm test           # suite Vitest (dépôts Git temporaires, orchestrateur factice : aucun appel à un LLM)
 npm run typecheck  # backend et interface
-npm run build && npm run test:e2e   # parcours complet dans Edge (headless), captures dans .data/screenshots
+npm run build && npm run test:e2e   # parcours dans Edge (headless) et le vrai Godot, captures dans .data/screenshots
 ```
 
 | Dossier | Contenu |
 |---|---|
-| `packages/contracts` | Schémas Zod partagés : items, approbations, événements, projets |
-| `apps/hub/src/vision` | `VisionService`, seul écrivain de la vision ; fichiers d'items ; `BRIEF.md` |
-| `apps/hub/src/approvals` | Validations humaines liées au hash, à usage unique |
-| `apps/hub/src/auth` | Sessions humaines (cookie + CSRF), impossibles à fabriquer hors du module |
-| `apps/hub/src/projects` | Registre, isolation des répertoires, analyse et import d'un projet existant |
-| `apps/hub/src/journal` | Journal en ajout seul, avec masquage des secrets |
-| `apps/hub/src/vcs` | Git : commits restreints à `studio/` |
-| `apps/hub/src/conversation` | Fils de discussion, paquet de contexte, prompts du directeur |
-| `apps/hub/src/orchestrator`, `llm` | Port d'orchestration ; adaptateur Claude Code CLI sans outils |
-| `apps/hub/src/server` | Serveur HTTP local : contrôle du Host, cookie de session, CSRF |
-| `apps/hub/src/executor` | Phase 2 : `PolicyEngine` (allow / deny / ask), `TaskService`, lanceur Claude Code, relais hook et gardien |
-| `apps/web` | Interface React : projets, import, discussion, décisions, vision, tâches |
-
-## Le problème à résoudre
-
-Le goulot d'étranglement n'est pas le code, c'est la **clarté de la vision**. Les idées arrivent en vrac, en langage naturel, parfois contradictoires. Le studio doit :
-
-1. écouter une expression libre, sans exiger de structure ;
-2. en extraire des éléments structurés (idées, hypothèses, questions, contraintes…) **sans jamais modifier la vision officielle tout seul** ;
-3. transformer ce qui mérite de l'être en **propositions** soumises à validation ;
-4. conserver les **décisions validées** comme référence commune, versionnée et traçable, pour tous les agents ;
-5. détecter les contradictions et les impacts d'un changement ;
-6. faire exécuter le travail technique (Claude Code) **sous contrôle** : plan validé, périmètre borné, résultat présenté, annulation possible.
+| `packages/contracts` | Schémas Zod partagés : items, approbations, événements, projets, tâches |
+| `apps/hub/src/vision`, `approvals`, `journal` | Bible du jeu (`studio/`), validations humaines liées au hash, journal en ajout seul |
+| `apps/hub/src/conversation`, `conception` | Discussions avec le directeur, le Concepteur et son dossier |
+| `apps/hub/src/executor` | Chantiers : `TaskService`, `PolicyEngine` (le Gardien), lanceur Claude Code, aperçu « ▶ Essayer », progression |
+| `apps/hub/src/autonomy` | File de chantiers, fusion automatique, carnet « État du jeu » |
+| `apps/hub/src/quality` | Contrôles du hub (tests, lancement, photo), manette du testeur, tableau Qualité |
+| `apps/hub/src/godot` | Godot : outillage, socle d'un nouveau jeu, tests StudioTest, relais du testeur |
+| `apps/hub/src/art` | Directeur artistique : images, Tripo, atelier Blender (`blender/workshop.py`), carnet Tripo, bilan |
+| `apps/hub/src/reverse`, `express`, `mods` | Atelier de démontage, Jeu express, studio de modding |
+| `apps/hub/src/skills`, `usage`, `remote` | Compétences des agents, compteur d'utilisation, téléphone et notifications |
+| `apps/hub/src/server`, `auth`, `projects`, `vcs` | Serveur HTTP local (Host, cookie, CSRF), registre et isolation des jeux, Git |
+| `apps/web` | Interface React : accueil, Pilotage, discussions, chantiers, DA, galerie, qualité… |
 
 ## Principes directeurs
 
 | Principe | Conséquence concrète |
 |---|---|
-| L'humain décide | Seule une action explicite dans l'interface peut faire passer un élément au statut `validated`. Aucun outil d'agent ne le permet. |
-| La vision est un artefact, pas une mémoire d'agent | Elle vit dans des fichiers Markdown/YAML versionnés par Git dans le dépôt de chaque jeu, pas dans la mémoire d'Hermes ni de Claude. |
-| Le hub impose, les agents proposent | Les contrôles (permissions, validations, périmètre) sont appliqués par le code du hub, pas par des consignes données aux modèles. |
-| Un agent suffit souvent | Le directeur traite seul les demandes simples ; les spécialistes ne sont sollicités que lorsque c'est utile. |
-| Pas de sur-ingénierie | Un processus backend, une base SQLite, des fichiers texte, un frontend web local. Ni microservices, ni base vectorielle, ni agents permanents. |
-
-## Fonctionnement en une image
-
-```
- Vous ──(conversation libre)──▶ Hub (UI web locale)
-                                  │
-            ┌─────────────────────┼──────────────────────────┐
-            ▼                     ▼                          ▼
-   Moteur de vision        Orchestrateur (port)        Exécuteur (port)
-   items, statuts,         Hermes Agent  ou            Claude Code CLI
-   liens, conflits         Claude direct               dans un worktree Git,
-            │              (directeur + spécialistes)  permissions filtrées
-            ▼                     │ outils MCP du hub        │ par le hub
-   studio/ dans le dépôt          └──────────────┬───────────┘
-   Git de chaque jeu                             ▼
-   (source de vérité)                   SQLite : tâches, validations,
-                                        événements, journal
-```
+| L'humain décide | Les autorisations du Gardien et l'import d'un projet ne se délèguent jamais ; la fusion automatique en atelier est votre choix (ADR-31). |
+| Le hub impose, les agents proposent | Permissions, périmètre, budgets et contrôles sont appliqués par le code du hub. |
+| Des faits plutôt que des avis | Tests, lancement, photo, fichiers chargés : le hub mesure ; le testeur dit ce qu'il n'a pas vérifié. |
+| La mémoire vit dans le jeu | Bible, conception, visuels et captures sont dans `studio/` du dépôt de chaque jeu, versionnés par Git. |
+| Pas de sur-ingénierie | Un processus, une base SQLite, des fichiers texte, une interface web locale. |
 
 ## Documentation
 
 | Document | Contenu |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Résultats de l'audit, composants, flux, choix techniques |
-| [docs/VISION_ENGINE.md](docs/VISION_ENGINE.md) | Modèle de données de la vision, modes exploration et décision, cohérence et impacts |
-| [docs/AGENT_CONTRACTS.md](docs/AGENT_CONTRACTS.md) | Rôles, droits et formats d'échange (propositions, questions, décisions, tâches, rapports) |
-| [docs/SECURITY.md](docs/SECURITY.md) | Modèle de menaces, niveaux de permission, validation imposée, injections de consignes |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Phases, MVP et critères d'acceptation |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Décisions d'architecture, hypothèses et arbitrages en attente de votre accord |
-
-## Prochaine étape
-
-Lire [docs/DECISIONS.md](docs/DECISIONS.md), section « Arbitrages ouverts », et valider ou amender les décisions proposées. La phase 1 ne démarre qu'après votre accord.
+| [docs/DECISIONS.md](docs/DECISIONS.md) | **Toutes** les décisions (ADR-01 et suivantes), avec ce qui a été vérifié |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phases, état réel et prochains chantiers du studio |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Audit initial de l'environnement, composants, flux |
+| [docs/VISION_ENGINE.md](docs/VISION_ENGINE.md) | Modèle de données de la bible (items, statuts, liens) |
+| [docs/AGENT_CONTRACTS.md](docs/AGENT_CONTRACTS.md) | Rôles, droits et formats d'échange |
+| [docs/SECURITY.md](docs/SECURITY.md) | Modèle de menaces, niveaux de permission, injections de consignes |
