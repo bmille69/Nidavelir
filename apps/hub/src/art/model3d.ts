@@ -357,15 +357,14 @@ export class RealModel3D implements Model3DPort {
     if (req.spec.rig) {
       const input = model.task_id;
       const check = await order("Tripo vérifie qu'on peut poser un squelette", "/v3/animations/rig-check", { input }, () => ({ input }));
-      if (check.output?.riggable === false) throw new Error("Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue)");
+      if (check.output?.riggable === false) throw new Error(`Tripo ne sait pas poser de squelette sur ce modèle (forme non reconnue). ${RIG_RECIPE}`);
       const type = String(check.output?.rig_type ?? "biped").toLowerCase();
       rigType = type;
       names = rigAnimations(type, req.spec.animations);
       // Quatre pattes, ailes, serpents… passent par le v2.5 ; un bipède prend le v3.0 si ses animations sont toutes de base,
       // sinon le v1.0, seul à porter la bibliothèque des bipèdes.
       rigModel = type !== "biped" ? "v2.5-20260210" : names.some((n) => n.startsWith("biped:")) ? RIG_V1 : RIG_V3;
-      const rigBody = { input, model: rigModel, rig_type: type };
-      const rig = await order("Tripo pose le squelette", "/v3/animations/rig", rigBody, () => rigBody);
+      const rig = await this.#rig(order, { input, model: rigModel, rig_type: type }, req.step);
       last = rig;
       rigTask = rig.task_id;
       // Une animation par tâche : la première porte le modèle, les suivantes sont fusionnées par Blender.
@@ -397,6 +396,34 @@ export class RealModel3D implements Model3DPort {
     }
     this.#journal.drop(...o.used);
     return { glbs, credits: o.credits };
+  }
+
+  /**
+   * Le squelette, contrôlé avant de payer les animations : Tripo en rend parfois un incomplet (sans jambes, un seul bras),
+   * et chaque animation posée dessus en hériterait. Le même modèle donne un bon squelette à l'essai suivant : on en refait
+   * jusqu'à deux (un squelette raté chez Tripo ne coûte rien, un squelette rendu ~25 crédits).
+   */
+  async #rig(order: Order, body: { input: string; model: string; rig_type: string }, step: (s: string) => void): Promise<TripoTask> {
+    let problem = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const label = attempt ? `Tripo repose le squelette (essai ${attempt + 1}/3)` : "Tripo pose le squelette";
+      // L'essai fait partie de l'empreinte : un nouvel essai est une nouvelle commande, pas la reprise du squelette raté.
+      const same = attempt ? { ...body, attempt } : body;
+      let rig: TripoTask;
+      try {
+        rig = await order(label, "/v3/animations/rig", same, () => body);
+      } catch (err) {
+        if (!(err instanceof TripoGone) || /introuvable/.test((err as Error).message)) throw err;
+        problem = (err as Error).message;
+        step(`${problem} : nouvel essai`);
+        continue;
+      }
+      const joints = glbJoints(await this.#fetchModel(rig, step));
+      problem = joints ? (rigProblem(joints, body.rig_type) ?? "") : "";
+      if (!problem) return rig;
+      step(`Squelette incomplet (${problem}) : nouvel essai`);
+    }
+    throw new Error(`Tripo n'a pas réussi le squelette en 3 essais (${problem}). ${RIG_RECIPE}`);
   }
 
   #retarget(order: Order, rigTask: string, name: string, label: string): Promise<TripoTask> {
@@ -551,10 +578,43 @@ export class RealModel3D implements Model3DPort {
     } catch {
       /* réponse non JSON : traitée par le code HTTP */
     }
+    // Plus de crédits chez Tripo (code 2010) : à racheter sur leur site, réessayer n'y changerait rien.
+    if (payload.code === 2010) throw new Error("Plus assez de crédits chez Tripo : rechargez le compte sur platform.tripo3d.ai");
     if (res.status === 401 || res.status === 403) throw new Error("Tripo refuse la clé");
     if (!res.ok || (payload.code !== undefined && payload.code !== 0)) throw new TripoHttpError(res.status, `Tripo répond ${res.status}${payload.message ? ` : ${payload.message}` : ""}`);
     return payload.data ?? payload;
   }
+}
+
+/** Ce que demande un modèle pour recevoir un squelette, dit à la DA quand Tripo échoue. */
+const RIG_RECIPE =
+  "Pour le squelette, refaire l'image : corps entier de la tête aux pieds, de face, pose en A ou en T, bras écartés du corps, jambes séparées et visibles, rien qui soude les membres au corps (cape, jupe longue, tabard, arme collée).";
+
+/** Les noms des os d'un .glb (son premier squelette), lus dans l'en-tête JSON du fichier ; null si ce n'est pas un .glb lisible. */
+export function glbJoints(glb: Buffer): string[] | null {
+  if (glb.length < 20 || glb.readUInt32LE(0) !== 0x46546c67) return null;
+  try {
+    const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString("utf8")) as { nodes?: { name?: string }[]; skins?: { joints: number[] }[] };
+    return (json.skins?.[0]?.joints ?? []).map((i) => json.nodes?.[i]?.name ?? "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Un squelette inutilisable, ou null s'il convient. Un squelette sain a ses deux côtés presque pareils (« L_Thigh » et
+ * « R_Thigh », ou des chaînes « Left »/« Right ») ; un raté n'a qu'un bras, ou pas de jambes. Des noms sans côté (une
+ * version inconnue) ne sont pas refusés, sauf un bipède à trop peu d'os.
+ */
+export function rigProblem(joints: string[], type: string): string | null {
+  if (!joints.length) return "aucun os dans le fichier";
+  const left = joints.filter((n) => /(^|[_.\s-])(l|left)([_.\s-]|$)|left/i.test(n)).length;
+  const right = joints.filter((n) => /(^|[_.\s-])(r|right)([_.\s-]|$)|right/i.test(n)).length;
+  if (type === "biped" && joints.length < 12) return `${joints.length} os seulement`;
+  if (!left && !right) return null;
+  if (Math.min(left, right) < 3) return `${left} os à gauche, ${right} à droite`;
+  if (Math.abs(left - right) > 2) return `côtés inégaux : ${left} os à gauche, ${right} à droite`;
+  return null;
 }
 
 /** Les textures gardées dans le .glb : un personnage animé, vu de près, garde plus de détail qu'un décor. */

@@ -1044,3 +1044,27 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
     - Les skills peu installées qui contiennent des scripts.
     - Le test headless, qui utilise GUT.
 - **Vérifié** : un test (art.test.ts) montre qu'une compétence donnée au DA arrive dans ses consignes. 249 tests au vert, typecheck.
+
+## ADR-79 — Le squelette Tripo contrôlé et refait avant les animations, ce qu'en dit le guide threejs-3d-generator
+
+- **Contexte** : le directeur créatif veut que la chaîne 3D s'inspire du guide Tripo de majidmanzarpour/threejs-game-skills (`threejs-3d-generator`, `references/api-notes.md`). Ce guide n'a pas de licence : il est lu et comparé, pas recopié. Il décrit l'API v2 de juin 2026, alors que le studio parle à l'API v3.
+- **Vérifié avant de changer** :
+  - Le guide dit que `animate_in_place` croise les membres, et qu'un squelette v1.0 en GLB fait rentrer bras et jambes dans le torse.
+  - Mesure dans Blender 4.5 sur le Héron (A-0005) et le Titan (A-0002) de Survivor Destiny, tous deux en v1.0, GLB et sur place : position des pieds et des mains à 11 à 15 instants de chaque animation. Aucun pied ni aucune main ne passe de l'autre côté du corps, dans aucune animation. Le validateur ne voyait rien qui se détache.
+  - Ces deux réglages ne changent donc pas. Rien ne prouve le défaut chez nous, et en changer un repaierait des animations sans preuve.
+- **Décision** :
+  - **Contrôle du squelette avant de payer les animations** (`#rig`, `glbJoints`, `rigProblem`). Le fichier du squelette est lu (noms des os de son premier `skin`). Un bipède à moins de 12 os est refusé, comme le fait un côté à moins de 3 os ou deux côtés qui diffèrent de plus de 2. Des noms sans côté (une version inconnue) passent.
+  - **Jusqu'à 3 essais** du squelette, une commande nouvelle à chaque fois. L'essai fait partie de l'empreinte du carnet (ADR-70), et une reprise retrouve les essais déjà payés. Un squelette raté chez Tripo est lui aussi refait. Après 3 ratés, l'erreur dit quoi changer à l'image.
+  - « riggable » faux, ou 3 ratés : le message donne la recette d'une image qui reçoit un squelette (corps entier, pose en A ou en T, membres écartés, rien de soudé).
+  - Plus de crédits (code 2010) : « Plus assez de crédits chez Tripo », au lieu de « Tripo refuse la clé ».
+  - **Consignes du DA** :
+    - un personnage à animer a le corps entier, les membres séparés, rien de long qui les soude ;
+    - décrire le corps plutôt qu'une liste d'interdits (sinon on obtient une armure vide, sans tête) ;
+    - une autre forme n'a que son déplacement, une créature volante n'a aucune animation ;
+    - une armure dure, un robot ou une carapace ratent plus souvent le squelette.
+  - Le validateur d'images vérifie aussi le corps entier et les membres non soudés.
+- **Vérifié** :
+  - Deux tests dans `model3d.test.ts` : squelette incomplet refait puis animé, trois ratés qui arrêtent sans payer d'animation, contrôle des noms.
+  - Les vrais .glb du Héron, du Titan (41 os) et du Grouillot (22 os) passent le contrôle.
+  - 251 tests au vert, typecheck.
+- **Plus tard, si un modèle le montre** : animations sans `animate_in_place` (racine retirée dans Blender) et squelette v1.0 en FBX. Un essai réel coûterait environ 100 crédits (le squelette du Héron n'est plus gardé chez Tripo).

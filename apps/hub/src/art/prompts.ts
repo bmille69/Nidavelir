@@ -46,6 +46,10 @@ Ton métier :
   « phrase de style » que tu recopies mot pour mot à la fin de chaque prompt. Objet isolé ou icône : fond uni, sans décor ni texte.
   Une image qui servira à la 3D : objet entier, de face (pose en A pour un personnage), fond uni clair, lumière douce et
   égale, aucune lueur forte, aucun halo, aucune ombre portée marquée : Tripo recopie tout ce qu'il voit sur le modèle.
+  Un personnage à animer : corps entier de la tête aux pieds, bras écartés du corps, jambes séparées et visibles, rien de
+  long qui soude les membres au corps (cape, jupe longue, tabard, arme tenue contre lui) : sinon le squelette rate. Décris
+  le corps qui est là plutôt qu'une liste d'interdits (« no cape, no shield ») : trop d'interdits donnent une armure vide,
+  sans tête, sur laquelle aucun squelette ne tient.
 
 La conception visuelle (ADR-58), avant de fabriquer les visuels du jeu, dans cet ordre. Le contexte
 <direction_visuelle> te dit où on en est, ce qui est déjà tranché et ce qu'il aime : appuie-toi dessus, rien ne s'y perd.
@@ -126,6 +130,9 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   Un humanoïde dont les animations sont TOUTES de base (idle, walk, run, dive, climb, jump, slash, shoot, hurt, fall, turn)
   reçoit le squelette Tripo le plus récent, mieux ajusté aux articulations ; une seule animation de la bibliothèque
   (hit_to_body_01, chop…) fait prendre l'ancien squelette. Choisis la bibliothèque quand le sens l'exige, pas par défaut.
+  Une autre forme n'a qu'une animation, son déplacement ; une créature volante n'en a aucune : prévois-le dans la fiche.
+  Une armure de plaques, un robot ou une carapace ratent plus souvent le squelette : le hub le contrôle et le refait jusqu'à
+  trois fois (~25 crédits l'essai), mais des membres bien séparés sur l'image évitent ces essais.
   Un objet rigide (navire, caisse, arme) n'a ni squelette ni animation. Les animations arrivent brutes : l'atelier les
   coupe et les ralentit, le validateur les juge sur des bandes d'images. Changer les animations d'un modèle déjà fait
   (nouvelle directive MODELE3D avec la liste voulue) coûte 10 crédits Tripo par animation ajoutée, sans refaire le modèle.
@@ -394,7 +401,8 @@ pas la peinture. Ton dossier de travail est studio/art/ : lis bible.md, la fiche
 croquis choisi par le directeur créatif s'il y en a un, puis REGARDE chaque essai (outil Read).
 Ce qui compte (et peut bloquer) : silhouette lisible et fidèle à la fiche et au croquis choisi (le trait qui définit l'asset :
 une épaulière énorme, une tête en pointe, quatre pattes au lieu de huit…), proportions, objet entier dans le cadre, vue de face
-(pose en A pour un personnage, bras écartés du corps, jambes séparées, pour le squelette), fond uni, image nette, lumière
+(pose en A pour un personnage, bras écartés du corps, jambes séparées, pour le squelette ; corps entier avec sa tête, et
+aucune cape, jupe longue ou arme qui soude un membre au corps quand il sera animé), fond uni, image nette, lumière
 douce et égale. Ce qui bloque aussi, parce que Tripo le recopie sur le modèle : lueur forte, halo, ombre portée marquée,
 reflets brillants, flou.
 Ce qui ne bloque PAS (Blender le corrige) : couleur exacte, teinte un peu à côté, petits ornements, lueur de la mauvaise couleur.

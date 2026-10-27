@@ -2,23 +2,45 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RealModel3D, rigAnimations } from "../src/art/model3d.ts";
+import { RealModel3D, glbJoints, rigAnimations, rigProblem } from "../src/art/model3d.ts";
+
+/** Un .glb minimal : un squelette fait de ces os. */
+function glb(joints: string[]): Buffer {
+  const json = Buffer.from(JSON.stringify({ asset: { version: "2.0" }, nodes: joints.map((name) => ({ name })), skins: [{ joints: joints.map((_, i) => i) }] }));
+  const pad = Buffer.alloc((4 - (json.length % 4)) % 4, 0x20);
+  const head = Buffer.alloc(20);
+  head.writeUInt32LE(0x46546c67, 0);
+  head.writeUInt32LE(2, 4);
+  head.writeUInt32LE(20 + json.length + pad.length, 8);
+  head.writeUInt32LE(json.length + pad.length, 12);
+  head.writeUInt32LE(0x4e4f534a, 16);
+  return Buffer.concat([head, json, pad]);
+}
+
+/** Les os du squelette humanoïde v1.0 de Tripo, relevés sur le Héron de Survivor Destiny. */
+const SIDE = ["Clavicle", "Upperarm", "UpperarmTwist01", "UpperarmTwist02", "Forearm", "ForearmTwist01", "ForearmTwist02", "Hand", "Thigh", "ThighTwist01", "ThighTwist02", "Calf", "CalfTwist01", "CalfTwist02", "Foot", "ToeBase"];
+const V1 = ["Root", "Hip", "Pelvis", "Waist", "Spine01", "Spine02", "NeckTwist01", "NeckTwist02", "Head", ...SIDE.map((b) => `L_${b}`), ...SIDE.map((b) => `R_${b}`)];
 
 /** Un faux Tripo : chaque tâche réussit tout de suite, sauf celles que `fail` désigne. */
-function fakeTripo(opts: { rigType: string; fail?: (path: string, body: Record<string, unknown>) => boolean }) {
+function fakeTripo(opts: { rigType: string; fail?: (path: string, body: Record<string, unknown>) => boolean; rigs?: string[][] }) {
+  const skeletons = new Map<string, string[]>();
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const tasks = new Map<string, Record<string, unknown>>();
   let n = 0;
   const json = (data: unknown) => new Response(JSON.stringify({ code: 0, data }), { status: 200 });
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
-    if (url.startsWith("https://cdn/")) return new Response(Buffer.from(path));
+    if (url.startsWith("https://cdn/")) {
+      const bones = skeletons.get(path.slice(1, -".glb".length));
+      return new Response(bones ? glb(bones) : Buffer.from(path));
+    }
     if (path === "/v3/files") return json({ file_token: "tok" });
     if (path.startsWith("/v3/tasks/")) return json(tasks.get(path.slice("/v3/tasks/".length)));
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push({ path, body });
     if (opts.fail?.(path, body)) return new Response(JSON.stringify({ code: 2002, message: "Invalid input parameter" }), { status: 400 });
     const id = `t${++n}`;
+    if (path === "/v3/animations/rig" && opts.rigs?.length) skeletons.set(id, opts.rigs.shift()!);
     const output = path.endsWith("rig-check")
       ? { riggable: true, rig_type: opts.rigType }
       : path.endsWith("image-to-multiview")
@@ -112,6 +134,34 @@ describe("Tripo (atelier 3D)", () => {
     const second = await run(m, ["walk"]);
     expect(second.e).toBeNull();
     expect(t.calls.filter((c) => c.path === "/v3/generation/image-to-model")).toHaveLength(1);
+  });
+
+  it("un squelette incomplet est refait avant de payer les animations ; trois ratés arrêtent tout", async () => {
+    const broken = ["Root", "Spine_0", "Spine_1", "Spine_2", "L_Upperarm", "L_Forearm", "L_Hand", "Neck", "Hip"];
+    let t = fakeTripo({ rigType: "biped", rigs: [broken, V1] });
+    vi.stubGlobal("fetch", t.fetch);
+    const ok = await run(new RealModel3D(dir), ["walk"]);
+    expect(ok.e).toBeNull();
+    expect(t.calls.map((c) => c.path.split("/").pop())).toEqual(["image-to-model", "rig-check", "rig", "rig", "retarget"]);
+    expect(t.calls.find((c) => c.path.endsWith("retarget"))!.body.input).toBe("t4");
+
+    t = fakeTripo({ rigType: "biped", rigs: [broken, broken, broken] });
+    vi.stubGlobal("fetch", t.fetch);
+    const ko = await run(new RealModel3D(dir), ["walk"]);
+    expect(ko.e?.message).toMatch(/pas réussi le squelette en 3 essais \(9 os seulement\)[\s\S]*pose en A ou en T/);
+    expect(t.calls.filter((c) => c.path.endsWith("retarget"))).toHaveLength(0);
+  });
+
+  it("le contrôle du squelette : deux côtés pareils, assez d'os", () => {
+    expect(rigProblem(V1, "biped")).toBeNull();
+    expect(glbJoints(glb(V1))).toEqual(V1);
+    expect(glbJoints(Buffer.from("pas un glb"))).toBeNull();
+    expect(rigProblem(V1.filter((n) => !/^R_(Thigh|Calf|Foot|Toe)/.test(n)), "biped")).toMatch(/côtés inégaux : 16 os à gauche, 8 à droite/);
+    // Chaînes de membres du v2.5 (quadrupède) et noms sans côté d'une version inconnue.
+    const limbs = [0, 1].flatMap((row) => ["Left", "Right"].flatMap((side) => [0, 1, 2, 3, 4].map((i) => `${row}_${side}_Limb_${i}`)));
+    expect(rigProblem(["Root", "Spine", ...limbs], "quadruped")).toBeNull();
+    expect(rigProblem(Array.from({ length: 20 }, (_, i) => `bone${i}`), "biped")).toBeNull();
+    expect(rigProblem([], "quadruped")).toBe("aucun os dans le fichier");
   });
 
   it("la planche : quatre vues jugées, une retouchée, puis le modèle tiré des quatre vues (ADR-50)", async () => {
