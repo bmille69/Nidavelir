@@ -27,6 +27,7 @@ import { QualityError } from "../quality/quality-service.ts";
 import { ConceptionError } from "../conception/conception-service.ts";
 import { SkillError } from "../skills/skill-service.ts";
 import { ArtError } from "../art/art-service.ts";
+import { ReplayError } from "../quality/replays.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
@@ -59,6 +60,7 @@ const Body = {
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
   artAside: z.object({ aside: z.boolean() }),
+  replaySave: z.object({ name: z.string().min(1).max(80), note: z.string().max(500).optional() }),
   tripoKey: z.object({ key: z.string().min(8).max(200) }),
   artReact: z.object({
     verdicts: z.record(z.string().max(300), z.enum(["aime", "evite"]).nullable()).refine((v) => Object.keys(v).length <= 100),
@@ -698,13 +700,36 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     };
     api.post("/projects/:slug/preview", async (req) => {
       const { slug } = req.params as { slug: string };
-      return openPreview(req, await hub.previews.start(slug, null, hub.projects.get(slug).root));
+      const root = hub.projects.get(slug).root;
+      // Un jeu Godot reçoit d'abord les outils du studio à jour : le relais enregistre votre partie (ADR-85).
+      await hub.tasks.refreshGodotTools(root).catch(() => {});
+      return openPreview(req, await hub.previews.start(slug, null, root, hub.replays.recordPath(slug, null, root)));
     });
     api.post("/projects/:slug/tasks/:id/preview", async (req) => {
       const { slug, id } = req.params as { slug: string; id: string };
       const task = hub.tasks.get(slug, id);
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
-      return openPreview(req, await hub.previews.start(slug, id, task.worktree));
+      return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
+    });
+    // Vos parties enregistrées, et celles gardées comme tests (ADR-85).
+    api.get("/projects/:slug/replays", async (req) => {
+      const { slug } = req.params as { slug: string };
+      return { recordings: hub.replays.recordings(slug), saved: hub.replays.saved(slug) };
+    });
+    api.post("/projects/:slug/recordings/:id/save", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      const body = Body.replaySave.parse(req.body);
+      return hub.replays.save(req.human!, slug, id, body);
+    });
+    api.post("/projects/:slug/recordings/:id/delete", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      hub.replays.remove(req.human!, slug, id);
+      return { ok: true };
+    });
+    api.post("/projects/:slug/replays/:file/delete", async (req) => {
+      const { slug, file } = req.params as { slug: string; file: string };
+      await hub.replays.unsave(req.human!, slug, file);
+      return { ok: true };
     });
     // Carnet « État du jeu » (ADR-33).
     api.get("/projects/:slug/game-state", async (req) => {
@@ -810,7 +835,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

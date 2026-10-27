@@ -87,7 +87,7 @@
   --fs-md: 15px;
   --fs-lg: 18px;
   --fs-xl: 24px;
-  /* Typographie (ADR-83) : Segoe pour lire et pour les boutons, Exo 2 pour les titres, Orbitron pour les
+  /* Typographie (ADR-86) : Segoe pour lire et pour les boutons, Exo 2 pour les titres, Orbitron pour les
      sur-titres et rubriques en capitales (les lettres de la DA, incluses dans l'application). */
   --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -99,7 +99,7 @@
   --c-concepteur: #d99a6c;
   --c-director: #00e5ff;
   --c-archivist: #a99be0;
-  --c-art: #ff8a4c; /* braise claire : le rose sortait de la palette de la DA (ADR-83) */
+  --c-art: #ff8a4c; /* braise claire : le rose sortait de la palette de la DA (ADR-86) */
   --c-developer: #84a9d9;
   --c-qa: #7cc79a;
   --c-guardian: #d98a92;
@@ -118,7 +118,7 @@ body,
   margin: 0;
 }
 body {
-  /* La forge (ADR-83) : la glace en haut à droite, la braise en bas à gauche, à peine ; un grain très fin. */
+  /* La forge (ADR-86) : la glace en haut à droite, la braise en bas à gauche, à peine ; un grain très fin. */
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
     radial-gradient(1100px 620px at 100% -10%, rgba(0, 229, 255, 0.08), transparent 70%),
@@ -232,7 +232,7 @@ button.danger {
   border-color: rgba(255, 122, 133, 0.5);
 }
 button.danger:hover:not(:disabled) { background: var(--error-bg); border-color: var(--error); }
-/* Indisponible = gris : un bouton cyan à demi transparent passait pour un second style de bouton (ADR-83). */
+/* Indisponible = gris : un bouton cyan à demi transparent passait pour un second style de bouton (ADR-86). */
 button:disabled {
   opacity: 0.5;
   filter: grayscale(0.9);

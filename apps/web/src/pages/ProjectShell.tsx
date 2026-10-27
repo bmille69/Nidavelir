@@ -6,6 +6,7 @@ import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
 import { Icon, type IconName } from "../studio/Icon.tsx";
+import { KeyImage, useKeyImages } from "../studio/KeyImage.tsx";
 import { MonitorBar, MonitorPill } from "../studio/Monitor.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
@@ -46,14 +47,23 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
       return { ...a, acts, state: acts.length ? a.state : ("idle" as const) };
     })
     .filter((a) => a.state !== "idle");
+  const keyImages = useKeyImages(slug, view);
 
   return (
     <div className="shell">
-      <header className="project-head">
+      <header className={`project-head ${keyImages.length ? "has-key" : ""}`}>
+        {/* L'image clé du jeu, en fond fondu et en vignette (ADR-86). */}
+        <KeyImage urls={keyImages} className="project-backdrop" />
         <div className="project-title">
-          <span className="proj-initial lg" data-engine={project?.engine ?? "unknown"} aria-hidden="true">
-            {(project?.name ?? slug).slice(0, 1).toUpperCase()}
-          </span>
+          <KeyImage
+            urls={keyImages}
+            className="proj-emblem"
+            fallback={
+              <span className="proj-initial lg" data-engine={project?.engine ?? "unknown"} aria-hidden="true">
+                {(project?.name ?? slug).slice(0, 1).toUpperCase()}
+              </span>
+            }
+          />
           <div className="project-name">
             <a href="#/" className="crumb">
               Studio
@@ -73,7 +83,7 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
             <span className="muted small">Équipe au repos</span>
           ) : (
             team.map((a) => (
-              <a key={a.id} href={a.acts[0]?.href ?? "#/"} className="team-mini" title={`${AGENTS[a.id].name} : ${a.acts[0]?.text ?? ""}`}>
+              <a key={a.id} href={a.acts[0]?.href ?? "#/"} className={`team-mini state-${a.state}`} title={`${AGENTS[a.id].name} : ${a.acts[0]?.text ?? ""}`}>
                 <AgentAvatar agent={a.id} state={a.state} size={38} />
                 <span>
                   <b>{AGENTS[a.id].name}</b>

@@ -6,7 +6,8 @@ import type { Db } from "../db/database.ts";
 import { PreviewService } from "../executor/preview.ts";
 import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
-import { GodotGame, godotImport, godotTests } from "../godot/run.ts";
+import { GodotGame, godotImport, godotReplay, godotTests } from "../godot/run.ts";
+import { runSavedReplays } from "./replays.ts";
 import { hasBridge, hasStudioTests, isGodot, type GodotInstall } from "../godot/toolchain.ts";
 
 /** Résultat d'une vérification faite par le hub lui-même ; « none » = rien à vérifier ou impossible ici. */
@@ -87,8 +88,10 @@ export type CheckReport = {
   tests: CheckOutcome;
   /** Le jeu se lance (`npm run dev` + navigateur invisible, sans erreur). */
   launch: CheckOutcome;
+  /** Vos parties gardées comme tests, rejouées dans la copie (jeu Godot, ADR-85). */
+  replays?: CheckOutcome | null;
   /** Mêmes vérifications sur le jeu actuel, faites seulement si le chantier échoue : l'échec était-il déjà là ? */
-  before: { tests: CheckOutcome | null; launch: CheckOutcome | null };
+  before: { tests: CheckOutcome | null; launch: CheckOutcome | null; replays?: CheckOutcome | null };
   /** Performances du jeu Godot face à son budget (ADR-83) ; absent pour un jeu web ou un relais trop ancien. */
   perf?: PerfCheck | null;
   /** Le chantier casse quelque chose qui marchait. */
@@ -101,6 +104,8 @@ export interface CheckerPort {
   tests(cwd: string): Promise<CheckOutcome>;
   /** `screenshot` : où enregistrer la capture de l'écran (aucune si absent) ; `path` : ajouté à l'adresse du jeu (« ?vitrine=A-0001 »). */
   launch(key: string, cwd: string, screenshot?: string, path?: string): Promise<CheckOutcome>;
+  /** Vos parties gardées (studio/replays), rejouées dans `cwd` (ADR-85). */
+  replays?(cwd: string): Promise<CheckOutcome>;
 }
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -141,13 +146,19 @@ export class CheckService {
     const shot = this.screenshotPath(project, task);
     mkdirSync(dirname(shot), { recursive: true });
     const launch = await safe(this.#checker.launch(`${project}/check-${task}`, worktree, shot));
+    const replays = this.#checker.replays ? await safe(this.#checker.replays(worktree)) : null;
     const before = {
       tests: tests.status === "fail" ? await safe(this.#checker.tests(root)) : null,
       launch: launch.status === "fail" ? await safe(this.#checker.launch(`${project}/check-jeu`, root)) : null,
+      replays: replays?.status === "fail" && this.#checker.replays ? await safe(this.#checker.replays(root)) : null,
     };
     const perf = launch.perf ? await this.#perf(project, root, launch.perf, safe) : null;
-    const regression = (tests.status === "fail" && before.tests?.status !== "fail") || (launch.status === "fail" && before.launch?.status !== "fail") || !!perf?.regression;
-    const report: CheckReport = { tests, launch, before, perf, regression, at: this.#clock.now() };
+    const regression =
+      (tests.status === "fail" && before.tests?.status !== "fail") ||
+      (launch.status === "fail" && before.launch?.status !== "fail") ||
+      (replays?.status === "fail" && before.replays?.status !== "fail") ||
+      !!perf?.regression;
+    const report: CheckReport = { tests, launch, replays, before, perf, regression, at: this.#clock.now() };
     this.#db
       .prepare("INSERT INTO checks (project, task, data_json, at) VALUES (?, ?, ?, ?) ON CONFLICT (project, task) DO UPDATE SET data_json = excluded.data_json, at = excluded.at")
       .run(project, task, JSON.stringify(report), report.at);
@@ -156,7 +167,7 @@ export class CheckService {
       actor: { kind: "system" },
       type: "check.done",
       subject: task,
-      payload: { tests: tests.status, launch: launch.status, regression, ...(perf ? { perf: perf.status, fps: perf.sample.fps } : {}) },
+      payload: { tests: tests.status, launch: launch.status, regression, ...(perf ? { perf: perf.status, fps: perf.sample.fps } : {}), ...(replays && replays.status !== "none" ? { replays: replays.status } : {}) },
     });
     return report;
   }
@@ -211,7 +222,7 @@ export function describeChecks(c: CheckReport): string {
   const part = (label: string, o: CheckOutcome, before: CheckOutcome | null) =>
     o.status === "none" ? null : o.status === "pass" ? `${label} ✓` : `${label} ✗${before?.status === "fail" ? " (déjà le cas avant ce chantier)" : ""}`;
   const perf = c.perf ? (c.perf.status === "pass" ? `performances ✓ (${n(c.perf.sample.fps)} images/s)` : `performances ✗${c.perf.regression ? "" : " (déjà le cas avant ce chantier)"}`) : null;
-  const parts = [part("tests du jeu", c.tests, c.before.tests), part("le jeu se lance", c.launch, c.before.launch), perf].filter(Boolean);
+  const parts = [part("tests du jeu", c.tests, c.before.tests), part("le jeu se lance", c.launch, c.before.launch), c.replays ? part("vos parties rejouées", c.replays, c.before.replays ?? null) : null, perf].filter(Boolean);
   return parts.length ? `Vérifié par le hub : ${parts.join(", ")}.` : "";
 }
 
@@ -228,7 +239,8 @@ export function checksForTester(c: CheckReport): string {
       ? `- Performances (budget du studio) : OK. ${c.perf.detail}`
       : `- Performances (budget du studio) : ÉCHEC${c.perf.regression ? " (le jeu était plus rapide avant ce chantier : RÉGRESSION)" : ""}\n${c.perf.detail}`
     : null;
-  return [line("Tests du jeu (npm test)", c.tests, c.before.tests), line("Le jeu se lance dans le navigateur", c.launch, c.before.launch), perf].filter(Boolean).join("\n");
+  const replays = c.replays && c.replays.status !== "none" ? line("Les parties du directeur créatif, rejouées à l'identique", c.replays, c.before.replays ?? null) : null;
+  return [line("Tests du jeu (npm test)", c.tests, c.before.tests), line("Le jeu se lance dans le navigateur", c.launch, c.before.launch), replays, perf].filter(Boolean).join("\n");
 }
 
 /** Ce qu'il faut dire au développeur quand le hub trouve une régression. */
@@ -236,6 +248,12 @@ export function regressionFeedback(c: CheckReport): string {
   const lines = ["Le hub a vérifié ton travail lui-même et il a cassé quelque chose qui marchait avant :"];
   if (c.tests.status === "fail" && c.before.tests?.status !== "fail") lines.push(`- Les tests du jeu (npm test) ne passent plus. Fin de la sortie :\n${c.tests.detail}`);
   if (c.launch.status === "fail" && c.before.launch?.status !== "fail") lines.push(`- Le jeu ne se lance plus correctement dans le navigateur : ${c.launch.detail}`);
+  if (c.replays?.status === "fail" && c.before.replays?.status !== "fail") {
+    lines.push(
+      `- Une partie que le directeur créatif a jouée puis gardée comme test ne se rejoue plus à l'identique (mêmes entrées, même hasard ; l'état du jeu diverge) :\n${c.replays.detail}`,
+      "  Si ton changement est voulu et change ce que le joueur obtient, dis-le dans ton rapport (la partie sera à rejouer) ; sinon, corrige.",
+    );
+  }
   if (c.perf?.regression) {
     lines.push(
       `- Le jeu est devenu trop lent (budget de performance du studio) : ${c.perf.detail}`,
@@ -361,6 +379,17 @@ export class RealChecker implements CheckerPort {
       await browser?.close().catch(() => {});
       await this.#previews.stop(preview.key);
     }
+  }
+
+  /** Vos parties gardées comme tests (ADR-85), rejouées dans le jeu de `cwd`, une à une, hors de l'écran. */
+  async replays(cwd: string): Promise<CheckOutcome> {
+    if (!isGodot(cwd)) return { status: "none", detail: "parties rejouées : jeux Godot seulement" };
+    if (!existsSync(join(cwd, "studio", "replays"))) return { status: "none", detail: "aucune partie gardée comme test" };
+    const godot = this.#godot();
+    if (!godot) return { status: "none", detail: "Godot introuvable sur ce PC" };
+    const imported = await godotImport(godot.exe, cwd, this.#testTimeoutMs);
+    if (imported.status === "fail") return imported;
+    return runSavedReplays(cwd, (c, f, w) => godotReplay(godot.exe, c, f, w));
   }
 
   /** Jeu Godot (ADR-73) : import, puis le jeu hors de l'écran avec le relais ; ses erreurs, une photo, les fichiers chargés. */

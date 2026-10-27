@@ -6,6 +6,7 @@ import { AGENTS, ago, describeEvent } from "./agents.ts";
 import { AUTONOMY } from "./Autonomy.tsx";
 import { useNow, useStudio } from "./context.tsx";
 import { Icon } from "./Icon.tsx";
+import { KeyImage, latestShot, useStyleImage } from "./KeyImage.tsx";
 import banner from "../assets/banner.jpg";
 
 const ENGINE = { godot: "Godot", web: "Web · TypeScript", unknown: "Moteur inconnu" } as const;
@@ -140,7 +141,7 @@ export function Home() {
               <article key={p.slug} className={`project-tile ${p.busy ? "busy" : ""}`}>
                 <a className="tile-cover" data-engine={p.engine} href={`#/p/${p.slug}`} aria-hidden="true" tabIndex={-1}>
                   <span className="tile-initial">{p.name.slice(0, 1).toUpperCase()}</span>
-                  {latest && <Cover slug={p.slug} task={latest.id} version={latest.updated_at} />}
+                  <TileImage slug={p.slug} shot={latestShot(p.slug, list)} />
                   {p.busy && (
                     <span className="tile-live">
                       <span className="live-dot" /> au travail
@@ -266,8 +267,8 @@ export function Home() {
 }
 
 /** Couverture d'un projet : la dernière capture du jeu prise par le hub (ADR-33), sinon le dégradé. */
-function Cover({ slug, task, version }: { slug: string; task: string; version: string }) {
-  const [ok, setOk] = useState(true);
-  if (!ok) return null;
-  return <img className="tile-shot" src={api.screenshotUrl(slug, task, version)} alt="" loading="lazy" onError={() => setOk(false)} />;
+/** La couverture d'une tuile : la dernière capture du jeu, sinon le style retenu par la DA (ADR-86). */
+function TileImage({ slug, shot }: { slug: string; shot: string | null }) {
+  const style = useStyleImage(slug);
+  return <KeyImage urls={[shot, style]} className="tile-shot" />;
 }

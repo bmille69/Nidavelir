@@ -223,6 +223,9 @@ export type ArtState = {
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
+/** Vos parties enregistrées en essayant un jeu Godot, et celles gardées comme tests (ADR-85). */
+export type Recording = { id: string; task: string | null; at: string; seconds: number; inputs: number; checkpoints: number; finalState: string | null };
+export type SavedReplay = { file: string; name: string; note: string; seconds: number; inputs: number; saved_at: string | null };
 export type ArtSpend = { usd: number; credits: number; capUsd: number; capCredits: number; over: boolean };
 /** La direction visuelle (ADR-58) : studio/art/direction.json. */
 export type ArtTaste = "aime" | "evite";
@@ -572,6 +575,10 @@ export const api = {
   previews: (slug: string) => request<Preview[]>("GET", `/projects/${slug}/previews`),
   /** `opened` : le hub a ouvert le jeu lui-même dans Edge sur l'ordinateur. */
   startPreview: (slug: string, task?: string) => request<Preview & { opened: boolean }>("POST", task ? `/projects/${slug}/tasks/${task}/preview` : `/projects/${slug}/preview`, {}),
+  replays: (slug: string) => request<{ recordings: Recording[]; saved: SavedReplay[] }>("GET", `/projects/${slug}/replays`),
+  saveRecording: (slug: string, id: string, name: string, note: string) => request<SavedReplay>("POST", `/projects/${slug}/recordings/${id}/save`, { name, note }),
+  deleteRecording: (slug: string, id: string) => request<{ ok: true }>("POST", `/projects/${slug}/recordings/${id}/delete`, {}),
+  deleteReplay: (slug: string, file: string) => request<{ ok: true }>("POST", `/projects/${slug}/replays/${file}/delete`, {}),
   stopPreview: (slug: string) => request<{ stopped: boolean }>("POST", `/projects/${slug}/preview/stop`, {}),
   pendingEscalations: (slug: string) => request<Escalation[]>("GET", `/projects/${slug}/escalations`),
   decideEscalation: (slug: string, id: string, allowed: boolean) => request<Escalation>("POST", `/projects/${slug}/escalations/${id}/decide`, { allowed }),

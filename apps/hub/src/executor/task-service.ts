@@ -1040,11 +1040,16 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
    * Jeu Godot : studio/ (images du DA, captures…) est au hub. Sans `.gdignore`, Godot importe chaque image et écrit un
    * `.import` à côté, dans une zone interdite aux agents : le chantier échouait (T-0002 de Néon Saloon, ADR-77).
    */
+  /** Les outils du studio (relais, tests) suivent le hub : un jeu créé avant une mise à jour la reçoit ici (ADR-83). */
+  async refreshGodotTools(repo: string): Promise<void> {
+    if (!isGodot(repo) || !hasBridge(repo)) return;
+    const updated = installStudioAddons(repo);
+    if (updated.length) await this.#vcs.commitPaths(repo, updated, "studio: outils du studio Godot mis à jour (relais, tests)");
+  }
+
   async #godotIgnoresStudio(repo: string): Promise<void> {
     if (!isGodot(repo)) return;
-    // Les outils du studio (relais, tests) suivent le hub : un jeu créé avant une mise à jour la reçoit ici (ADR-83).
-    const updated = hasBridge(repo) ? installStudioAddons(repo) : [];
-    if (updated.length) await this.#vcs.commitPaths(repo, updated, "studio: outils du studio Godot mis à jour (relais, tests)");
+    await this.refreshGodotTools(repo);
     const marker = join(repo, "studio", ".gdignore");
     if (!existsSync(join(repo, "studio")) || existsSync(marker)) return;
     writeFileSync(marker, "", "utf8");

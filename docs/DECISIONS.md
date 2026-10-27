@@ -1103,17 +1103,6 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - la fiche montre « Dépensé : x $ sur y $ · n crédits Tripo sur m », en orange au plafond.
 - **Vérifié** : deux tests dans `art.test.ts`. Un décor dont la finition résiste : les pas de l'artisan et le validateur sont comptés, la 2e passe n'a pas lieu, le message cite la dépense et les remarques, « Reprendre la finition » est refusé, puis accepté après « Relever le plafond » ; un canon : les 30 crédits Tripo sont comptés. 41 tests du DA au vert, typecheck.
 
-## ADR-83 — Le hub retrouve la forge de la DA, sans revenir au tout-lueur
-
-- **Contexte** : à la demande du directeur créatif (« améliorer le rendu graphique », propositions 1 et 2 retenues). Depuis ADR-68, le hub était sobre mais plat, loin de `DA.png`. Quelques incohérences aussi : le rose du DA (`--c-art`) hors palette, sur la sélection d'un style et les visuels à valider ; un bouton indisponible (cyan à 42 %) passait pour un second style de bouton bleu-vert ; la frise des étapes de la direction passait à la ligne ; Exo 2 et Orbitron étaient livrées sans servir.
-- **Décision** (`styles.css`, `studio/studio.css`, CSS seulement) :
-  - **couleurs** : ce que vous choisissez est en glace (style retenu, vignette), ce qui vous attend en braise (question du DA, visuel à valider, puce « à valider »), le validé en vert. `--c-art` devient une braise claire (`#ff8a4c`). Un bouton indisponible est gris (`grayscale`), sauf les vignettes de style, qui gardent leurs couleurs ;
-  - **la forge** : fond avec la glace en haut à droite, la braise en bas, très atténuées, et un grain fin (SVG en ligne, aucun fichier). Le liseré glace → braise revient sous l'onglet actif, sur la barre du menu et sous la bannière de l'accueil. La lueur reste réservée à l'élément actif ;
-  - **lettres** : Exo 2 pour les titres (h1 à h3), Orbitron pour les rubriques en capitales (menu, sur-titres, titres de colonnes). Le texte courant et les boutons restent en Segoe. Orbitron rend mal les parenthèses en petit : elle ne sert pas aux libellés des messages ;
-  - la frise des étapes de la direction tient sur une ligne (étape en cours en glace).
-- **Non retenu** : les messages « estompés » des captures étaient l'animation d'apparition saisie en cours, pas un défaut. « Directeur : fake » au bas du menu vient des tests (en vrai : « Claude (direct) »).
-- **Vérifié** : captures avant/après de `studio`, `art`, `art-vision` et `pilotage` examinées ; suite navigateur relancée.
-
 ## ADR-83 — Budget de performance des jeux Godot : le relais mesure, le hub refuse un chantier qui ralentit le jeu
 
 - **Contexte** : idée n°2 de la phase 6. Le hub vérifiait que le jeu se lance sans erreur, jamais qu'il reste fluide. L'ADR-80 fait passer l'arme vue à la première personne à 15 000 triangles et à des textures de 2048 : sans mesure, un chantier qui fait chuter le jeu passe inaperçu jusqu'à ce que vous jouiez.
@@ -1146,3 +1135,45 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `art.test.ts`, avec de vraies images PNG : même aspect au grain près après une fusion sans rapport (rien ne bouge) ; aspect changé après T-0005 (Bilan, deux photos, message, commit) ; nouvel aspect accepté puis retrouvé identique ; vitrine animée non signalée. 42 tests du DA au vert.
   - Sur les vraies photos de Survivor Destiny : deux photos d'A-0005 prises à deux fusions d'écart, 1,7 % de cases changées (même aspect) ; A-0008 avant et après la réparation de sa vitrine (T-0096 → T-0097), 99,8 % (changé). Les photos du vrai Godot se lisent aussi.
   - typecheck.
+
+## ADR-86 — Le hub retrouve la forge de la DA, sans revenir au tout-lueur
+
+- **Contexte** : à la demande du directeur créatif (« améliorer le rendu graphique », propositions 1 et 2 retenues). Depuis ADR-68, le hub était sobre mais plat, loin de `DA.png`. Quelques incohérences aussi : le rose du DA (`--c-art`) hors palette, sur la sélection d'un style et les visuels à valider ; un bouton indisponible (cyan à 42 %) passait pour un second style de bouton bleu-vert ; la frise des étapes de la direction passait à la ligne ; Exo 2 et Orbitron étaient livrées sans servir.
+- **Décision** (`styles.css`, `studio/studio.css`, CSS seulement) :
+  - **couleurs** : ce que vous choisissez est en glace (style retenu, vignette), ce qui vous attend en braise (question du DA, visuel à valider, puce « à valider »), le validé en vert. `--c-art` devient une braise claire (`#ff8a4c`). Un bouton indisponible est gris (`grayscale`), sauf les vignettes de style, qui gardent leurs couleurs ;
+  - **la forge** : fond avec la glace en haut à droite, la braise en bas, très atténuées, et un grain fin (SVG en ligne, aucun fichier). Le liseré glace → braise revient sous l'onglet actif, sur la barre du menu et sous la bannière de l'accueil. La lueur reste réservée à l'élément actif ;
+  - **lettres** : Exo 2 pour les titres (h1 à h3), Orbitron pour les rubriques en capitales (menu, sur-titres, titres de colonnes). Le texte courant et les boutons restent en Segoe. Orbitron rend mal les parenthèses en petit : elle ne sert pas aux libellés des messages ;
+  - la frise des étapes de la direction tient sur une ligne (étape en cours en glace).
+- **Non retenu** : les messages « estompés » des captures étaient l'animation d'apparition saisie en cours, pas un défaut. « Directeur : fake » au bas du menu vient des tests (en vrai : « Claude (direct) »).
+- **Vérifié** : captures avant/après de `studio`, `art`, `art-vision` et `pilotage` examinées ; suite navigateur relancée (37 tests).
+- **Numéro** : d'abord écrit ADR-83 puis ADR-85 : deux numéros pris en même temps par d'autres chantiers ; renuméroté.
+- **Complément, chantier 3 (« donner plus de vie »)** :
+  - **image clé d'un jeu** (`studio/KeyImage.tsx`) : la dernière capture d'un chantier fusionné ou en relecture, à défaut le style retenu par la DA, à défaut l'initiale. Elle sert de vignette dans l'en-tête du projet (liseré glace → braise) et de fond fondu à droite de cet en-tête, et de couverture aux tuiles de l'accueil qui n'ont pas de capture. Relue chaque minute et à chaque changement d'onglet. L'en-tête passe en `z-index: 10` pour que le menu d'autonomie reste devant ;
+  - **la forge chauffe** : un agent au travail (bandeau de l'en-tête) et une tuile de projet occupée ont un liseré glace → braise qui tourne, avec une pulsation de braise pour l'agent ;
+  - **survols** : visuels du DA et vignettes de style se soulèvent ; la tuile « Concevoir » passe à la braise de la DA (l'ancien orange `#FB923C` disparaît) ;
+  - **états vides habités** (discussion vide, DA vide, aucun projet) : la caverne de la bannière en fond très sombre et le N qui respire ;
+  - **panneau de la DA** : générateur, Flux Kontext et atelier 3D ont un titre, une étiquette (« À installer », « 2 étapes »), une phrase et l'action ; l'explication longue passe dans « En savoir plus ». La clé Tripo reste visible ;
+  - sur le téléphone, la frise des étapes de la direction défile au lieu de couper les mots ;
+  - les animations s'arrêtent avec « réduire les animations » de Windows (règle existante).
+
+
+## ADR-85 — Vos parties enregistrées, puis rejouées comme tests
+
+- **Contexte** : idée n°4 de la phase 6. Quand vous trouvez un bug ou une règle qui compte en jouant, il fallait le décrire, et rien n'empêchait un chantier suivant de le casser à nouveau. Le testeur joue (ADR-69), mais ses parties ne sont pas les vôtres.
+- **Décision** :
+  - **Enregistrer** (jeux Godot, relais v3) : « ▶ Essayer » (le jeu ou la version d'un chantier) lance le jeu avec `--studio-record`, 60 images par seconde fixes (`--fixed-fps 60 --max-fps 60`), donc une partie se rejoue à l'identique. Le relais note :
+    - le hasard du jeu (`seed()` global, et `set_seed()` du nœud `studio_test` s'il existe) ;
+    - chaque entrée, à son image : touches, souris, toucher, manette, actions ;
+    - l'état du jeu (`snapshot()` du nœud `studio_test`) toutes les 30 images, et à la fin.
+    - Le fichier va dans les données du hub (`recordings/<projet>/`), gardé 7 jours ; une partie sans action est oubliée. Avant « Essayer », le jeu reçoit les outils du studio à jour (ADR-83).
+  - **Rejouer** (`--studio-replay`) : hors de l'écran, à la taille de l'enregistrement, aussi vite que possible. Les entrées d'une image sont injectées la frame d'avant, car Godot les livre au début de l'image suivante, comme pendant l'enregistrement. L'état est comparé aux mêmes images. Le relais rend `STUDIO_REPLAY: {ok, mismatches…}` puis quitte. Les erreurs de script pendant la partie la font échouer.
+  - **Garder comme test** (panneau Chantiers, « Vos parties » → « En faire un test », nom et ce qu'elle vérifie) : la partie est rejouée **deux fois** sur la version actuelle du jeu. Si elle diverge (hasard sans graine, temps réel…), elle ferait un test qui échoue au hasard : elle est refusée, avec ce qui a divergé. Sinon elle est commitée dans `studio/replays/<nom>.jsonl`, zone du hub que les agents lisent sans pouvoir l'écrire. Une partie sans état à comparer (pas de `snapshot()`) ne peut pas devenir un test. « retirer » l'enlève.
+  - **À chaque chantier**, les vérifications du hub (ADR-32) rejouent les parties gardées dans la copie. Une partie qui diverge dans la copie mais pas dans le jeu actuel est une régression : le développeur corrige, avec l'instant, l'état attendu, l'état obtenu, et ce que vous vérifiiez. Le compte rendu dit « vos parties rejouées ✓ ».
+  - **Correctif Git trouvé au passage** (`GitCli.commitPaths`) : un fichier nommé seul, nouveau, dans un dossier nouveau, n'était pas ajouté quand la liste portait l'exclusion des `*.tmp` (Git 2.53 : « ?? studio/replays/ » restait non suivi). Les fichiers nommés sont maintenant ajoutés une seconde fois, sans exclusion.
+- **Limites** : jeux Godot seulement ; un jeu qui tire son hasard d'un `RandomNumberGenerator` à part, sans `set_seed`, ou qui dépend de l'heure, ne se rejoue pas à l'identique. C'est alors dit au moment de garder la partie.
+- **Vérifié** :
+  - `replays.test.ts` (5 tests) : chemin d'enregistrement Godot seulement, lecture d'une partie, refus d'une partie qui diverge, partie gardée et commitée puis retirée, partie sans état refusée, vérification qui dit la divergence en clair.
+  - `autonomy.test.ts` : une partie qui diverge dans la copie et pas dans le jeu fait corriger le chantier, puis il est fusionné.
+  - `godot.e2e.ts` avec le vrai Godot 4.6.2, deux fois : partie enregistrée par le relais (clics, touche maintenue), rejouée à l'identique ; le carré ralenti (300 → 200), la même partie diverge.
+  - Essais préalables : 3 enregistrements sur 3 rejoués à l'identique avec des touches. Avec l'outil du testeur pour une action de l'Input Map (`Input.action_press`, état posé sans événement), le rejeu avait 1 image d'écart : ce n'est pas le cas d'une vraie partie, faite de vrais événements.
+  - 263 tests au vert, typecheck.

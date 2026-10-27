@@ -351,7 +351,12 @@
 .tile-stats b { color: var(--text); }
 .tile-actions { display: flex; gap: 0.35rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
 .tile-actions a { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.42rem 0.4rem; border-radius: 10px; font-size: 0.82rem; font-weight: 600; color: var(--text-2); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); transition: all 0.15s ease; }
-.tile-actions a:hover { color: var(--text); border-color: rgba(0, 229, 255, 0.25); background: var(--accent-soft); }
+.art-vision-steps li.here { color: var(--accent); border-color: rgba(0, 229, 255, 0.45); background: var(--accent-soft); }
+@media (max-width: 860px) {
+  /* Sur le téléphone, la frise défile plutôt que de couper chaque étape. */
+  .art-vision-steps { overflow-x: auto; scrollbar-width: none; }
+  .art-vision-steps li { flex: none; overflow: visible; }
+}
 
 /* Fil du studio */
 .feed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 560px; overflow: auto; }
@@ -1169,7 +1174,7 @@
 .art-done { display: flex; align-items: center; gap: 0.35rem; margin: 0.5rem 0 0; color: var(--ok); }
 .art-msg-images { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
 .art-msg-images img { width: 120px; height: 120px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); display: block; }
-/* Une question qui vous attend : la braise ; ce que vous choisissez : la glace (ADR-83). */
+/* Une question qui vous attend : la braise ; ce que vous choisissez : la glace (ADR-86). */
 .art-choice { margin-top: 0.7rem; padding: 0.6rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid rgba(255, 90, 0, 0.3); border-top: 2px solid var(--ember); background: linear-gradient(180deg, var(--ember-soft), transparent 70%); }
 .art-choice p { margin: 0 0 0.45rem; }
 .art-choice-options { display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -1654,10 +1659,122 @@ a.pilot-row-title:hover { color: var(--accent); }
 .concept-check.ok { background: var(--ok-bg); color: var(--ok); }
 .concept-check.warn { background: var(--ember-soft); color: var(--ember); }
 
-/* ── La forge (ADR-83) : les lettres de la DA pour les rubriques, une frise d'étapes sur une ligne ── */
+/* ── La forge (ADR-86) : les lettres de la DA pour les rubriques, une frise d'étapes sur une ligne ── */
 .threads h2 { font-family: var(--font-brand); font-weight: 600; font-size: 0.62rem; letter-spacing: 0.16em; }
 .art-vision-steps { flex-wrap: nowrap; gap: 3px; }
 .art-vision-steps li { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: center; padding: 0.15rem 0.4rem; font-size: 0.7rem; }
 .art-vision-steps li.here { color: var(--accent); border-color: rgba(0, 229, 255, 0.45); background: var(--accent-soft); }
 .side-nav a.active, .side-projects a.active { box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.16), 0 0 16px rgba(0, 229, 255, 0.05); }
 .sidebar { background: linear-gradient(180deg, rgba(0, 229, 255, 0.05), transparent 220px), linear-gradient(0deg, rgba(255, 90, 0, 0.035), transparent 260px), rgba(7, 10, 17, 0.84); }
+
+/* ── La forge, suite (ADR-86) : l'image clé du jeu, la forge qui chauffe, des états vides habités, un panneau DA aéré ── */
+/* En-tête de projet : l'image clé en vignette et en fond fondu. z-index 10 : le menu d'autonomie (z 20) passe toujours devant la suite. */
+.project-head { position: relative; z-index: 10; }
+.project-backdrop {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  right: 0;
+  width: 60%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  opacity: 0.2;
+  filter: blur(2px) saturate(1.15);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 65%);
+  mask-image: linear-gradient(90deg, transparent, #000 65%);
+  pointer-events: none;
+}
+.proj-emblem {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 13px;
+  object-fit: cover;
+  border: 1.5px solid transparent;
+  background: linear-gradient(var(--surface), var(--surface)) padding-box, var(--grad-brand) border-box;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 14px rgba(0, 229, 255, 0.12);
+}
+@media (max-width: 860px) {
+  .proj-emblem { width: 36px; height: 36px; border-radius: 11px; }
+  .project-backdrop { width: 100%; opacity: 0.14; }
+}
+
+/* La forge chauffe : un agent au travail a un liseré glace → braise qui tourne et une pulsation de braise. */
+.team-mini { position: relative; transition: border-color 0.2s ease, transform 0.2s ease; }
+.team-mini:hover { transform: translateY(-1px); }
+.team-mini.state-working { border-color: transparent; }
+.team-mini.state-working::after,
+.project-tile.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--angle, 0deg), var(--accent), var(--ember), transparent 55%, var(--accent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: border-spin 3s linear infinite;
+  pointer-events: none;
+}
+.team-mini.state-working::before { content: ""; position: absolute; inset: 0; border-radius: inherit; animation: ember-pulse 2.4s ease-out infinite; pointer-events: none; }
+@keyframes ember-pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 90, 0, 0.35); } 100% { box-shadow: 0 0 0 10px rgba(255, 90, 0, 0); } }
+.project-tile { position: relative; }
+.project-tile.busy { border-color: transparent; }
+.project-tile:hover .tile-cover::after { background: linear-gradient(180deg, transparent 35%, rgba(5, 6, 11, 0.7)), linear-gradient(90deg, rgba(0, 229, 255, 0.08), rgba(255, 90, 0, 0.08)); }
+.tile-initial { font-family: var(--font-title); }
+.create-tile.concept { background: linear-gradient(150deg, var(--ember-soft), transparent 60%), var(--surface); }
+.create-tile.concept:hover { border-color: rgba(255, 90, 0, 0.5); box-shadow: var(--shadow), 0 0 0 1px rgba(255, 90, 0, 0.25), 0 8px 30px rgba(255, 90, 0, 0.15); }
+
+/* Survols : ce qui se clique se soulève un peu. */
+.art-asset { transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
+.art-asset:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+.art-vignette { transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.2s ease; }
+.art-vignette:hover:not(:disabled) { border-color: rgba(0, 229, 255, 0.45); transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35); }
+.art-vignette.on:hover:not(:disabled) { border-color: var(--accent); }
+
+/* États vides : la caverne de la DA en fond, le N qui respire. */
+.messages .empty,
+.empty-state {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(8, 11, 18, 0.8), rgba(8, 11, 18, 0.95)), url("../assets/banner.jpg") 0% 45% / 260% auto no-repeat, var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.messages .empty { padding: 1.8rem 1.6rem; }
+.messages .empty::before,
+.empty-state::before {
+  content: "";
+  display: block;
+  width: 52px;
+  height: 61px;
+  margin: 0 auto 0.9rem;
+  background: url("../assets/logo-mark.png") center / contain no-repeat;
+  filter: drop-shadow(0 0 10px rgba(0, 229, 255, 0.3)) drop-shadow(0 0 16px rgba(255, 90, 0, 0.2));
+  animation: forge-breathe 4.5s ease-in-out infinite;
+}
+@keyframes forge-breathe {
+  50% { transform: translateY(-2px); filter: drop-shadow(0 0 16px rgba(0, 229, 255, 0.45)) drop-shadow(0 0 24px rgba(255, 90, 0, 0.35)); }
+}
+.art-empty button { margin: 0.8rem auto 0; }
+
+/* Panneau de la DA : un titre, une phrase, une action ; le détail se déplie. */
+.art-gen { gap: 0.6rem; padding: 1rem 1.1rem; }
+.art-gen-head { display: flex; align-items: center; gap: 0.5rem; }
+.art-gen-head .icon { color: var(--accent); }
+.art-gen-head b { flex: 1; font-family: var(--font-title); font-size: 0.98rem; font-weight: 650; }
+.art-gen > p.small { margin: 0; color: var(--text-2); }
+.art-gen-more summary { cursor: pointer; list-style: none; font-size: 0.8rem; color: var(--muted); }
+.art-gen-more summary::-webkit-details-marker { display: none; }
+.art-gen-more summary::before { content: "▸ "; }
+.art-gen-more[open] summary::before { content: "▾ "; }
+.art-gen-more summary:hover { color: var(--text); }
+.art-gen-more p { margin: 0.35rem 0 0; }
+
+/* Vos parties enregistrées (ADR-85) */
+.replays { margin-top: var(--space-3); }
+.replays h3 { margin: 0 0 var(--space-2); }
+.replay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.replay-list li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.replay-form { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }

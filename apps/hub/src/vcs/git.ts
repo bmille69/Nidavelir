@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -77,6 +77,10 @@ export class GitCli implements VcsPort {
     if (paths.length === 0) return null;
     // Les fichiers temporaires d'une écriture en cours (« *.tmp ») ne sont jamais commités.
     await this.#git(root, ["add", "--all", "--", ...paths, ":(exclude,glob)**/*.tmp"]);
+    // Git ignore un fichier nommé seul quand il est nouveau, dans un dossier nouveau, et qu'une exclusion accompagne la
+    // liste (« ?? studio/replays/ » restait non suivi) : les fichiers nommés sont ajoutés une seconde fois, sans exclusion.
+    const files = paths.filter((p) => !p.endsWith(".tmp") && existsSync(join(root, p)) && statSync(join(root, p)).isFile());
+    if (files.length) await this.#git(root, ["add", "--", ...files]);
     const staged = await this.#git(root, ["diff", "--cached", "--name-only", "--", ...paths]);
     if (!staged.trim()) return null;
     // `git commit -- <paths>` (mode --only) ignore tout ce qui est indexé hors de ces chemins.

@@ -18,7 +18,7 @@ afterEach(() => cleanupSandboxes());
 /** Vérificateur scripté : une réponse par appel, dans l'ordre ; note où il a vérifié (copie du chantier ou jeu). */
 class FakeChecker implements CheckerPort {
   readonly calls: string[] = [];
-  readonly answers: { tests: CheckOutcome[]; launch: CheckOutcome[] } = { tests: [], launch: [] };
+  readonly answers: { tests: CheckOutcome[]; launch: CheckOutcome[]; replays: CheckOutcome[] } = { tests: [], launch: [], replays: [] };
   readonly gameRoot: () => string;
   constructor(gameRoot: () => string) {
     this.gameRoot = gameRoot;
@@ -29,6 +29,12 @@ class FakeChecker implements CheckerPort {
   async tests(cwd: string) {
     this.calls.push(`tests:${this.#where(cwd)}`);
     return this.answers.tests.shift() ?? { status: "pass" as const, detail: "ok" };
+  }
+  /** Vos parties rejouées (ADR-85) : notées seulement quand le test en prévoit. */
+  async replays(cwd: string) {
+    if (!this.answers.replays.length) return { status: "none" as const, detail: "aucune partie gardée comme test" };
+    this.calls.push(`replays:${this.#where(cwd)}`);
+    return this.answers.replays.shift()!;
   }
   async launch(_key: string, cwd: string, screenshot?: string) {
     this.calls.push(`launch:${this.#where(cwd)}`);
@@ -448,7 +454,8 @@ describe("atelier (par défaut)", () => {
     await hub.conversations.send(P, hub.conversations.createThread(P, "x").id, "go");
     await settle(hub);
     const bridge = readFileSync(join(root, "addons", "studio_bridge", "bridge.gd"), "utf8");
-    expect(bridge).toMatch(/const VERSION := 2[\s\S]*"perf":/);
+    expect(bridge).toMatch(/const VERSION := \d+[\s\S]*"perf":/);
+    expect(bridge).toBe(readFileSync(join(process.cwd(), "apps", "hub", "src", "godot", "addons", "studio_bridge", "bridge.gd"), "utf8"));
     expect(existsSync(join(root, "addons", "studio_tests", "run.gd"))).toBe(true);
     expect(git(root, "log", "--format=%s")).toMatch(/outils du studio Godot mis à jour/);
     expect(git(root, "status", "--porcelain", "--", "addons")).toBe("");
@@ -792,6 +799,29 @@ describe("qualité fiable (ADR-32)", () => {
     await settle(hub);
     expect(hub.tasks.get(P, "T-0003").status).toBe("merged");
     expect(hub.checks!.get(P, "T-0003")!.perf).toMatchObject({ status: "pass", regression: false, detail: expect.stringMatching(/l'écart venait de la machine/) });
+  });
+
+  it("vos parties rejouées (ADR-85) : une partie qui diverge dans la copie, mais pas dans le jeu, fait corriger le chantier", async () => {
+    let root = "";
+    const checker = new FakeChecker(() => root);
+    const { sb, hub, fake, exec } = await setup(checker);
+    root = hub.projects.get(P).root;
+    hub.projects.setAutonomy(sb.human(), P, "workshop");
+    work(exec, "a.ts", ["pass", "pass"]);
+    checker.answers.replays.push(
+      { status: "fail", detail: "0/1 partie(s) rejouée(s) à l'identique\n✗ « Vague 2 » : à 12 s, l'état du jeu était {\"or\":40} quand vous avez joué, et {\"or\":25} en rejouant la même partie (ce que vous vérifiiez : la prime de vague)" },
+      { status: "pass", detail: "1/1" },
+      { status: "pass", detail: "1/1 partie(s) rejouée(s) à l'identique" },
+    );
+    fake.replies.push(brief("Économie"));
+    const t = hub.conversations.createThread(P, "x");
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+    expect(checker.calls).toEqual(["tests:chantier", "launch:chantier", "replays:chantier", "replays:jeu", "tests:chantier", "launch:chantier", "replays:chantier"]);
+    expect(exec.requests[1]!.prompt).toMatch(/Les parties du directeur créatif, rejouées à l'identique : ÉCHEC \(ça marchait avant ce chantier : RÉGRESSION\)/);
+    expect(exec.requests[2]!.prompt).toMatch(/Une partie que le directeur créatif a jouée puis gardée comme test ne se rejoue plus à l'identique[\s\S]*la prime de vague/);
+    expect(hub.tasks.get(P, "T-0001").status).toBe("merged");
+    expect(hub.conversations.messages(P, t.id).at(-1)!.text).toMatch(/vos parties rejouées ✓/);
   });
 
   it("un chantier repris ou annulé ne compte plus comme réussi, et le testeur est noté en conséquence", async () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type RunEvent, type TaskRow } from "../api.ts";
 import { TryButton } from "./Preview.tsx";
+import { Replays } from "./Replays.tsx";
 import { RatingBox } from "./Rating.tsx";
 import { StatusBadge } from "../pages/TasksView.tsx";
 import { ago } from "./agents.ts";
@@ -103,6 +104,7 @@ export function WorkshopPanel({ slug }: { slug: string }) {
           );
         })}
       </ul>
+      <Replays slug={slug} />
       {done.length > 0 && (
         <section className="recent-bible">
           <h3>Fusionnés récemment</h3>

@@ -3,13 +3,15 @@
  * un échec et un script qui plante), le lancement hors de l'écran (photo, scène vitrine, fichiers chargés) et une partie
  * jouée par la manette du testeur. Sauté si Godot n'est pas sur ce PC.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { scaffoldGodot } from "../src/godot/scaffold.ts";
 import { findGodot } from "../src/godot/toolchain.ts";
+import { GodotGame } from "../src/godot/run.ts";
 import { RealChecker } from "../src/quality/checks.ts";
+import { readReplay } from "../src/quality/replays.ts";
 import { RealPlayDriver } from "../src/quality/playtest.ts";
 
 const godot = findGodot();
@@ -117,6 +119,31 @@ describe.skipIf(!godot)("Godot dans le studio", () => {
     } finally {
       await session.close();
     }
+
+    // Votre partie, enregistrée puis rejouée comme test (ADR-85) : les entrées passent par le relais pendant l'enregistrement.
+    const rec = join(dir, "partie.jsonl");
+    const recording = await GodotGame.start(godot!.exe, root, { record: rec });
+    try {
+      await recording.call("act", { steps: [{ do: "click", text: "Compter" }, { do: "press", key: "ArrowRight", hold_ms: 500 }, { do: "wait", ms: 300 }, { do: "click", text: "Compter" }] });
+    } finally {
+      await recording.close();
+    }
+    const info = readReplay(rec)!;
+    expect(info.inputs).toBeGreaterThanOrEqual(6);
+    expect(info.checkpoints).toBeGreaterThanOrEqual(2);
+    mkdirSync(join(root, "studio", "replays"), { recursive: true });
+    const lines = readFileSync(rec, "utf8").trim().split("\n");
+    writeFileSync(join(root, "studio", "replays", "compter.jsonl"), [JSON.stringify({ ...JSON.parse(lines[0]!), name: "Compter deux fois" }), ...lines.slice(1)].join("\n"));
+    const replayed = await checker.replays(root);
+    expect(replayed.status, replayed.detail).toBe("pass");
+    expect(replayed.detail).toMatch(/1\/1 partie\(s\) rejouée\(s\) à l'identique\n✓ « Compter deux fois »/);
+    // Le carré va moins vite : la même partie ne retrouve plus le même état.
+    writeFileSync(join(root, "scripts", "main.gd"), MAIN.replace("300.0 * delta", "200.0 * delta"));
+    const diverged = await checker.replays(root);
+    expect(diverged.status).toBe("fail");
+    expect(diverged.detail).toMatch(/✗ « Compter deux fois » : à [\d.]+ s, l'état du jeu était \{.*"x":\d+.*\} quand vous avez joué/);
+    writeFileSync(join(root, "scripts", "main.gd"), MAIN);
+    rmSync(join(root, "studio"), { recursive: true, force: true });
 
     // Un test qui échoue et un script qui plante : les vérifications du hub le voient.
     writeFileSync(join(root, "tests", "test_faux.gd"), `extends StudioTest\n\nfunc test_faux() -> void:\n\tassert_eq(1 + 1, 3, "arithmétique")\n`);

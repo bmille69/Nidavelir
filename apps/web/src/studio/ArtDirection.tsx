@@ -349,10 +349,12 @@ function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (f
   if (g.installed) return <KontextCard kontext={g.kontext} act={act} />;
   return (
     <div className="art-gen panel-card">
-      <p className="small">
-        <b>Générateur d'images local</b> : le Directeur artistique fabrique lui-même les visuels sur votre carte graphique, fait juger plusieurs essais et
-        recommence seul jusqu'à un visuel conforme. Sans lui, vous passez par Midjourney à la main.
-      </p>
+      <header className="art-gen-head">
+        <Icon name="image" size={18} />
+        <b>Générateur d'images local</b>
+        <span className="badge warn">À installer</span>
+      </header>
+      <p className="small">Le Directeur artistique fabrique et fait juger les visuels lui-même, sur votre carte graphique.</p>
       {g.installing ? (
         <div className="meter">
           <div className="meter-head">
@@ -370,7 +372,13 @@ function GeneratorCard({ generator: g, act }: { generator: ArtGenerator; act: (f
           <button className="small" onClick={() => void act(() => api.artInstallGenerator())}>
             <Icon name="upload" size={14} /> {g.error ? "Reprendre l'installation" : "Installer le générateur"} ({g.size})
           </button>
-          <p className="muted small">ComfyUI (2 Go) et le modèle Flux (17 Go), depuis leurs pages officielles (GitHub, Hugging Face). Gratuit ; ensuite, tout se fait sur votre PC.</p>
+          <details className="art-gen-more">
+            <summary>En savoir plus</summary>
+            <p className="muted small">
+              Il fait juger plusieurs essais et recommence seul jusqu'à un visuel conforme. Sans lui, vous passez par Midjourney à la main. ComfyUI (2 Go) et le
+              modèle Flux (17 Go), depuis leurs pages officielles (GitHub, Hugging Face). Gratuit ; ensuite, tout se fait sur votre PC.
+            </p>
+          </details>
         </>
       )}
     </div>
@@ -446,13 +454,15 @@ function ArtProgress({ slug, asset: a, generating: g, validating }: { slug: stri
 function KontextCard({ kontext: k, act }: { kontext: ArtGenerator["kontext"] | undefined; act: (fn: () => Promise<unknown>) => Promise<void> }) {
   return (
     <div className="art-gen panel-card">
-      <p className="muted small">
+      <p className="muted small art-gen-ready">
         <Icon name="check" size={14} /> Générateur d'images local prêt (Flux, sur votre carte graphique).
       </p>
-      <p className="small">
-        <b>Flux Kontext</b> : il retouche une image par consigne (« mets l'épaulière sur l'autre épaule ») au lieu de tout redessiner, et dessine un nouveau
-        personnage dans le style d'un visuel déjà validé, pour un vrai air de famille.
-      </p>
+      <header className="art-gen-head">
+        <Icon name="sparkle" size={18} />
+        <b>Flux Kontext</b>
+        <span className="badge">Facultatif</span>
+      </header>
+      <p className="small">Retouche une image par consigne au lieu de tout redessiner, et garde l'air de famille entre les visuels.</p>
       {k?.installing ? (
         <div className="meter">
           <div className="meter-head">
@@ -470,7 +480,13 @@ function KontextCard({ kontext: k, act }: { kontext: ArtGenerator["kontext"] | u
           <button className="small" onClick={() => void act(() => api.artInstallKontext())}>
             <Icon name="upload" size={14} /> {k?.error ? "Reprendre l'installation" : "Installer Flux Kontext"} ({k?.size ?? "≈ 17 Go"})
           </button>
-          <p className="muted small">Le modèle Kontext (12 Go) et ses encodeurs (5,5 Go), depuis les pages publiques de ComfyUI sur Hugging Face, sans compte. Gratuit.</p>
+          <details className="art-gen-more">
+            <summary>En savoir plus</summary>
+            <p className="muted small">
+              Par exemple « mets l'épaulière sur l'autre épaule » ; un nouveau personnage se dessine dans le style d'un visuel déjà validé. Le modèle Kontext (12 Go) et
+              ses encodeurs (5,5 Go), depuis les pages publiques de ComfyUI sur Hugging Face, sans compte. Gratuit.
+            </p>
+          </details>
         </>
       )}
     </div>
@@ -489,10 +505,19 @@ function Workshop3DCard({ workshop: w, act }: { workshop: Art3D; act: (fn: () =>
     );
   return (
     <div className="art-gen panel-card">
-      <p className="small">
-        <b>Atelier 3D</b> : Tripo transforme l'image validée en modèle 3D (avec squelette et animations pour les personnages), Blender le met aux mesures du jeu et le
-        photographie sous tous les angles pour le validateur.
-      </p>
+      <header className="art-gen-head">
+        <Icon name="cube" size={18} />
+        <b>Atelier 3D</b>
+        <span className="badge warn">{!b.installed && !w.tripo.configured ? "2 étapes" : "1 étape"}</span>
+      </header>
+      <p className="small">L'image validée devient un modèle 3D aux mesures du jeu.</p>
+      <details className="art-gen-more">
+        <summary>En savoir plus</summary>
+        <p className="muted small">
+          Tripo fabrique le modèle (avec squelette et animations pour les personnages), Blender le met aux mesures du jeu et le photographie sous tous les angles pour
+          le validateur.
+        </p>
+      </details>
       {!b.installed &&
         (b.installing ? (
           <div className="meter">
@@ -516,11 +541,11 @@ function Workshop3DCard({ workshop: w, act }: { workshop: Art3D; act: (fn: () =>
       {!w.tripo.configured ? (
         <div className="art-key">
           <p className="muted small">
-            Tripo est un service en ligne payant : créez un compte sur{" "}
+            Votre clé Tripo (service payant,{" "}
             <a href="https://platform.tripo3d.ai" target="_blank" rel="noreferrer">
               platform.tripo3d.ai
             </a>
-            , prenez des crédits, puis collez ici une clé « API Key » (elle commence par tsk_). Plafond : {w.tripo.cap} crédits par mois.
+            ) : elle commence par tsk_. Plafond : {w.tripo.cap} crédits par mois.
           </p>
           <div className="art-key-row">
             <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="tsk_…" autoComplete="off" />

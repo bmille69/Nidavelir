@@ -6,27 +6,62 @@ extends Node
 ## touches, actions, clics, toucher, texte, photos de l'écran, état du jeu (nœud du groupe « studio_test »),
 ## et mesure des performances (« perf », ADR-83).
 ## « --vitrine=A-0001 » ouvre la scène vitrine res://vitrines/a-0001.tscn, si elle existe.
+## « --studio-record=<fichier> » enregistre la partie que vous jouez (vos entrées, image par image, et l'état du jeu) ;
+## « --studio-replay=<fichier> » la rejoue à l'identique et compare l'état du jeu (ADR-85). « --studio-seed=<n> » fixe
+## le hasard du jeu (seed() et set_seed() du nœud « studio_test »).
 ##
 ## Ce fichier appartient au hub : ne le modifiez pas, il est remplacé à chaque mise à jour.
 
-const VERSION := 2
+const VERSION := 3
 
 var _server: TCPServer
 var _peer: StreamPeerTCP
 var _buffer := ""
 var _busy := false
 
+# Parties enregistrées et rejouées (ADR-85).
+var _seed := -1
+var _seed_pending := false
+var _record: FileAccess
+var _record_start := 0
+var _record_events := 0
+var _replay_events: Array = []
+var _replay_snaps: Array = []
+var _replay_end := 0
+var _replay_start := 0
+var _replay_ei := 0
+var _replay_si := 0
+var _replay_mismatches: Array = []
+var _replay_done := false
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var port := 0
+	var record := ""
+	var replay := ""
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--studio-bridge="):
 			port = int(arg.get_slice("=", 1))
 		elif arg.begins_with("--vitrine="):
 			_open_vitrine(arg.get_slice("=", 1))
+		elif arg.begins_with("--studio-record="):
+			record = arg.substr("--studio-record=".length())
+		elif arg.begins_with("--studio-replay="):
+			replay = arg.substr("--studio-replay=".length())
+		elif arg.begins_with("--studio-seed="):
+			_seed = int(arg.get_slice("=", 1))
+	if replay != "":
+		_start_replay(replay)
+	elif record != "":
+		_start_record(record)
+	if _seed >= 0:
+		seed(_seed)
+		_seed_pending = true
+	set_process_input(_record != null)
 	if port <= 0:
-		set_process(false)
+		if _record == null and _replay_events.is_empty() and _replay_snaps.is_empty() and not _replay_done:
+			set_process(false)
 		return
 	_server = TCPServer.new()
 	if _server.listen(port, "127.0.0.1") != OK:
@@ -45,6 +80,18 @@ func _open_vitrine(id: String) -> void:
 
 
 func _process(_delta: float) -> void:
+	if _seed_pending:
+		var node := get_tree().get_first_node_in_group("studio_test")
+		if node != null:
+			_seed_pending = false
+			if node.has_method("set_seed"):
+				node.call("set_seed", _seed)
+	if _record != null:
+		_record_tick()
+	if not _replay_done and (_replay_end > 0):
+		_replay_tick()
+	if _server == null:
+		return
 	if _peer == null:
 		if _server.is_connection_available():
 			_peer = _server.take_connection()
@@ -112,6 +159,221 @@ func _handle(req: Dictionary) -> Dictionary:
 func _scene_path() -> String:
 	var scene := get_tree().current_scene
 	return scene.scene_file_path if scene else ""
+
+
+# ── Parties enregistrées, puis rejouées (ADR-85) ─────────────────────────
+
+func _frame() -> int:
+	return Engine.get_process_frames()
+
+
+func _state() -> String:
+	var node := get_tree().get_first_node_in_group("studio_test")
+	if node == null or not node.has_method("snapshot"):
+		return ""
+	return JSON.stringify(node.call("snapshot"))
+
+
+func _start_record(path: String) -> void:
+	_record = FileAccess.open(path, FileAccess.WRITE)
+	if _record == null:
+		push_error("studio_bridge : impossible d'enregistrer dans %s" % path)
+		return
+	if _seed < 0:
+		_seed = randi() % 1000000
+	_record_start = _frame()
+	var size := DisplayServer.window_get_size()
+	_record.store_line(JSON.stringify({"studio_replay": 1, "seed": _seed, "window": [size.x, size.y], "fps": Engine.physics_ticks_per_second, "godot": Engine.get_version_info().string, "at": Time.get_datetime_string_from_system()}))
+	_record.flush()
+
+
+func _input(event: InputEvent) -> void:
+	if _record == null:
+		return
+	var e := _encode(event)
+	if e.is_empty():
+		return
+	_record_events += 1
+	_record.store_line(JSON.stringify({"f": _frame() - _record_start, "e": e}))
+
+
+## L'état du jeu toutes les demi-secondes : c'est ce que la partie rejouée devra retrouver.
+func _record_tick() -> void:
+	var f := _frame() - _record_start
+	if f % 30 == 0:
+		var s := _state()
+		if s != "":
+			_record.store_line(JSON.stringify({"f": f, "s": s}))
+		_record.flush()
+
+
+## Fin de la partie : l'état final, pendant que la scène existe encore (fermeture de la fenêtre), sinon à la sortie.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_finish_record()
+
+
+func _exit_tree() -> void:
+	_finish_record()
+
+
+func _finish_record() -> void:
+	if _record == null:
+		return
+	_record.store_line(JSON.stringify({"f": _frame() - _record_start, "end": true, "s": _state(), "events": _record_events}))
+	_record.flush()
+	_record.close()
+	_record = null
+
+
+func _start_replay(path: String) -> void:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_replay_finish("impossible de lire %s" % path)
+		return
+	var first = JSON.parse_string(file.get_line())
+	if typeof(first) != TYPE_DICTIONARY or not first.has("studio_replay"):
+		_replay_finish("ce fichier n'est pas une partie enregistrée")
+		return
+	if _seed < 0:
+		_seed = int(first.get("seed", -1))
+	while not file.eof_reached():
+		var line := file.get_line()
+		if line.strip_edges() == "":
+			continue
+		var d = JSON.parse_string(line)
+		if typeof(d) != TYPE_DICTIONARY:
+			continue
+		_replay_end = maxi(_replay_end, int(d.get("f", 0)) + 1)
+		if d.has("e"):
+			_replay_events.append(d)
+		elif d.has("s") and str(d["s"]) != "":
+			_replay_snaps.append(d)
+	_replay_start = _frame()
+	_replay_end = maxi(_replay_end, 1)
+
+
+## Les entrées d'une image sont injectées la frame d'avant : Godot les livre au début de l'image suivante, comme pendant
+## l'enregistrement. L'état est comparé au même moment de l'image qu'à l'enregistrement.
+func _replay_tick() -> void:
+	var f := _frame() - _replay_start
+	while _replay_si < _replay_snaps.size() and int(_replay_snaps[_replay_si]["f"]) <= f:
+		var want: Dictionary = _replay_snaps[_replay_si]
+		_replay_si += 1
+		if int(want["f"]) < f:
+			continue
+		var got := _state()
+		if got != str(want["s"]) and _replay_mismatches.size() < 5:
+			_replay_mismatches.append({"image": f, "seconde": snappedf(f / 60.0, 0.1), "attendu": str(want["s"]).left(400), "obtenu": got.left(400)})
+	while _replay_ei < _replay_events.size() and int(_replay_events[_replay_ei]["f"]) <= f + 1:
+		var ev := _decode(_replay_events[_replay_ei]["e"])
+		_replay_ei += 1
+		if ev != null:
+			Input.parse_input_event(ev)
+	if f >= _replay_end:
+		_replay_finish("")
+
+
+func _replay_finish(error: String) -> void:
+	_replay_done = true
+	var out := {"ok": error == "" and _replay_mismatches.is_empty(), "frames": _frame() - _replay_start, "events": _replay_events.size(), "checked": _replay_si, "mismatches": _replay_mismatches}
+	if error != "":
+		out["error"] = error
+	print("STUDIO_REPLAY: " + JSON.stringify(out))
+	get_tree().call_deferred("quit")
+
+
+func _mods(e: InputEventWithModifiers) -> int:
+	return int(e.shift_pressed) | int(e.ctrl_pressed) << 1 | int(e.alt_pressed) << 2 | int(e.meta_pressed) << 3
+
+
+func _set_mods(e: InputEventWithModifiers, m: int) -> void:
+	e.shift_pressed = m & 1 != 0
+	e.ctrl_pressed = m & 2 != 0
+	e.alt_pressed = m & 4 != 0
+	e.meta_pressed = m & 8 != 0
+
+
+func _encode(e: InputEvent) -> Dictionary:
+	if e is InputEventKey:
+		return {"t": "key", "k": e.keycode, "p": e.physical_keycode, "u": e.unicode, "d": e.pressed, "r": e.echo, "m": _mods(e)}
+	if e is InputEventMouseButton:
+		return {"t": "mb", "b": e.button_index, "d": e.pressed, "x": e.position.x, "y": e.position.y, "bm": e.button_mask, "dc": e.double_click, "m": _mods(e)}
+	if e is InputEventMouseMotion:
+		return {"t": "mm", "x": e.position.x, "y": e.position.y, "rx": e.relative.x, "ry": e.relative.y, "bm": e.button_mask, "m": _mods(e)}
+	if e is InputEventScreenTouch:
+		return {"t": "st", "i": e.index, "d": e.pressed, "x": e.position.x, "y": e.position.y}
+	if e is InputEventScreenDrag:
+		return {"t": "sd", "i": e.index, "x": e.position.x, "y": e.position.y, "rx": e.relative.x, "ry": e.relative.y}
+	if e is InputEventJoypadButton:
+		return {"t": "jb", "b": e.button_index, "d": e.pressed, "dv": e.device}
+	if e is InputEventJoypadMotion:
+		return {"t": "jm", "a": e.axis, "v": e.axis_value, "dv": e.device}
+	if e is InputEventAction:
+		return {"t": "ac", "a": str(e.action), "d": e.pressed, "v": e.strength}
+	return {}
+
+
+func _decode(d: Dictionary) -> InputEvent:
+	match str(d.get("t", "")):
+		"key":
+			var e := InputEventKey.new()
+			e.keycode = int(d["k"])
+			e.physical_keycode = int(d["p"])
+			e.unicode = int(d["u"])
+			e.pressed = bool(d["d"])
+			e.echo = bool(d["r"])
+			_set_mods(e, int(d.get("m", 0)))
+			return e
+		"mb":
+			var e := InputEventMouseButton.new()
+			e.button_index = int(d["b"])
+			e.pressed = bool(d["d"])
+			e.position = Vector2(float(d["x"]), float(d["y"]))
+			e.global_position = e.position
+			e.button_mask = int(d["bm"])
+			e.double_click = bool(d["dc"])
+			_set_mods(e, int(d.get("m", 0)))
+			return e
+		"mm":
+			var e := InputEventMouseMotion.new()
+			e.position = Vector2(float(d["x"]), float(d["y"]))
+			e.global_position = e.position
+			e.relative = Vector2(float(d["rx"]), float(d["ry"]))
+			e.button_mask = int(d["bm"])
+			_set_mods(e, int(d.get("m", 0)))
+			return e
+		"st":
+			var e := InputEventScreenTouch.new()
+			e.index = int(d["i"])
+			e.pressed = bool(d["d"])
+			e.position = Vector2(float(d["x"]), float(d["y"]))
+			return e
+		"sd":
+			var e := InputEventScreenDrag.new()
+			e.index = int(d["i"])
+			e.position = Vector2(float(d["x"]), float(d["y"]))
+			e.relative = Vector2(float(d["rx"]), float(d["ry"]))
+			return e
+		"jb":
+			var e := InputEventJoypadButton.new()
+			e.button_index = int(d["b"])
+			e.pressed = bool(d["d"])
+			e.device = int(d["dv"])
+			return e
+		"jm":
+			var e := InputEventJoypadMotion.new()
+			e.axis = int(d["a"])
+			e.axis_value = float(d["v"])
+			e.device = int(d["dv"])
+			return e
+		"ac":
+			var e := InputEventAction.new()
+			e.action = StringName(str(d["a"]))
+			e.pressed = bool(d["d"])
+			e.strength = float(d["v"])
+			return e
+	return null
 
 
 # ── Performances (ADR-83) ───────────────────────────────────────────────

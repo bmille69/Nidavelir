@@ -124,13 +124,21 @@ export class GodotGame {
    * Lance le jeu de `cwd` et attend que le relais réponde. `vitrine` : la scène vitrine d'un asset (« A-0001 »).
    * Le projet doit avoir été importé (godotImport).
    */
-  static async start(exe: string, cwd: string, options: { screen?: GameScreen; vitrine?: string | null; visible?: boolean; timeoutMs?: number } = {}): Promise<GodotGame> {
+  static async start(
+    exe: string,
+    cwd: string,
+    options: { screen?: GameScreen; vitrine?: string | null; visible?: boolean; timeoutMs?: number; record?: string | null; seed?: number | null } = {},
+  ): Promise<GodotGame> {
     const screen = options.screen ?? "pc";
     const port = await freePort();
     const args = ["--path", cwd, "--resolution", SIZES[screen]];
     if (!options.visible) args.push("--position", "-20000,-20000");
+    // Une partie enregistrée (ADR-85) : 60 images par seconde fixes, pour qu'elle se rejoue à l'identique.
+    if (options.record) args.push(...RECORD_ENGINE_ARGS);
     args.push("--", `--studio-bridge=${port}`);
     if (options.vitrine) args.push(`--vitrine=${options.vitrine}`);
+    if (options.record) args.push(`--studio-record=${options.record}`);
+    if (options.seed != null) args.push(`--studio-seed=${options.seed}`);
     const child = spawn(exe, args, { cwd, windowsHide: !options.visible, stdio: ["ignore", "pipe", "pipe"] });
     let log = "";
     const keep = (b: Buffer) => {
@@ -193,6 +201,39 @@ export class GodotGame {
     this.#socket.destroy();
     if (this.alive) killTree(this.#child.pid);
   }
+}
+
+/** Le temps du jeu avance d'1/60 s par image, et pas plus de 60 images par seconde : vos parties se rejouent à l'identique. */
+export const RECORD_ENGINE_ARGS = ["--fixed-fps", "60", "--max-fps", "60"];
+
+export type ReplayResult = {
+  ok: boolean;
+  frames: number;
+  events: number;
+  checked: number;
+  mismatches: { image: number; seconde: number; attendu: string; obtenu: string }[];
+  error?: string;
+};
+
+/**
+ * Rejoue une partie enregistrée (ADR-85) : le jeu, hors de l'écran à la taille de l'enregistrement, reçoit les mêmes
+ * entrées aux mêmes images, avec le même hasard, aussi vite que possible ; le relais compare l'état du jeu.
+ */
+export async function godotReplay(exe: string, cwd: string, file: string, window: [number, number] | null, timeoutMs = 3 * 60_000): Promise<{ result: ReplayResult | null; errors: string[]; log: string }> {
+  const args = ["--path", cwd, "--position", "-20000,-20000", "--fixed-fps", "60"];
+  if (window && window[0] > 0 && window[1] > 0) args.push("--resolution", `${window[0]}x${window[1]}`);
+  args.push("--", `--studio-replay=${file}`);
+  const r = await run(exe, args, cwd, timeoutMs);
+  const log = r.log.replace(ANSI, "");
+  const line = /STUDIO_REPLAY: (\{.*\})/.exec(log)?.[1];
+  let result: ReplayResult | null = null;
+  try {
+    result = line ? (JSON.parse(line) as ReplayResult) : null;
+  } catch {
+    result = null;
+  }
+  if (!result && r.timedOut) result = { ok: false, frames: 0, events: 0, checked: 0, mismatches: [], error: `la partie rejouée ne s'est pas terminée en ${Math.round(timeoutMs / 1000)} s` };
+  return { result, errors: godotErrors(log), log };
 }
 
 function killTree(pid: number | undefined): void {
