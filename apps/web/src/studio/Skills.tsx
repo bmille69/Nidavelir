@@ -5,8 +5,8 @@ import { AgentAvatar } from "./AgentAvatar.tsx";
 import { useStudio } from "./context.tsx";
 import { Markdown } from "./Conception.tsx";
 
-const AGENT_LABEL: Record<SkillAgent, string> = { director: "Directeur", concepteur: "Concepteur", developer: "Développeur", qa: "Testeur" };
-const ALL: SkillAgent[] = ["director", "concepteur", "developer", "qa"];
+const AGENT_LABEL: Record<SkillAgent, string> = { director: "Directeur", concepteur: "Concepteur", developer: "Développeur", qa: "Testeur", art_director: "DA" };
+const ALL: SkillAgent[] = ["director", "concepteur", "developer", "qa", "art_director"];
 
 /**
  * Compétences des agents (ADR-29) : les leçons de chaque projet (apprises de vos avis et

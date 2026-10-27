@@ -20,7 +20,7 @@ export class SkillError extends Error {
   }
 }
 
-export const SKILL_AGENTS = ["director", "concepteur", "developer", "qa"] as const;
+export const SKILL_AGENTS = ["director", "concepteur", "developer", "qa", "art_director"] as const;
 export type SkillAgent = (typeof SKILL_AGENTS)[number];
 
 export type Skill = {

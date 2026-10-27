@@ -1027,3 +1027,20 @@ Tâche réelle sur la copie de Destiny Survivor : « la documentation ne doit pl
   - `launch` accepte un chantier en échec ou arrêté. Il le remet à zéro (copie et branche effacées) et il repart sur la version actuelle du jeu. Le directeur le sait (`[[LANCER: …]]`).
 - **Vérifié** : `autonomy.test.ts` couvre l'échec et ce qui suit. La file s'arrête, le .gdignore est enregistré et le `.import` effacé sans faute. Le chantier en échec et le suivant, relancés, sont fusionnés. 248 tests au vert, typecheck.
 - **Complément (27/10)** : le bouton manquait à l'écran : un chantier en échec ne proposait que « Demander un nouveau plan ». Pilotage montre maintenant les chantiers « En échec », chacun avec « ↻ Relancer », et « ↻ Relancer les N dans l'ordre » : le premier part, les suivants attendent leur tour dans la file. La fiche d'un chantier en échec ou arrêté propose « ↻ Relancer ce chantier de zéro ».
+
+## ADR-78 — Le DA reçoit des compétences ; premières skills Godot et visuels venues du catalogue public
+
+- **Contexte** : le directeur créatif veut des skills de développeur Godot, de rendu, de polish, d'équilibrage et de tower defense, puis pour la 3D et les visuels. Le catalogue public (skills.sh, via find-skills) en propose beaucoup. Mais le DA ne recevait aucune compétence : seuls le directeur, le Concepteur, le développeur et le testeur y avaient droit (ADR-29).
+- **Décision** :
+  - « art_director » rejoint les agents des compétences. Celles qu'on lui donne s'ajoutent aux consignes de sa discussion, comme pour le Concepteur (9 000 caractères au plus). La page « Compétences » a une pastille « DA ».
+  - Six skills lues puis adaptées, enregistrées comme « ajoutées par vous » et actives. Chacune commence par une note du studio : Godot 4.6.2 (le texte vise 4.7), StudioTest et pas GUT, les règles du projet d'abord. Les renvois à des fichiers absents sont retirés, et les annexes utiles sont incluses dans les 12 000 caractères.
+    - Pour le développeur : godot-gdscript (wshobson/agents, MIT), godot-rendu-3d, godot-shaders, game-feel-godot (gamedev-skills/awesome-gamedev-agent-skills, Apache-2.0).
+    - tower-defense, pour le Concepteur et le développeur, sur Néon Saloon seulement.
+    - direction-artistique-assets (create-game-assets), pour le DA.
+  - Écartées :
+    - balance-check : elle lance des commandes et dépend d'un autre cadre.
+    - Les skills Blender, qui exigent un serveur MCP Blender.
+    - Les skills Meshy ou de génération d'images liées à un service, et threejs-3d-generator, sans licence.
+    - Les skills peu installées qui contiennent des scripts.
+    - Le test headless, qui utilise GUT.
+- **Vérifié** : un test (art.test.ts) montre qu'une compétence donnée au DA arrive dans ses consignes. 249 tests au vert, typecheck.

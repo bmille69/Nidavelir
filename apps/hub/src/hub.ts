@@ -300,6 +300,7 @@ export function createHub(options: HubOptions): Hub {
   art.paused = () => tasks.limitPaused();
   // Un atelier 3D réglé sous un autre modèle que Fable a une passe de plus ; Fable y vient en renfort pour un personnage animé (ADR-62, ADR-67).
   art.workshopModel = () => models.get("art_workshop");
+  art.skills = skills;
   conceptions.artState = (project) => {
     const assets = readManifest(projects.get(project).root).assets;
     return assets.length ? assets.slice(-40).map((a) => `- ${a.id} ${a.name} (${a.type}) : ${a.status}`).join("\n") : null;

@@ -150,6 +150,8 @@ export class ArtService {
   paused: (() => boolean) | null = null;
   /** Le modèle réglé pour l'atelier 3D : sous Fable, Fable vient en renfort pour une dernière passe (ADR-62). */
   workshopModel: (() => string) | null = null;
+  /** Compétences de la page « Compétences » données au DA, ajoutées à ses consignes. */
+  skills: { promptBlock(agent: "art_director", project: string | null): string } | null = null;
 
   constructor(deps: {
     db: Db;
@@ -1056,7 +1058,7 @@ export class ArtService {
     this.#replying.add(project);
     try {
       const { text: raw, costUsd } = await this.#orchestrator.reply({
-        systemPrompt: [ART_SYSTEM, this.#gameContext(project)].join("\n\n"),
+        systemPrompt: [ART_SYSTEM, this.#gameContext(project), this.skills?.promptBlock("art_director", project) ?? ""].filter(Boolean).join("\n\n"),
         prompt: renderArtHistory(history),
         readDir: root,
         tools: ["WebSearch", "WebFetch"],

@@ -221,6 +221,15 @@ describe("Directeur artistique (ADR-43)", () => {
     expect(state.busy.replying).toBe(false);
   }, 30_000);
 
+  it("les compétences données au DA arrivent dans ses consignes", async () => {
+    const { sb, fake, art } = await setup();
+    sb.hub.skills.save(sb.human(), { name: "da-methode", description: "Méthode de production", body: "Valider une cible avant la série.", agents: ["art_director"], enabled: true });
+    fake.replies.push("Entendu.");
+    art.send(sb.human(), "bordee", "On commence ?");
+    await art.idle();
+    expect(fake.calls[0]!.systemPrompt).toMatch(/<competence nom="da-methode"[\s\S]*Valider une cible avant la série/);
+  }, 30_000);
+
   it("le moodboard : images vérifiées, rangées et commentées", async () => {
     const { sb, fake, repo, art } = await setup();
     await expect(art.upload(sb.human(), "bordee", "moodboard", Buffer.from("pas une image"), "image/png")).rejects.toThrow(/pas une image valide/);

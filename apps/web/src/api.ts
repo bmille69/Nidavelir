@@ -321,7 +321,7 @@ export type Conception = {
   updated_at: string;
 };
 export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
-export type SkillAgent = "director" | "concepteur" | "developer" | "qa";
+export type SkillAgent = "director" | "concepteur" | "developer" | "qa" | "art_director";
 export type Skill = {
   id: string;
   name: string;
