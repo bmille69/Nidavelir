@@ -155,6 +155,45 @@ function StatusStrip({ slug, monitor }: { slug: string; monitor: Monitor | null 
   );
 }
 
+/** Les chantiers en échec : un clic les remet à zéro ; le premier part, les suivants attendent leur tour dans la file. */
+function Relaunch({ slug, failed }: { slug: string; failed: TaskRow[] }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const relaunch = async (ids: string[]) => {
+    setBusy(true);
+    setError(null);
+    try {
+      for (const id of ids) await api.startTask(slug, id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <p className="pilot-sub">En échec</p>
+      {failed.map((t) => (
+        <article key={t.id} id={`pil-${t.id}`} className="pilot-row">
+          <span className="dot ko" />
+          <a href={`#/p/${slug}/tasks/${t.id}`} className="pilot-row-title">
+            {t.title}
+          </a>
+          <button className="small secondary" disabled={busy} onClick={() => relaunch([t.id])}>
+            ↻ Relancer
+          </button>
+        </article>
+      ))}
+      {failed.length > 1 && (
+        <button className="small" disabled={busy} onClick={() => relaunch(failed.map((t) => t.id))}>
+          {busy ? "Relance…" : `↻ Relancer les ${failed.length} dans l'ordre`}
+        </button>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </>
+  );
+}
+
 function Production({ slug, tasks, art }: { slug: string; tasks: TaskRow[] | null; art: ArtState | null }) {
   const now = useNow(5000);
   // Le lien survolé : un chantier et ses visuels, ou un visuel et ses chantiers, s'allument ensemble.
@@ -183,6 +222,8 @@ function Production({ slug, tasks, art }: { slug: string; tasks: TaskRow[] | nul
     .filter((t) => t.status === "merged")
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     .slice(0, 4);
+  // En échec : chacun se relance de zéro, dans l'ordre des numéros (ADR-77).
+  const failed = (tasks ?? []).filter((t) => t.status === "failed").sort((a, b) => a.id.localeCompare(b.id));
   const assets = new Map((art?.assets ?? []).map((a) => [a.id, a]));
   const generating = art?.busy.generating ?? [];
   const artQueue = (art?.queue ?? []).filter((q) => !generating.some((g) => g.asset === q.id));
@@ -235,6 +276,7 @@ function Production({ slug, tasks, art }: { slug: string; tasks: TaskRow[] | nul
             <span className="muted small">{t.id}</span>
           </article>
         ))}
+        {failed.length > 0 && <Relaunch slug={slug} failed={failed} />}
         {recent.length > 0 && <p className="pilot-sub">Fusionnés récemment</p>}
         {recent.map((t) => (
           <article key={t.id} className="pilot-row done">

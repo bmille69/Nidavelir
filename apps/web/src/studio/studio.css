@@ -1467,6 +1467,7 @@ button.secondary.art-aime { color: var(--ok); border-color: var(--ok); backgroun
 .dot.live { background: var(--ok); box-shadow: 0 0 0 3px rgba(124, 199, 154, 0.15); }
 .dot.warn { background: var(--ember); }
 .dot.ok { background: var(--ok); }
+.dot.ko { background: var(--error); }
 .pilot-strip { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; padding: 10px 14px; margin-bottom: var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--fs-sm); }
 .pilot-strip.paused { border-color: rgba(255, 90, 0, 0.35); }
 .pilot-strip-main { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }

@@ -179,9 +179,16 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
         )}
         {["draft", "rejected", "failed", "cancelled"].includes(task.status) && (
           <div className="row">
-            <button disabled={busy} onClick={() => act(() => api.startPlan(slug, id))}>
-              {task.status === "draft" ? "Demander un plan au développeur" : "Demander un nouveau plan"}
-            </button>
+            {["failed", "cancelled"].includes(task.status) ? (
+              // Repart de zéro sur la version actuelle du jeu (ADR-77).
+              <button disabled={busy} onClick={() => act(() => api.startTask(slug, id))}>
+                ↻ Relancer ce chantier de zéro
+              </button>
+            ) : (
+              <button disabled={busy} onClick={() => act(() => api.startPlan(slug, id))}>
+                {task.status === "draft" ? "Demander un plan au développeur" : "Demander un nouveau plan"}
+              </button>
+            )}
             {task.status !== "draft" && (
               <button className="secondary danger" disabled={busy} onClick={() => act(() => api.abandonTask(slug, id), "Abandonner cette tâche ? Sa copie de travail sera supprimée.")}>
                 Abandonner
