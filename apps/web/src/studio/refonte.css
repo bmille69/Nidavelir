@@ -591,3 +591,94 @@ input:focus, textarea:focus, select:focus { border-color: rgba(0, 229, 255, 0.6)
   .palette-foot { display: none; }
   .side-search kbd { display: none; }
 }
+
+/* ═══ Application de bureau (apps/desktop) : fenêtre sans cadre, barre de titre maison ═══
+   Les boutons de Windows sont posés à droite par Electron ; env(titlebar-area-*) dit la place qu'ils laissent. */
+.is-desktop { --titlebar-h: 40px; }
+.is-desktop .app { grid-template-rows: var(--titlebar-h) minmax(0, 1fr); }
+.is-desktop .sidebar { grid-row: 1 / -1; grid-column: 1; }
+.is-desktop .main { grid-row: 2; grid-column: 2; background: transparent; }
+/* Une seule lueur pour la barre et la page : pas de couture sous la barre. */
+.is-desktop .app {
+  background:
+    radial-gradient(1000px 300px at calc(var(--side-w) + (100% - var(--side-w)) / 2) -150px, rgba(0, 229, 255, 0.06), transparent 70%),
+    var(--bg);
+}
+.titlebar {
+  grid-row: 1;
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 440px) minmax(0, 1fr);
+  align-items: center;
+  gap: 1rem;
+  height: var(--titlebar-h);
+  padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 10px) 0 1.1rem;
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.titlebar a, .titlebar button { -webkit-app-region: no-drag; }
+.titlebar-crumbs { display: flex; align-items: center; min-width: 0; font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.titlebar-crumb { display: inline-flex; align-items: center; min-width: 0; }
+.titlebar-crumb a { color: var(--muted); border-radius: 5px; padding: 0.15rem 0.3rem; margin: 0 -0.3rem; transition: color var(--t-fast) ease, background var(--t-fast) ease; }
+.titlebar-crumb a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.titlebar-crumb b { font-weight: 550; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+.titlebar-sep { margin: 0 0.55rem; opacity: 0.45; }
+.titlebar-search {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  height: 28px;
+  padding: 0 0.4rem 0 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 450;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, border-color var(--t-fast) ease, color var(--t-fast) ease, box-shadow var(--t) var(--ease);
+}
+.titlebar-search span { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.titlebar-search:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: var(--hairline-strong);
+  color: var(--text-2);
+  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.05);
+}
+.titlebar-status { display: flex; justify-content: flex-end; }
+.titlebar-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 24px;
+  padding: 0 0.6rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.titlebar-live:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-2); }
+.titlebar-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); opacity: 0.6; }
+.titlebar-live.on { color: var(--text-2); }
+.titlebar-live.on .titlebar-dot { background: var(--ok); opacity: 1; box-shadow: 0 0 0 0 rgba(124, 199, 154, 0.5); animation: titlebar-pulse 2s var(--ease) infinite; }
+@keyframes titlebar-pulse { 0% { box-shadow: 0 0 0 0 rgba(124, 199, 154, 0.45); } 70%, 100% { box-shadow: 0 0 0 6px rgba(124, 199, 154, 0); } }
+/* Le haut du menu prolonge la barre : on y attrape aussi la fenêtre. La recherche est dans la barre. */
+.is-desktop .brand-row { -webkit-app-region: drag; min-height: calc(var(--titlebar-h) - 0.7rem); }
+.is-desktop .brand-row a, .is-desktop .brand-row button { -webkit-app-region: no-drag; }
+.is-desktop .side-search { display: none; }
+/* Écrans sans menu (connexion, erreur) : toute la page déplace la fenêtre. */
+.is-desktop .centered { -webkit-app-region: drag; }
+.is-desktop .centered a, .is-desktop .centered button, .is-desktop .centered input { -webkit-app-region: no-drag; }
+
+/* Mica de Windows 11 sous le menu, quand la fenêtre en a une : la page, elle, reste opaque. */
+.has-material, .has-material body, .has-material #root { background: transparent; }
+.has-material .app {
+  background:
+    radial-gradient(1000px 300px at calc(var(--side-w) + (100% - var(--side-w)) / 2) -150px, rgba(0, 229, 255, 0.06), transparent 70%),
+    linear-gradient(90deg, transparent var(--side-w), var(--bg) var(--side-w));
+}
+.has-material .sidebar { background: linear-gradient(180deg, rgba(0, 229, 255, 0.035), transparent 220px), rgba(8, 9, 13, 0.55); }
+.has-material .centered { background: var(--bg); }

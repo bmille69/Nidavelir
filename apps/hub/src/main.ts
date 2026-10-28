@@ -119,3 +119,21 @@ const shutdown = async () => {
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+// Lancé par l'application de bureau (apps/desktop) : elle reçoit le lien de connexion directement
+// et demande l'arrêt par le même canal ; si elle disparaît, le hub s'arrête avec elle.
+if (process.env.STUDIO_DESKTOP === "1" && process.send) {
+  process.send({ type: "ready", link });
+  // Notifications Windows : chaque avis destiné au téléphone est aussi remis à l'application.
+  hub.notifications.onNotice((n) => process.send?.({ type: "notice", title: n.title, body: n.body, url: n.url, tag: n.tag }));
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void shutdown();
+  };
+  process.on("message", (m) => {
+    if ((m as { type?: string } | null)?.type === "shutdown") stop();
+  });
+  process.on("disconnect", stop);
+}

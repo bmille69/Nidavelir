@@ -18,6 +18,10 @@ import { SkillsView } from "./studio/Skills.tsx";
 import { PhoneView } from "./studio/Phone.tsx";
 import { ConceptionStart, ConceptionView } from "./studio/Conception.tsx";
 import { CommandPalette } from "./studio/CommandPalette.tsx";
+import { TitleBar } from "./studio/TitleBar.tsx";
+
+/** Dans l'application de bureau (apps/desktop), qui l'annonce par son preload. */
+const DESKTOP = typeof window !== "undefined" && window.nidavellir?.desktop === true;
 
 export type Route =
   | { page: "dashboard" }
@@ -159,6 +163,7 @@ export function App() {
         </header>
         <ForYou floating />
         <CommandPalette />
+        {DESKTOP && <TitleBar route={route} />}
         <Sidebar route={route} session={session} onClose={() => setMenu(false)} />
         <div className="menu-backdrop" onClick={() => setMenu(false)} />
         <div className="main">

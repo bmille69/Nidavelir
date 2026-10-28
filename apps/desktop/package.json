@@ -1,0 +1,14 @@
+{
+  "name": "@studio/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nidavellir en application Windows : lance le hub et l'affiche dans sa propre fenêtre.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^45.1.0"
+  }
+}

@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "npm run build && node apps/hub/src/main.ts",
+    "app": "npm run build && npm start -w @studio/desktop",
     "build": "npm run build -w @studio/web",
     "test": "vitest run",
     "test:watch": "vitest",

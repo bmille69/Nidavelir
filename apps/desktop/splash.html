@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline'" />
+    <title>Nidavellir</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(700px 320px at 50% 38%, rgba(0, 229, 255, 0.07), transparent 70%),
+          radial-gradient(600px 300px at 55% 70%, rgba(255, 90, 0, 0.05), transparent 70%),
+          #08090d;
+        color: #a9aeb8;
+        font: 14px/1.5 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+        -webkit-app-region: drag;
+        user-select: none;
+        overflow: hidden;
+      }
+      .stack { display: grid; justify-items: center; gap: 22px; animation: rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both; }
+      .mark { width: 76px; height: 76px; filter: drop-shadow(0 10px 30px rgba(0, 229, 255, 0.22)) drop-shadow(0 6px 24px rgba(255, 90, 0, 0.16)); animation: breathe 3.2s ease-in-out infinite; }
+      h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: #eceef2; }
+      .line { width: 168px; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.06); overflow: hidden; position: relative; }
+      .line::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 40%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, transparent, #00e5ff, #ff5a00, transparent);
+        animation: sweep 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+      p { margin: -8px 0 0; font-size: 12.5px; color: #6f7581; }
+      @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
+      @keyframes breathe { 50% { transform: scale(1.035); } }
+      @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .line::after { left: 30%; } }
+    </style>
+  </head>
+  <body>
+    <div class="stack">
+      <img class="mark" src="../web/src/assets/logo-mark.png" alt="" />
+      <h1>Nidavellir</h1>
+      <div class="line"></div>
+      <p>Le studio s'éveille…</p>
+    </div>
+  </body>
+</html>

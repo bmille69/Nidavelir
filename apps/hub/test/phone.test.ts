@@ -133,6 +133,19 @@ describe("Tailscale", () => {
 });
 
 describe("notifications", () => {
+  it("l'application de bureau reçoit chaque avis, même sans téléphone abonné ; un écouteur en erreur ne bloque rien", () => {
+    const sb = sandbox();
+    const got: string[] = [];
+    sb.hub.notifications.onNotice(() => {
+      throw new Error("écouteur cassé");
+    });
+    const off = sb.hub.notifications.onNotice((n) => got.push(`${n.title}|${n.url}`));
+    sb.hub.notifications.notify({ title: "✓ Chantier prêt à essayer", body: "Balles — Destiny", url: "#/p/d/tasks/t1" });
+    off();
+    sb.hub.notifications.notify({ title: "après désinscription", body: "", url: "#/" });
+    expect(got).toEqual(["✓ Chantier prêt à essayer|#/p/d/tasks/t1"]);
+  });
+
   it("un chantier qui attend votre avis envoie une notification chiffrée que seul le téléphone peut lire", async () => {
     // Le « téléphone » : ses clés d'abonnement.
     const ua = createECDH("prime256v1");

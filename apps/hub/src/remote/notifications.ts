@@ -17,6 +17,7 @@ export class NotificationService {
   readonly #subject: string;
   readonly #fetch: typeof fetch;
   readonly #background = new Set<Promise<void>>();
+  readonly #listeners = new Set<(notice: Notice) => void>();
 
   constructor(deps: { db: Db; clock: Clock; journal: Journal; subject?: string; fetch?: typeof fetch }) {
     this.#db = deps.db;
@@ -52,8 +53,21 @@ export class NotificationService {
     return this.#db.prepare("SELECT endpoint, device, created_at FROM push_subscriptions ORDER BY created_at").all() as never;
   }
 
+  /** Chaque avis est aussi remis ici, abonnements ou non (notifications Windows de l'application de bureau). Rend la désinscription. */
+  onNotice(listener: (notice: Notice) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
   /** Envoie à tous vos appareils abonnés, en arrière-plan. Un abonnement expiré est oublié. */
   notify(notice: Notice): void {
+    for (const listener of this.#listeners) {
+      try {
+        listener(notice);
+      } catch {
+        /* un écouteur (l'application de bureau) ne bloque jamais l'envoi aux téléphones */
+      }
+    }
     const subs = this.#db.prepare("SELECT endpoint, data_json FROM push_subscriptions").all() as { endpoint: string; data_json: string }[];
     if (!subs.length) return;
     const keys = this.#keys();

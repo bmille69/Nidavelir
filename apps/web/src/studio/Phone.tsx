@@ -221,7 +221,15 @@ function Notifications() {
         <span className="step-n">4</span> Notifications sur cet appareil
       </h2>
       <p className="muted small">Chantier prêt à essayer ou en échec, plan ou autorisation qui vous attend, Concepteur qui attend vos réponses.</p>
-      {!supported ? (
+      {window.nidavellir?.desktop ? (
+        <div className="row">
+          <span className="badge status-ok">Notifications Windows</span>
+          <span className="muted small">Dans l'application, elles sont toujours actives quand la fenêtre n'est pas au premier plan.</span>
+          <button className="secondary small" disabled={busy} onClick={() => run(api.pushTest, "Notification de test envoyée.")}>
+            Envoyer un test
+          </button>
+        </div>
+      ) : !supported ? (
         <p className="notice small">
           {!window.isSecureContext
             ? "Les notifications demandent une adresse sécurisée : ouvrez le hub par son adresse Tailscale (https://…)."

@@ -1,7 +1,8 @@
 import { api } from "../api.ts";
 
-/** Notifications sur cet appareil (ADR-30). Nécessite HTTPS (ou localhost) et un service worker. */
+/** Notifications sur cet appareil (ADR-30). Nécessite HTTPS (ou localhost) et un service worker. L'application de bureau a les siennes (Windows). */
 export function pushSupported(): boolean {
+  if (typeof window !== "undefined" && window.nidavellir?.desktop) return false;
   return typeof window !== "undefined" && window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
 
