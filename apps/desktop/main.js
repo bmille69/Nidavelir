@@ -4,23 +4,28 @@
 // Le hub reste un vrai serveur local : le navigateur et le téléphone (Tailscale) fonctionnent comme avant.
 import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from "electron";
 import { execFile, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { release } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const root = resolve(here, "..", "..");
+const assets = join(here, "assets");
+/** Le dépôt du hub : STUDIO_HUB_ROOT, sinon celui gravé dans l'installateur (scripts/dist.mjs), sinon celui d'où l'on lance. */
+const root = resolve(process.env.STUDIO_HUB_ROOT ?? (app.isPackaged ? readOwnPackage().nidavellirRoot : null) ?? join(here, "..", ".."));
 const cliPort = process.argv.find((a) => a.startsWith("--port="))?.slice(7);
 const port = Number(cliPort ?? process.env.STUDIO_PORT ?? 4317);
 const base = `http://127.0.0.1:${port}`;
+const hidden = process.argv.includes("--hidden"); // lancement avec Windows : directement près de l'horloge.
 const BG = "#08090d"; // --bg de l'interface : pas d'éclair blanc.
 const TITLEBAR_H = 40;
 const SHORTCUT = "CommandOrControl+Alt+N";
 const AUMID = "Nidavellir.Studio";
 
 app.setName("Nidavellir");
+// Une seconde copie isolée (essais) : ses propres réglages, et elle ne réveille pas la fenêtre déjà ouverte.
+if (process.env.STUDIO_APP_DATA) app.setPath("userData", resolve(process.env.STUDIO_APP_DATA));
 if (process.platform === "win32") app.setAppUserModelId(AUMID);
 nativeTheme.themeSource = "dark";
 
@@ -56,7 +61,7 @@ function saveState(patch) {
 
 // ── Icônes : .ico multi-tailles (fenêtre, barre des tâches, menu Démarrer) et icône de la zone de notification ──
 function icons() {
-  const full = nativeImage.createFromPath(join(root, "apps", "web", "public", "icon-512.png"));
+  const full = nativeImage.createFromPath(join(assets, "icon.png"));
   const ico = join(app.getPath("userData"), "nidavellir.ico");
   if (!existsSync(ico) && !full.isEmpty()) {
     const sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
@@ -79,7 +84,7 @@ function icons() {
     mkdirSync(app.getPath("userData"), { recursive: true });
     writeFileSync(ico, Buffer.concat([head, ...pngs]));
   }
-  const mark = nativeImage.createFromPath(join(root, "apps", "web", "src", "assets", "logo-mark.png"));
+  const mark = nativeImage.createFromPath(join(assets, "logo-mark.png"));
   const trayImage = nativeImage.createEmpty();
   for (const scale of [1, 1.25, 1.5, 2]) {
     const s = Math.round(16 * scale);
@@ -88,10 +93,11 @@ function icons() {
   return { ico, trayImage };
 }
 
-/** Raccourci du menu Démarrer : relance l'application comme ce lancement-ci, et donne son nom aux notifications Windows. */
+/** Raccourci du menu Démarrer : relance l'application comme ce lancement-ci, et donne son nom aux notifications Windows.
+ *  L'application installée a déjà le sien (posé par l'installateur). */
 function startMenuShortcut(ico) {
-  if (process.platform !== "win32") return;
-  const link = join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "Nidavellir.lnk");
+  if (process.platform !== "win32" || app.isPackaged) return;
+  const link = join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "Nidavellir (dev).lnk");
   const args = [`"${here.replace(/[\\/]$/, "")}"`, ...(cliPort || process.env.STUDIO_PORT ? [`--port=${port}`] : [])].join(" ");
   try {
     shell.writeShortcutLink(link, existsSync(link) ? "replace" : "create", {
@@ -113,6 +119,61 @@ function material() {
   if (process.platform !== "win32" || process.env.STUDIO_MATERIAL === "none") return "";
   const build = Number(release().split(".")[2] ?? 0);
   return build >= 22621 ? (process.env.STUDIO_MATERIAL ?? "mica") : "";
+}
+
+function readOwnPackage() {
+  try {
+    return JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+// ── Lancement avec Windows : l'application démarre rangée près de l'horloge ──
+function autostartArgs() {
+  return [...(app.isPackaged ? [] : [here.replace(/[\\/]$/, "")]), ...(cliPort ? [`--port=${port}`] : []), "--hidden"];
+}
+function autostart() {
+  return app.getLoginItemSettings({ path: process.execPath, args: autostartArgs() }).openAtLogin;
+}
+function setAutostart(on) {
+  app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: autostartArgs() });
+}
+
+// ── Interface à jour : si ses sources ont changé depuis la dernière compilation, on la recompile avant d'ouvrir ──
+function newest(dir) {
+  let max = 0;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    max = Math.max(max, e.isDirectory() ? newest(p) : statSync(p).mtimeMs);
+  }
+  return max;
+}
+function uiStale() {
+  const web = join(root, "apps", "web");
+  try {
+    const built = statSync(join(web, "dist", "index.html")).mtimeMs;
+    return Math.max(newest(join(web, "src")), newest(join(web, "public")), statSync(join(web, "index.html")).mtimeMs) > built;
+  } catch {
+    return true;
+  }
+}
+function splashStatus(text) {
+  if (win && win.webContents.getURL().startsWith("file:")) void win.webContents.executeJavaScript(`document.querySelector("p").textContent = ${JSON.stringify(text)}`).catch(() => {});
+}
+function buildUi() {
+  splashStatus("Mise à jour de l'interface…");
+  return new Promise((done) => {
+    const child = spawn("npm run build", { cwd: root, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout.on("data", (d) => process.stdout.write(d));
+    child.stderr.on("data", (d) => process.stdout.write(d));
+    child.on("error", () => done(false));
+    child.on("exit", (code) => done(code === 0));
+  }).then((ok) => {
+    // Échec : on ouvre l'interface déjà compilée s'il y en a une ; sinon le hub le dira.
+    if (!ok) console.error("Compilation de l'interface en échec : la version précédente est utilisée.");
+    splashStatus("Le studio s'éveille…");
+  });
 }
 
 app.whenReady().then(async () => {
@@ -155,13 +216,19 @@ async function obtainEntry() {
   return startHub();
 }
 
-function startHub() {
+async function startHub() {
+  const entry = join(root, "apps", "hub", "src", "main.ts");
+  if (!existsSync(entry)) throw new Error(`Le hub est introuvable dans ${root}.\nLe dépôt a-t-il été déplacé ? Lancez Nidavellir avec STUDIO_HUB_ROOT, ou refaites l'installateur depuis le dépôt.`);
+  if (uiStale()) {
+    if (win?.webContents.isLoading()) await new Promise((r) => win.webContents.once("did-finish-load", r));
+    await buildUi();
+  }
   const logDir = join(app.getPath("userData"), "logs");
   mkdirSync(logDir, { recursive: true });
   const log = createWriteStream(join(logDir, "hub.log"), { flags: "a" });
   log.write(`\n=== ${new Date().toISOString()} ===\n`);
 
-  const child = spawn(process.env.STUDIO_NODE ?? "node", [join(root, "apps", "hub", "src", "main.ts")], {
+  const child = spawn(process.env.STUDIO_NODE ?? "node", [entry], {
     cwd: root,
     env: { ...process.env, STUDIO_PORT: String(port), STUDIO_NO_BROWSER: "1", STUDIO_DESKTOP: "1" },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -230,6 +297,7 @@ function openWindow(ico) {
   });
   win.webContents.session.setSpellCheckerLanguages(["fr", "en-US"]);
   win.once("ready-to-show", () => {
+    if (hidden) return;
     if (state.maximized ?? true) win.maximize();
     win.show();
   });
@@ -332,6 +400,8 @@ function createTray(image) {
       { type: "separator" },
       { label: "Le studio en direct", click: () => go("#/direct") },
       { label: "Pilotage", click: () => go("#/pilotage") },
+      { type: "separator" },
+      { label: "Lancer avec Windows", type: "checkbox", checked: autostart(), click: (item) => setAutostart(item.checked) },
       { type: "separator" },
       { label: "Quitter Nidavellir", click: () => quit() },
     ]),
