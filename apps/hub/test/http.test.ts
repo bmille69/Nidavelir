@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeCli } from "../src/llm/claude-cli.ts";
 import { DirectClaudeOrchestrator } from "../src/orchestrator/direct-claude.ts";
 import { buildServer, SESSION_COOKIE } from "../src/server/http.ts";
@@ -160,7 +160,7 @@ describe("modèles des agents (ADR-37)", () => {
       ["archivist", "sonnet", "sonnet"],
       ["developer", "sonnet", "sonnet"],
       ["developer_big", "fable", "fable"],
-      ["qa", "haiku", "haiku"],
+      ["qa", "sonnet", "sonnet"],
       ["archeologue", "sonnet", "sonnet"],
       ["art_director", "sonnet", "sonnet"],
       // L'artisan 3D a son propre réglage, Fable par défaut (ADR-52).
@@ -232,5 +232,50 @@ describe("captures annotées (ADR-72)", () => {
     // Le tour suivant, sans image, n'a plus aucun accès aux fichiers.
     await post(`/api/human/projects/destiny/threads/${thread.id}/messages`, { text: "Et sur téléphone ?" });
     expect((fake.calls.filter((c) => c.kind === "reply").at(-1) as unknown as { readDir?: string }).readDir).toBeUndefined();
+  });
+});
+
+describe("compétences (ADR-29, ADR-97)", () => {
+  it("le DA se donne depuis la page ; détail, retour arrière et état de la bibliothèque", async () => {
+    const { get, post } = await login();
+    const list = (await get("/api/human/skills")).json() as { id: string; name: string; description: string; body: string; agents: string[]; enabled: boolean }[];
+    const feel = list.find((s) => s.name === "game-feel")!;
+    // Avant : « art_director » refusé par la route (400) alors que la page propose la pastille DA.
+    const saved = await post("/api/human/skills", { ...feel, agents: [...feel.agents, "art_director"], body: "Nouveau texte" });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ agents: expect.arrayContaining(["art_director"]), has_previous: true });
+    expect((await get(`/api/human/skills/${feel.id}`)).json()).toMatchObject({ name: "game-feel", file_contents: [] });
+    expect((await post(`/api/human/skills/${feel.id}/revert`)).json()).toMatchObject({ body: feel.body });
+    expect((await get("/api/human/skills/status")).json()).toMatchObject({ learn: false, hermes: { dir: null } });
+  });
+});
+
+describe("clé Google (ADR-110)", () => {
+  it("la clé part une fois vers le hub, qui ne la rend jamais : seulement « configurée », la dépense et le plafond", async () => {
+    const { get, post } = await login();
+    const key = "AIzaHTTP-0123456789abcdefghijklmnopqrstu";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ models: [] }), { status: 200 })));
+    try {
+      const root = sb.makeGameRepo("games/destiny");
+      await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny" });
+      expect((await get("/api/human/projects/destiny/art")).json()).toMatchObject({ google: { configured: false, usd: 0, cap: 10 } });
+      expect((await post("/api/human/art/google/key", { key: "court" })).statusCode).toBe(400);
+
+      const saved = await post("/api/human/art/google/key", { key });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json()).toMatchObject({ configured: true, usd: 0, cap: 10 });
+      expect(saved.body).not.toContain(key);
+      const state = await get("/api/human/projects/destiny/art");
+      expect(state.json()).toMatchObject({ google: { configured: true } });
+      expect(state.body).not.toContain(key);
+      expect((await post("/api/human/art/google/cap", { usd: 25 })).json()).toMatchObject({ configured: true, cap: 25 });
+      expect((await post("/api/human/art/google/cap", { usd: -3 })).statusCode).toBe(400);
+      // Ni le journal ni la base du hub ne la gardent : seul key.json, dans les données du hub.
+      const data = join(sb.dir, "hub", ".data");
+      for (const f of ["hub.db", "hub.db-wal"].map((n) => join(data, n)).filter((p) => existsSync(p))) expect(readFileSync(f).includes(key)).toBe(false);
+      expect(JSON.parse(readFileSync(join(data, "tools", "google", "key.json"), "utf8"))).toEqual({ key });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

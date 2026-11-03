@@ -1,4 +1,4 @@
-import type { Author, Message, Thread } from "@studio/contracts";
+import { AUTOMATIC_THREAD_ORIGINS, TASK_REQUEST_WORDS_MAX, type Author, type Message, type Thread, type ThreadOrigin } from "@studio/contracts";
 import { randomUUID } from "node:crypto";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/database.ts";
@@ -12,6 +12,7 @@ import { codeContext } from "../projects/code-context.ts";
 import { manifestSummary } from "../art/manifest.ts";
 import { join } from "node:path";
 import { CAPTURES_DIR, imagesOf, withImages } from "./captures.ts";
+import { compactMarks, withMarks, type TeamService } from "../team/team-service.ts";
 import { directorSystemPrompt, renderCodeContext, directorTurnPrompt, hubTurnPrompt, renderContextPack, renderHistory } from "./prompts.ts";
 
 export class ConversationError extends Error {
@@ -58,9 +59,11 @@ export class ConversationService {
   readonly #extracting = new Map<string, { project: string; since: string }>();
   readonly #pendingImplement = new Map<string, Directives>();
   /** Compétences ajoutées aux consignes du directeur (ADR-29). */
-  skills: { promptBlock(agent: "director", project: string): string } | null = null;
+  skills: { promptFor(agent: "director", project: string): { text: string; dir: string | null } } | null = null;
   /** Chantiers du projet et séance en cours, montrés au directeur en atelier (ADR-31). */
   workshopState: ((project: string) => string) | null = null;
+  /** L'équipe (ADR-98) : consulter un collègue, proposer un souvenir, lire le jeu. Absente : le directeur répond seul. */
+  team: TeamService | null = null;
   /**
    * Pilote automatique (ADR-20) : prévenu après chaque échange, une fois les idées notées.
    * Absent = comportement « je valide tout », sans extraction des réponses du directeur.
@@ -89,7 +92,8 @@ export class ConversationService {
     this.#orchestrator = deps.orchestrator;
   }
 
-  createThread(project: string, title: string): Thread {
+  /** `origin` (ADR-113) : qui l'ouvre ; les services du hub donnent le leur, pour ranger leurs fils sous « Automatiques ». */
+  createThread(project: string, title: string, origin: ThreadOrigin = "human"): Thread {
     this.#projects.get(project);
     const thread: Thread = {
       id: randomUUID(),
@@ -99,8 +103,8 @@ export class ConversationService {
       created_at: this.#clock.now(),
     };
     this.#db
-      .prepare("INSERT INTO threads (id, project, title, mode, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(thread.id, thread.project, thread.title, thread.mode, thread.created_at);
+      .prepare("INSERT INTO threads (id, project, title, mode, created_at, origin) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(thread.id, thread.project, thread.title, thread.mode, thread.created_at, origin);
     return thread;
   }
 
@@ -123,6 +127,8 @@ export class ConversationService {
       last_seq: Number(r.last_seq ?? 0),
       last_at: (r.last_at as string | null) ?? null,
       last_role: (r.last_role as Thread["last_role"]) ?? null,
+      origin: (r.origin as string | null) ?? null,
+      automatic: isAutomaticThread((r.origin as string | null) ?? null, String(r.title)),
     }));
   }
 
@@ -155,7 +161,7 @@ export class ConversationService {
     if (!body) throw new ConversationError("Message vide");
     if (body.length > MAX_MESSAGE_CHARS) throw new ConversationError(`Message trop long (> ${MAX_MESSAGE_CHARS} caractères)`);
     const thread = this.getThread(project, threadId);
-    const history = this.messages(project, threadId).slice(-HISTORY_MESSAGES);
+    const history = this.#history(project, threadId);
     // Atelier (ADR-24) : aucune fiche n'est notée ; la discussion et les chantiers suffisent.
     const workshop = this.#projects.get(project).autonomy === "workshop";
     const human = this.#insert(thread.id, "human", body, workshop ? "none" : "pending", null);
@@ -173,6 +179,9 @@ export class ConversationService {
     } finally {
       this.#replying.delete(human.id);
     }
+    // Vos mots, tels quels, partent avec chaque chantier de cette réponse (ADR-121).
+    const words = humanRequest(this.messages(project, thread.id));
+    if (words) for (const r of this.#pendingImplement.get(exchange.director.id)?.requests ?? []) r.request = words;
     if (this.autopilot && workshop) {
       this.#dispatchWorkshop(project, thread.id, exchange.director);
       return exchange;
@@ -201,7 +210,7 @@ export class ConversationService {
   async hubTurn(project: string, threadId: string, note: string): Promise<{ director: Message; directives: Directives }> {
     const thread = this.getThread(project, threadId);
     if (this.#projects.get(project).autonomy !== "workshop") throw new ConversationError("Réservé au mode atelier");
-    const history = this.messages(project, threadId).slice(-HISTORY_MESSAGES);
+    const history = this.#history(project, threadId);
     const key = `hub:${threadId}:${this.#clock.now()}`;
     this.#replying.set(key, { project, thread: thread.id, title: thread.title, since: this.#clock.now() });
     let director: Message;
@@ -214,6 +223,13 @@ export class ConversationService {
     const directives = this.#pendingImplement.get(director.id) ?? parseDirectives("").directives;
     this.#pendingImplement.delete(director.id);
     return { director, directives };
+  }
+
+  /** Les derniers messages, encarts de l'équipe résumés en une ligne (ADR-98). */
+  #history(project: string, threadId: string): Message[] {
+    return this.messages(project, threadId)
+      .slice(-HISTORY_MESSAGES)
+      .map((m) => ({ ...m, text: compactMarks(m.text) }));
   }
 
   #dispatchWorkshop(project: string, thread: string, director: Message): void {
@@ -236,17 +252,30 @@ export class ConversationService {
         .slice(-60),
     });
     const state = code ? (this.workshopState?.(project) ?? "") : "";
-    const { text: raw, costUsd } = await this.#orchestrator.reply({
-      systemPrompt: [
-        directorSystemPrompt([pack, code ? renderCodeContext(code) : "", manifestSummary(p.root) ?? "", state].filter(Boolean).join("\n\n"), p.autonomy),
-        this.skills?.promptBlock("director", project) ?? "",
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      prompt,
-      meta: { project, agent: "director" },
-      ...(images ? { readDir: join(p.root, CAPTURES_DIR), images: true } : {}),
-    });
+    // Compétences (ADR-97) : leçons en entier, le reste en index à ouvrir avec Read.
+    const skills = this.skills?.promptFor("director", project) ?? { text: "", dir: null };
+    // L'équipe (ADR-98) : il peut consulter un collègue, proposer un souvenir et lire le jeu avant d'affirmer.
+    const team = this.team?.open(project, "directeur", { consult: true, remember: true, read: true }) ?? null;
+    let reply: { text: string; costUsd: number | null };
+    try {
+      reply = await this.#orchestrator.reply({
+        systemPrompt: [
+          directorSystemPrompt([pack, code ? renderCodeContext(code) : "", manifestSummary(p.root) ?? "", state].filter(Boolean).join("\n\n"), p.autonomy),
+          skills.text,
+          team?.prompt ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        prompt,
+        meta: { project, agent: "director" },
+        ...(images ? { readDir: join(p.root, CAPTURES_DIR), images: true } : {}),
+        ...(skills.dir ? { skillsDir: skills.dir } : {}),
+        ...(team ? { team: team.grant } : {}),
+      });
+    } finally {
+      team?.close();
+    }
+    const { text: raw, costUsd } = reply;
     // Le directeur ne code pas : quand vous dites « go », il confie le travail au développeur (ADR-22).
     const { text: answer, directives } = parseDirectives(raw);
     const request = directives.requests[0];
@@ -259,7 +288,7 @@ export class ConversationService {
         : `${answer}
 
 → Je confie ce travail au développeur. Il va préparer un plan ; je vous dis ici dès que c'est lancé.`;
-    const director = this.#insert(thread.id, "director", shown, "none", costUsd);
+    const director = this.#insert(thread.id, "director", withMarks(shown, team), "none", costUsd);
     if (delegate) this.#pendingImplement.set(director.id, directives);
     this.#journal.append({
       project,
@@ -290,7 +319,7 @@ export class ConversationService {
       await this.#extraction.extract({
         project,
         author,
-        text: message.text,
+        text: compactMarks(message.text),
         context: renderHistory(history.slice(-4)) || undefined,
         kind: "message",
         ref: () => `${message.thread}/${message.id}`,
@@ -332,7 +361,8 @@ export class ConversationService {
 }
 
 /** `reworks` : chantiers déjà fusionnés que celui-ci reprend (« reprend T-0012 » dans l'en-tête, ADR-32). */
-export type ImplementRequest = { title: string; goal: string; decisions: string[]; reworks: string[] };
+/** `request` : les mots du directeur créatif, tels quels (ADR-121) ; absent pour un tour demandé par le hub. */
+export type ImplementRequest = { title: string; goal: string; decisions: string[]; reworks: string[]; request?: string };
 
 /** Ce que le directeur demande au hub dans une réponse d'atelier (ADR-31). */
 export type Directives = {
@@ -349,13 +379,44 @@ export type Directives = {
   fixes: { task: string; note: string }[];
   /** Grosse demande confiée au Concepteur (ADR-34) : le sujet, avec le contexte utile de la discussion. */
   concevoir: string | null;
+  /** Plan de production demandé (ADR-107) : ce qu'il faut produire, avec le contexte. Absent si aucun. */
+  production?: string | null;
 };
 
 export const hasDirectives = (d: Directives) =>
-  d.requests.length + d.merge.length + d.abandon.length + d.launch.length + d.fixes.length > 0 || d.session !== null || d.endSession || d.concevoir !== null;
+  d.requests.length + d.merge.length + d.abandon.length + d.launch.length + d.fixes.length > 0 || d.session !== null || d.endSession || d.concevoir !== null || !!d.production;
 
 /** Séparateur entre la réponse du directeur et la consigne envoyée au développeur (affichée repliée). */
 export const BRIEF_MARK = "§CONSIGNE§ ";
+const HANDED_OVER = "→ Je confie ce travail au développeur.";
+
+/**
+ * Ce que le directeur créatif a écrit pour ce chantier (ADR-121) : ses messages depuis la dernière consigne partie avant
+ * son dernier message (ce dernier message au moins), tels quels. Faute de place, les plus récents sont gardés.
+ */
+export function humanRequest(messages: Message[]): string | null {
+  const last = messages.findLastIndex((m) => m.role === "human");
+  if (last < 0) return null;
+  const brief = messages.slice(0, last).findLastIndex((m) => m.role === "director" && (m.text.includes(BRIEF_MARK) || m.text.includes(HANDED_OVER)));
+  const words = messages
+    .slice(brief + 1, last + 1)
+    .filter((m) => m.role === "human")
+    .map((m) => m.text)
+    .join("\n\n");
+  return words.slice(-TASK_REQUEST_WORDS_MAX).trim() || null;
+}
+/**
+ * Les titres des fils que le hub ouvrait seul avant le marqueur d'origine (ADR-113) : « Intégrer A-0001 : … »,
+ * « Retoucher A-0001 dans le jeu », « Sons : … », « Game feel : … », « Équilibrage ». Repli pour les anciens seulement.
+ */
+const LEGACY_AUTOMATIC = /^(Intégrer A-\d+ :|Retoucher A-\d+ dans le jeu|Sons : |Game feel : |Équilibrage$)/;
+
+/** Fil ouvert par le hub pour un travail automatique : d'après son origine, ou son titre s'il date d'avant le marqueur. */
+export function isAutomaticThread(origin: string | null, title: string): boolean {
+  if (origin) return (AUTOMATIC_THREAD_ORIGINS as readonly string[]).includes(origin);
+  return LEGACY_AUTOMATIC.test(title);
+}
+
 /** Ligne « §CAPTURE§ T-0001 <date> » : l'interface y affiche la capture du jeu prise par le hub (ADR-33). */
 export const CAPTURE_MARK = "§CAPTURE§ ";
 
@@ -397,6 +458,9 @@ export function parseDirectives(text: string): { text: string; directives: Direc
   });
   take(/\[\[\s*CONCEVOIR\s*\]\]([\s\S]*?)\[\[\s*\/\s*CONCEVOIR\s*\]\]/gi, (m) => {
     if (m[1]!.trim()) d.concevoir = m[1]!.trim().slice(0, 4000);
+  });
+  take(/\[\[\s*PRODUCTION\s*\]\]([\s\S]*?)\[\[\s*\/\s*PRODUCTION\s*\]\]/gi, (m) => {
+    if (m[1]!.trim()) d.production = m[1]!.trim().slice(0, 6000);
   });
   take(/\[\[\s*S[EÉ]ANCE\s*:([^\]]*)\]\]/gi, (m) => {
     const [duration = "", goal = ""] = m[1]!.split("|").map((s) => s.trim());

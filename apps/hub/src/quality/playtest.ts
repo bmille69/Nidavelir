@@ -1,11 +1,11 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { PreviewService, type Preview } from "../executor/preview.ts";
 import type { Journal } from "../journal/journal.ts";
 import { GodotGame, godotImport } from "../godot/run.ts";
 import { hasBridge, isGodot, type GodotInstall } from "../godot/toolchain.ts";
-import { vitrineOf } from "./checks.ts";
+import { inGameShotPath, vitrineOf } from "./checks.ts";
 
 /**
  * La manette du testeur (ADR-69) : le hub ouvre le jeu de la copie du chantier dans un navigateur invisible
@@ -20,6 +20,8 @@ export const PlayStep = z.discriminatedUnion("do", [
   z.object({ do: z.literal("type"), text: z.string().max(500) }),
   z.object({ do: z.literal("wait"), ms: z.number().int().min(0).max(5000) }),
   z.object({ do: z.literal("bridge"), method: z.enum(["reset", "setSeed", "step"]), value: z.number().optional() }),
+  // Met le jeu dans une pose de contrôle qu'il déclare (ADR-122).
+  z.object({ do: z.literal("pose"), name: z.string().min(1).max(80) }),
 ]);
 export type PlayStep = z.infer<typeof PlayStep>;
 
@@ -32,6 +34,8 @@ export const PlayRequest = z.object({
   steps: z.array(PlayStep).max(20).optional(),
   /** Pour « act » : prendre une photo après les actions. */
   capture: z.boolean().optional(),
+  /** La photo montre le changement du chantier (ADR-113) : gardée à part, c'est elle que le Récap affiche. */
+  change: z.boolean().optional(),
 });
 export type PlayRequest = z.infer<typeof PlayRequest>;
 
@@ -52,6 +56,8 @@ export type PlaySnapshot = {
   bridge: string[];
   /** Jeu Godot : les actions du projet, utilisables comme touches (« ui_accept », « sauter »). */
   actions?: string[];
+  /** Les poses de contrôle que le jeu déclare (ADR-122). */
+  poses?: { nom: string; description: string }[];
 };
 
 /** Une partie ouverte dans le navigateur invisible. */
@@ -72,7 +78,7 @@ export interface PlayDriver {
 
 export type PlayResult = { text: string; image?: { data: string; mimeType: "image/jpeg"; file: string } };
 
-type Open = { session: PlaySession; project: string; task: string; captures: number; actions: number; timer: NodeJS.Timeout | null };
+type Open = { session: PlaySession; project: string; task: string; captures: number; actions: number; change: boolean; timer: NodeJS.Timeout | null };
 
 const MAX_CAPTURES = 15;
 
@@ -117,7 +123,7 @@ export class PlaytestService {
       if (open) await this.#closeSession(run.id);
       try {
         const session = await this.#driver.open(`${run.project}/play-${run.task}`, run.cwd, screen, req.path ?? "");
-        open = { session, project: run.project, task: run.task, captures: open?.captures ?? 0, actions: open?.actions ?? 0, timer: null };
+        open = { session, project: run.project, task: run.task, captures: open?.captures ?? 0, actions: open?.actions ?? 0, change: open?.change ?? false, timer: null };
         this.#open.set(run.id, open);
       } catch (err) {
         return { text: `Impossible d'ouvrir le jeu : ${(err as Error).message.slice(0, 600)}\nNe réessaie pas en boucle : vérifie par la lecture du code et dis dans ton rapport que le jeu n'a pas pu être essayé.` };
@@ -131,14 +137,21 @@ export class PlaytestService {
     const snap = await open.session.snapshot();
     const head = req.action === "open" ? `Jeu ouvert (écran ${screen === "pc" ? "PC 1280×720" : "téléphone 390×844, tactile"}).` : req.action === "act" ? `${req.steps?.length ?? 0} action(s) jouée(s).` : "État actuel.";
     const text = [head, ...notes.filter(Boolean).map((n) => `⚠ ${n}`), describeSnapshot(snap)].join("\n");
-    if (req.action === "capture" || (req.action === "act" && req.capture) || req.action === "open") {
-      if (open.captures >= MAX_CAPTURES) return { text: `${text}\n(Plus de photo : ${MAX_CAPTURES} déjà prises pour ce chantier.)` };
+    if (req.action === "capture" || (req.action === "act" && (req.capture || req.change)) || req.action === "open") {
+      // La photo du changement passe même au-delà de la limite : c'est la seule que le directeur créatif verra.
+      if (open.captures >= MAX_CAPTURES && !req.change) return { text: `${text}\n(Plus de photo : ${MAX_CAPTURES} déjà prises pour ce chantier.)` };
       open.captures++;
       const file = join(this.#shotsDir, safe(run.project), `play-${safe(run.task)}-${safe(run.id)}-${open.captures}.jpg`);
       mkdirSync(dirname(file), { recursive: true });
       try {
         await open.session.capture(file);
-        return { text: `${text}\nPhoto : ${file}`, image: { data: readFileSync(file).toString("base64"), mimeType: "image/jpeg", file } };
+        // La photo « en jeu » (ADR-113) : la dernière prise avec change=true, à un emplacement que le hub connaît.
+        if (req.change) {
+          copyFileSync(file, inGameShotPath(this.#shotsDir, run.project, run.task));
+          open.change = true;
+        }
+        const kept = req.change ? "\nGardée comme photo du changement : c'est elle que le directeur créatif verra dans le Récap." : "";
+        return { text: `${text}\nPhoto : ${file}${kept}`, image: { data: readFileSync(file).toString("base64"), mimeType: "image/jpeg", file } };
       } catch (err) {
         return { text: `${text}\nPhoto impossible : ${(err as Error).message.slice(0, 200)}` };
       }
@@ -152,7 +165,7 @@ export class PlaytestService {
     if (!open) return;
     await this.#closeSession(runId);
     this.#queue.delete(runId);
-    this.#journal?.append({ project: open.project, actor: { kind: "system" }, type: "playtest.done", subject: open.task, payload: { run: runId, actions: open.actions, captures: open.captures } });
+    this.#journal?.append({ project: open.project, actor: { kind: "system" }, type: "playtest.done", subject: open.task, payload: { run: runId, actions: open.actions, captures: open.captures, ...(open.change ? { change: true } : {}) } });
   }
 
   async #closeSession(runId: string): Promise<void> {
@@ -185,6 +198,7 @@ export function describeSnapshot(s: PlaySnapshot): string {
   if (s.actions?.length) lines.push(`Actions du projet (utilisables comme « key ») : ${s.actions.join(", ")}`);
   if (s.state) lines.push(`État du jeu (${s.url.startsWith("res://") ? "nœud studio_test" : "__STUDIO_TEST__"}.snapshot) : ${s.state}`);
   if (s.bridge.length) lines.push(`Pont de test disponible : ${s.bridge.join(", ")}`);
+  if (s.poses?.length) lines.push(`Poses de contrôle (do=pose, name) : ${s.poses.map((p) => `${p.nom}${p.description ? ` (${p.description})` : ""}`).join(" ; ")}`);
   lines.push(s.errors.length ? `Erreurs dans la page : ${s.errors.join(" | ")}` : "Aucune nouvelle erreur dans la page.");
   if (s.failedRequests.length) lines.push(`Fichiers non chargés : ${s.failedRequests.join(" | ")}`);
   return lines.join("\n");
@@ -209,7 +223,9 @@ const SNAPSHOT_SCRIPT = `(() => {
   let state = null;
   try { if (b && typeof b.snapshot === "function") state = JSON.stringify(b.snapshot()).slice(0, 4000); } catch (e) { state = "erreur : " + String(e).slice(0, 200); }
   const bridge = b ? ["snapshot", "reset", "setSeed", "step"].filter((m) => typeof b[m] === "function") : [];
-  return { url: location.pathname + location.search + location.hash, title: d.title, text: (d.body ? d.body.innerText : "").replace(/\\s+/g, " ").trim().slice(0, 1500), controls, canvases, state, bridge };
+  const out = { url: location.pathname + location.search + location.hash, title: d.title, text: (d.body ? d.body.innerText : "").replace(/\\s+/g, " ").trim().slice(0, 1500), controls, canvases, state, bridge };
+  try { if (b && typeof b.poses === "function") { const poses = b.poses(); if (Array.isArray(poses) && poses.length) out.poses = poses.slice(0, 8).map((p) => ({ nom: String(p.nom), description: String(p.description || "") })); } } catch (e) { /* le jeu reste jouable sans ses poses */ }
+  return out;
 })()`;
 
 /**
@@ -357,6 +373,17 @@ export class BrowserPlaySession implements PlaySession {
             if (!done) notes.push(`${n} : le jeu n'expose pas __STUDIO_TEST__.${step.method}`);
             break;
           }
+          case "pose": {
+            const why = (await page.evaluate(async (name) => {
+              const b = (globalThis as { __STUDIO_TEST__?: { pose?: (n: string) => unknown } }).__STUDIO_TEST__;
+              if (typeof b?.pose !== "function") return "le jeu n'expose pas __STUDIO_TEST__.pose";
+              return String((await b.pose(name)) ?? "");
+            }, step.name)) as string;
+            if (why) notes.push(`${n} : pose « ${step.name} » : ${why.slice(0, 300)}`);
+            // Le temps que le rendu suive.
+            await page.waitForTimeout(300);
+            break;
+          }
         }
       } catch (err) {
         notes.push(`${n} (${step.do}) impossible : ${(err as Error).message.split("\n")[0]!.slice(0, 200)}`);
@@ -422,7 +449,7 @@ export class GodotPlaySession implements PlaySession {
 
   async snapshot(): Promise<PlaySnapshot> {
     const r = await this.#game.call("snapshot");
-    const s = (r.snapshot ?? {}) as { scene?: string; window?: number[]; text?: string; controls?: PlaySnapshot["controls"]; state?: string; bridge?: string[]; actions?: string[] };
+    const s = (r.snapshot ?? {}) as { scene?: string; window?: number[]; text?: string; controls?: PlaySnapshot["controls"]; state?: string; bridge?: string[]; actions?: string[]; poses?: PlaySnapshot["poses"] };
     const [w = 0, h = 0] = s.window ?? [];
     return {
       url: s.scene || "res://",
@@ -435,6 +462,7 @@ export class GodotPlaySession implements PlaySession {
       state: s.state || null,
       bridge: s.bridge ?? [],
       actions: s.actions ?? [],
+      ...(s.poses?.length ? { poses: s.poses } : {}),
     };
   }
 

@@ -19,7 +19,10 @@ import { defaultDocNature } from "../projects/bootstrap.ts";
 import { VisionError } from "../vision/vision-service.ts";
 import { TaskError } from "../executor/task-service.ts";
 import { studioSnapshot } from "../studio/activity.ts";
-import { PENDING_VISUALS, readManifest, type Asset } from "../art/manifest.ts";
+import { readManifest, visualsOfTask, type Asset } from "../art/manifest.ts";
+import { forgeSnapshot } from "../studio/forge.ts";
+import { projectInbox } from "../studio/inbox.ts";
+import { projectRecap, RECAP_PERIODS, type RecapPeriod } from "../studio/recap.ts";
 import { studioMonitor } from "../studio/monitor.ts";
 import { MODEL_CHOICES, MODEL_ROLES, type ModelId } from "../usage/model-service.ts";
 import { openInEdge, PreviewError, type Preview } from "../executor/preview.ts";
@@ -33,6 +36,7 @@ import { BenchError } from "../quality/bench.ts";
 import { FeelError } from "../quality/feel.ts";
 import { ExportError } from "../godot/export-service.ts";
 import { SoundError } from "../sound/sound-service.ts";
+import { ProductionError, type ProductionService } from "../production/production-service.ts";
 import { ExpressError } from "../express/express-service.ts";
 import { ModError } from "../mods/mod-service.ts";
 import { gameFile } from "../express/checker.ts";
@@ -40,6 +44,9 @@ import { median, taskProgress, touchedFiles } from "../executor/progress.ts";
 import { PlayRequest } from "../quality/playtest.ts";
 import { routeReport } from "../quality/route-report.ts";
 import type { CavemanRouter } from "../executor/caveman.ts";
+import { MemoryError } from "../team/studio-memory.ts";
+import { TeamError } from "../team/team-service.ts";
+import { IdeaError } from "../ideas/idea-service.ts";
 
 export const SESSION_COOKIE = "studio_session";
 
@@ -62,9 +69,12 @@ declare module "fastify" {
 
 const Body = {
   reversePath: z.object({ path: z.string().min(3).max(1000) }),
-  reverseRun: z.object({ mode: z.enum(["code", "complet"]) }),
+  reverseRun: z.object({ mode: z.enum(["code", "complet", "fonctions"]) }),
+  reverseOpen: z.object({ how: z.enum(["editor", "play"]) }),
   reverseAsk: z.object({ question: z.string().min(3).max(4000) }),
   reverseSend: z.object({ project: z.string().min(1).max(100) }),
+  reversePublic: z.object({ source: z.string().min(1).max(60), patch: z.string().min(3).max(10) }),
+  reverseFeature: z.object({ request: z.string().min(3).max(4000) }),
   artMessage: z.object({ text: z.string().min(1).max(20_000) }),
   artUpload: z.object({ for: z.string().regex(/^(moodboard|A-\d{4,})$/), name: z.string().max(200).optional() }),
   artDecide: z.object({ decision: z.enum(["valider", "refaire"]) }),
@@ -74,12 +84,15 @@ const Body = {
   soundEdit: z.object({ prompt: z.string().min(5).max(450).optional(), seconds: z.number().min(0.5).max(180).nullable().optional(), loop: z.boolean().optional(), usage: z.string().max(300).optional(), name: z.string().min(1).max(60).optional() }),
   soundGenerate: z.object({ count: z.number().int().min(1).max(3).optional() }),
   soundChoose: z.object({ file: z.string().regex(/^S-\d{4}-\d+\.mp3$/) }),
+  productionSkip: z.object({ ref: z.string().regex(/^(T-\d{4,}|A-\d{4,}|S-\d{4,}|sons)$/) }),
   feel: z.object({ moments: z.string().max(400).optional(), intensity: z.enum(["discret", "marque", "genereux"]).optional() }),
   benchCase: z.object({ task: z.string().regex(/^T-\d{4,}$/) }),
   balanceRun: z.object({ runs: z.number().int().min(10).max(2000).optional() }),
   balanceSend: z.object({ question: z.string().max(2000).optional() }),
   replaySave: z.object({ name: z.string().min(1).max(80), note: z.string().max(500).optional() }),
   tripoKey: z.object({ key: z.string().min(8).max(200) }),
+  googleKey: z.object({ key: z.string().min(8).max(200) }),
+  googleCap: z.object({ usd: z.number().min(0).max(1000) }),
   artReact: z.object({
     verdicts: z.record(z.string().max(300), z.enum(["aime", "evite"]).nullable()).refine((v) => Object.keys(v).length <= 100),
     comment: z.string().max(4000).optional(),
@@ -112,6 +125,7 @@ const Body = {
   head: z.object({ head: z.string().regex(/^[0-9a-f]{40}$/) }),
   feedback: z.object({ feedback: z.string().min(1).max(4000) }),
   escalation: z.object({ allowed: z.boolean() }),
+  recapQuery: z.object({ period: z.enum(RECAP_PERIODS as [RecapPeriod, ...RecapPeriod[]]).optional() }),
   agentTool: z.object({ tool_name: z.string().min(1).max(200), tool_input: z.record(z.string(), z.unknown()).default({}), cwd: z.string().max(1000).optional() }),
   decide: z.object({
     hash: z.string().length(64),
@@ -129,11 +143,16 @@ const Body = {
     name: z.string().min(1).max(60),
     description: z.string().max(400),
     body: z.string().max(12000),
-    agents: z.array(z.enum(["director", "concepteur", "developer", "qa"])).max(4),
+    agents: z.array(z.enum(["director", "concepteur", "developer", "qa", "art_director"])).max(5),
     enabled: z.boolean(),
   }),
   push: z.object({ endpoint: z.string().url().max(2000), keys: z.object({ p256dh: z.string().min(40).max(200), auth: z.string().min(8).max(100) }) }),
   rating: z.object({ rating: z.enum(["up", "down"]), note: z.string().max(500).optional() }),
+  memoryText: z.object({ text: z.string().min(1).max(400) }),
+  memoryDecide: z.object({ keep: z.boolean() }),
+  ideaCreate: z.object({ title: z.string().max(80).optional(), body: z.string().max(20_000) }),
+  ideaUpdate: z.object({ title: z.string().max(80).optional(), body: z.string().max(20_000).optional(), status: z.enum(["idee", "archivee"]).optional() }),
+  ideaInspiration: z.object({ url: z.string().max(1000).nullable().optional(), note: z.string().max(2000).optional() }),
   triageBatch: z.object({ ids: z.array(z.string()).min(1).max(500), action: z.enum(["keep", "discard"]) }),
 };
 
@@ -208,6 +227,8 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.get("/studio", async () => studioSnapshot(hub));
     // Le moniteur (ADR-64) : files, machine, consommation de la dernière heure.
     api.get("/studio/monitor", async () => studioMonitor(hub));
+    // La Forge (ADR-106) : les établis, la file et les fusions d'un jeu, pour la vue en voxels.
+    api.get("/projects/:slug/forge", async (req) => forgeSnapshot(hub, (req.params as { slug: string }).slug));
     api.get("/usage", async () => hub.usage.snapshot());
     api.post("/usage/refresh", async () => hub.usage.refresh());
     // ── Studio de modding (ADR-65) ──
@@ -296,6 +317,9 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
     api.post("/art/kontext/install", async (req) => hub.art.installKontext(req.human!));
     api.post("/art/blender/install", async (req) => hub.art.installBlender(req.human!));
     api.post("/art/tripo/key", async (req) => hub.art.setTripoKey(req.human!, Body.tripoKey.parse(req.body).key));
+    // Google Gemini (ADR-110) : la clé part une fois vers le hub, qui ne rend que « configurée » ou non.
+    api.post("/art/google/key", async (req) => hub.art.setGoogleKey(req.human!, Body.googleKey.parse(req.body).key));
+    api.post("/art/google/cap", async (req) => hub.art.setGoogleCap(req.human!, Body.googleCap.parse(req.body).usd));
     // Votre avis sur les références d'une planche (ADR-58).
     api.post("/projects/:slug/art/references", async (req) => hub.art.react(req.human!, (req.params as { slug: string }).slug, Body.artReact.parse(req.body)));
     api.post("/projects/:slug/art/assets/:id/model", async (req) => {
@@ -348,7 +372,11 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       return reply.type(f.mime).header("cache-control", "private, max-age=60").send(readFileSync(f.path));
     });
     // ── Atelier de démontage (ADR-40) ──
-    api.get("/reverse", async () => ({ dissections: hub.reverse.list(), tools: hub.reverse.tools() }));
+    api.get("/reverse", async () => ({ dissections: hub.reverse.list(), tools: hub.reverse.tools(), sources: hub.reverse.sources() }));
+    api.post("/reverse/public", async (req) => {
+      const b = Body.reversePublic.parse(req.body);
+      return hub.reverse.createPublic(req.human!, b.source, b.patch);
+    });
     api.post("/reverse/browse", async () => ({ path: await options.folderPicker.pick(options.gamesRoot) }));
     api.post("/reverse/scan", async (req) => hub.reverse.scan(Body.reversePath.parse(req.body).path));
     api.post("/reverse", async (req) => hub.reverse.create(req.human!, Body.reversePath.parse(req.body).path));
@@ -359,7 +387,13 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       hub.reverse.cancel((req.params as { id: string }).id);
       return { ok: true };
     });
+    // Relancer la vérification du projet récupéré, et installer le Godot qu'il réclame (ADR-120).
+    api.post("/reverse/:id/relaunch", async (req) => hub.reverse.relaunch(req.human!, (req.params as { id: string }).id));
+    api.post("/reverse/:id/editor", async (req) => hub.reverse.installEditor(req.human!, (req.params as { id: string }).id));
+    // Ouvrir le projet récupéré dans Godot, ou jouer au jeu recompilé, en fenêtre sur ce PC (ADR-127).
+    api.post("/reverse/:id/open", async (req) => hub.reverse.open(req.human!, (req.params as { id: string }).id, Body.reverseOpen.parse(req.body).how));
     api.post("/reverse/:id/ask", async (req) => hub.reverse.ask(req.human!, (req.params as { id: string }).id, Body.reverseAsk.parse(req.body).question));
+    api.post("/reverse/:id/feature", async (req) => hub.reverse.feature(req.human!, (req.params as { id: string }).id, Body.reverseFeature.parse(req.body).request));
     api.post("/reverse/:id/notes/:note/send", async (req) => {
       const { id, note } = req.params as { id: string; note: string };
       return hub.reverse.send(req.human!, id, Number(note), Body.reverseSend.parse(req.body).project);
@@ -539,9 +573,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
         return a ? { id, name: a.name, status: a.status, launched: !!a.launchedAt } : null;
       };
       const visualsOf = (t: { title: string; goal: string }) => {
-        const own = /^A-\d{4,}/.exec(t.title)?.[0];
-        const ids = own ? [own] : t.goal.includes(PENDING_VISUALS) ? [...t.goal.matchAll(/\n- (A-\d{4,}) «/g)].map((m) => m[1]!) : [];
-        return ids.map(visual).filter((v) => v !== null);
+        return visualsOfTask(t).map(visual).filter((v) => v !== null);
       };
       const list = hub.tasks.list(slug);
       const runsOf = new Map(list.map((t) => [t.id, hub.tasks.runs(slug, t.id)]));
@@ -678,7 +710,47 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       hub.skills.remove(req.human!, (req.params as { id: string }).id);
       return { deleted: true };
     });
+    // Bibliothèque tenue seule (ADR-97) : activité, détail avec annexes, retour arrière, import d'Hermes.
+    api.get("/skills/status", async () => ({ ...hub.skills.status(), lab: hub.skillLab.status() }));
+    api.get("/skills/:id", async (req) => hub.skills.detail((req.params as { id: string }).id));
+    api.post("/skills/:id/revert", async (req) => hub.skills.revert(req.human!, (req.params as { id: string }).id));
+    api.post("/skills/hermes/sync", async () => {
+      // Plusieurs minutes possibles : lancé en arrière-plan, la page suit l'état.
+      void hub.skills.syncHermes({ retryFailed: true }).catch(() => {});
+      return { ...hub.skills.status(), lab: hub.skillLab.status() };
+    });
     // ── Conception (ADR-28) ──
+    // ── La mémoire du studio (ADR-99) ──
+    api.get("/memory", async () => hub.memory.list());
+    api.post("/memory", async (req) => hub.memory.add(req.human!, Body.memoryText.parse(req.body).text));
+    api.post("/memory/:id", async (req) => hub.memory.update(req.human!, (req.params as { id: string }).id, Body.memoryText.parse(req.body).text));
+    api.post("/memory/:id/decide", async (req) => hub.memory.decide(req.human!, (req.params as { id: string }).id, Body.memoryDecide.parse(req.body).keep));
+    api.post("/memory/:id/delete", async (req) => {
+      hub.memory.remove(req.human!, (req.params as { id: string }).id);
+      return { ok: true };
+    });
+    // ── L'équipe : les consultations entre agents (ADR-98) ──
+    api.get("/team/consultations", async (req) => {
+      // « * » : tous les projets (page « Mémoire et équipe »).
+      const project = (req.query as { project?: string }).project;
+      return hub.team.list(project ? project : null);
+    });
+    // ── L'Atelier d'idées (ADR-100) ──
+    api.get("/ideas", async () => hub.ideas.list());
+    api.post("/ideas", async (req) => hub.ideas.create(req.human!, Body.ideaCreate.parse(req.body)));
+    api.get("/ideas/:id", async (req) => hub.ideas.get((req.params as { id: string }).id));
+    api.post("/ideas/:id", async (req) => hub.ideas.update(req.human!, (req.params as { id: string }).id, Body.ideaUpdate.parse(req.body)));
+    api.post("/ideas/:id/inspirations", async (req) => hub.ideas.addInspiration(req.human!, (req.params as { id: string }).id, Body.ideaInspiration.parse(req.body)));
+    api.post("/ideas/:id/inspirations/:inspiration/delete", async (req) => {
+      const { id, inspiration } = req.params as { id: string; inspiration: string };
+      return hub.ideas.removeInspiration(req.human!, id, inspiration);
+    });
+    api.post("/ideas/:id/enrich", async (req) => hub.ideas.enrich(req.human!, (req.params as { id: string }).id));
+    api.post("/ideas/:id/project", async (req) => hub.ideas.toProject(req.human!, (req.params as { id: string }).id));
+    api.post("/ideas/:id/delete", async (req) => {
+      hub.ideas.remove(req.human!, (req.params as { id: string }).id);
+      return { ok: true };
+    });
     api.get("/conceptions", async () => hub.conceptions.list());
     api.post("/conceptions", async (req) => hub.conceptions.start(req.human!, Body.conception.parse(req.body)));
     api.get("/conceptions/:id", async (req) => {
@@ -733,6 +805,32 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       const task = hub.tasks.get(slug, id);
       if (!task.worktree || !existsSync(task.worktree)) throw new TaskError("Cette version n'existe plus (déjà fusionnée ou abandonnée) : essayez le jeu lui-même.");
       return openPreview(req, await hub.previews.start(slug, id, task.worktree, hub.replays.recordPath(slug, id, task.worktree)));
+    });
+    // Les plans de production (ADR-107).
+    const productions = (): ProductionService => {
+      if (!hub.productions) throw new ProductionError("Les plans de production sont désactivés (STUDIO_PRODUCTION=0)");
+      return hub.productions;
+    };
+    api.get("/projects/:slug/productions", async (req) => {
+      const { slug } = req.params as { slug: string };
+      hub.projects.get(slug);
+      return hub.productions ? hub.productions.views(slug) : [];
+    });
+    api.get("/projects/:slug/productions/:id", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return productions().view(slug, id);
+    });
+    api.post("/projects/:slug/productions/:id/start", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return productions().start(req.human!, slug, id);
+    });
+    api.post("/projects/:slug/productions/:id/cancel", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return productions().cancel(req.human!, slug, id);
+    });
+    api.post("/projects/:slug/productions/:id/skip", async (req) => {
+      const { slug, id } = req.params as { slug: string; id: string };
+      return productions().skip(req.human!, slug, id, Body.productionSkip.parse(req.body).ref);
     });
     // Le directeur sonore (ADR-91).
     api.get("/projects/:slug/sound", async (req) => hub.sound.state((req.params as { slug: string }).slug));
@@ -850,18 +948,33 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
       hub.projects.get(slug);
       return hub.gameState.get(slug) ?? { project: slug, text: null, updated_at: null, task: null };
     });
-    // Capture du jeu prise par le hub avant le testeur (ADR-33).
+    // Capture du chantier (ADR-33) : la photo « en jeu » du Testeur d'abord, sinon celle du lancement (ADR-113).
     api.get("/projects/:slug/tasks/:id/screenshot", async (req, reply) => {
       const { slug, id } = req.params as { slug: string; id: string };
       hub.tasks.get(slug, id);
-      const file = hub.checks?.screenshotPath(slug, id);
-      if (!file || !existsSync(file)) return reply.code(404).send({ error: "Pas de capture pour ce chantier" });
-      return reply.type("image/png").header("cache-control", "private, max-age=300").send(readFileSync(file));
+      const shot = hub.checks?.taskShot(slug, id);
+      if (!shot) return reply.code(404).send({ error: "Pas de capture pour ce chantier" });
+      return reply.type(shot.type).header("cache-control", "private, max-age=300").send(readFileSync(shot.file));
+    });
+    // Photo d'une pose de contrôle (ADR-122) : seul un nom du dernier rapport du hub donne un fichier.
+    api.get("/projects/:slug/tasks/:id/poses/:nom", async (req, reply) => {
+      const { slug, id, nom } = req.params as { slug: string; id: string; nom: string };
+      hub.tasks.get(slug, id);
+      const file = hub.checks?.poseShot(slug, id, nom);
+      if (!file) return reply.code(404).send({ error: "Pas de photo pour cette pose" });
+      return reply.type("image/jpeg").header("cache-control", "private, max-age=300").send(readFileSync(file));
     });
     api.post("/projects/:slug/preview/stop", async (req) => {
       const { slug } = req.params as { slug: string };
       for (const p of hub.previews.list(slug)) await hub.previews.stop(p.key);
       return { stopped: true };
+    });
+    // La boîte « À vous » du projet (ADR-113) : tout ce qui attend votre décision, trié par urgence.
+    api.get("/projects/:slug/inbox", async (req) => projectInbox(hub, (req.params as { slug: string }).slug));
+    // Le Récap des chantiers (ADR-113) : chiffres de la période et chantiers par semaine, tirés des données existantes.
+    api.get("/projects/:slug/recap", async (req) => {
+      const { period } = Body.recapQuery.parse(req.query ?? {});
+      return projectRecap(hub, (req.params as { slug: string }).slug, period);
     });
     api.get("/projects/:slug/escalations", async (req) => {
       const { slug } = req.params as { slug: string };
@@ -930,6 +1043,22 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
           return reply.code(403).send({ error: (err as Error).message });
         }
       });
+      // Les outils de l'équipe (ADR-98) : serveur MCP du hub, réservé à l'appel d'agent qui détient le jeton.
+      agent.post("/team", async (req, reply) => {
+        try {
+          const out = Array.isArray(req.body)
+            ? (await Promise.all((req.body as unknown[]).map((m) => hub.team.handle(token(req), m)))).filter(Boolean)
+            : await hub.team.handle(token(req), req.body);
+          if (out === null || (Array.isArray(out) && !out.length)) return reply.code(202).send();
+          return out;
+        } catch (err) {
+          if (err instanceof TeamError) return reply.code(401).send({ error: err.message });
+          throw err;
+        }
+      });
+      // Pas de flux SSE : le serveur ne pousse rien, il répond (MCP « streamable HTTP » en réponses JSON).
+      agent.get("/team", async (_req, reply) => reply.code(405).send());
+      agent.delete("/team", async (_req, reply) => reply.code(405).send());
       agent.post("/runs/:run/permission", async (req, reply) => {
         const { run } = req.params as { run: string };
         const body = Body.agentTool.parse(req.body);
@@ -948,7 +1077,7 @@ export async function buildServer(hub: Hub, options: ServerOptions): Promise<Fas
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HumanSessionRequiredError) return reply.code(401).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "Requête invalide", details: err.issues });
-    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError || err instanceof ExportError || err instanceof SoundError) {
+    if (err instanceof VisionError || err instanceof ProjectError || err instanceof ApprovalError || err instanceof ConversationError || err instanceof CaptureError || err instanceof TaskError || err instanceof PreviewError || err instanceof QualityError || err instanceof ConceptionError || err instanceof SkillError || err instanceof ArtError || err instanceof ExpressError || err instanceof ModError || err instanceof ReplayError || err instanceof BalanceError || err instanceof BenchError || err instanceof FeelError || err instanceof ExportError || err instanceof SoundError || err instanceof ProductionError || err instanceof MemoryError || err instanceof IdeaError || err instanceof TeamError) {
       return reply.code(400).send({ error: err.message });
     }
     if (err instanceof OrchestratorError) return reply.code(502).send({ error: err.message });

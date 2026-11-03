@@ -39,7 +39,7 @@ describe("vue Studio", () => {
 
     const busy = studioSnapshot(sb.hub);
     const by = new Map(busy.agents.map((a) => [a.id, a]));
-    expect(by.get("you")).toMatchObject({ state: "waiting", activities: [{ text: "1 proposition(s) à arbitrer", href: "#/p/destiny/decisions" }] });
+    expect(by.get("you")).toMatchObject({ state: "waiting", activities: [{ text: "1 proposition(s) à arbitrer", href: "#/p/destiny" }] });
     expect(by.get("director")).toMatchObject({ state: "working", activities: [{ text: "Vous répond dans « Les boss »" }] });
     expect(by.get("archivist")!.state).toBe("working");
     expect(busy.projects[0]).toMatchObject({ slug: "destiny", busy: true, waiting: 1, proposals: 1 });

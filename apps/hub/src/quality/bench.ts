@@ -2,6 +2,7 @@ import { assertHumanSession, type HumanSession } from "../auth/human-session.ts"
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/database.ts";
 import type { TaskService } from "../executor/task-service.ts";
+import type { SkillOverride } from "../skills/skill-service.ts";
 import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { CheckerPort, CheckOutcome } from "./checks.ts";
@@ -146,10 +147,18 @@ export class BenchService {
     return this.state(project);
   }
 
-  async #one(project: string, c: BenchCase): Promise<BenchResult> {
+  /**
+   * Un passage isolé pour l'essai d'une compétence (ADR-102) : la consigne d'un chantier fusionné, refaite depuis son
+   * point de départ avec une compétence forcée ou retirée. Rien n'est fusionné ni gardé au banc.
+   */
+  async trial(project: string, ref: { id: string; title: string; goal: string; base: string }, skills: SkillOverride): Promise<BenchResult> {
+    return this.#one(project, { id: `essai-${ref.id}`, source: ref.id, title: ref.title, goal: ref.goal, base: ref.base, original: { costUsd: null, seconds: null, files: null }, created_at: this.#clock.now() }, skills);
+  }
+
+  async #one(project: string, c: BenchCase, skills?: SkillOverride): Promise<BenchResult> {
     const checker = this.#checker;
     try {
-      const r = await this.#tasks.benchRun(project, { title: c.title, goal: c.goal, base: c.base }, async (cwd) => {
+      const r = await this.#tasks.benchRun(project, { title: c.title, goal: c.goal, base: c.base, ...(skills ? { skills } : {}) }, async (cwd) => {
         if (!checker) return null;
         const tests = await checker.tests(cwd).catch((): CheckOutcome => ({ status: "none", detail: "" }));
         const launch = await checker.launch(`${project}/banc-${c.id}`, cwd).catch((): CheckOutcome => ({ status: "none", detail: "" }));

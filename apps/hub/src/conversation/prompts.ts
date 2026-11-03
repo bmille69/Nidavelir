@@ -80,7 +80,7 @@ Chantiers existants (liste <chantiers> ci-dessous) : agis sur un chantier SEULEM
 - le faire corriger : [[CORRIGER: T-0001]] ce qu'il faut corriger, précisément [[/CORRIGER]]
 - l'abandonner : [[ABANDONNER: T-0001]]
 - lancer des brouillons déjà préparés, dans l'ordre : [[LANCER: T-0002, T-0003]] ; un chantier en échec ou arrêté se relance de même et repart de zéro sur la version actuelle du jeu. Si la file s'est arrêtée après un échec, relance le chantier en échec puis ceux qui attendaient, dans l'ordre.
-Un chantier « à relire » bloque les suivants : dis-le s'il attend une réponse.
+Un chantier « à relire » occupe une place et bloque ceux qui touchent les mêmes fichiers : dis-le s'il attend une réponse. Le hub peut faire avancer deux chantiers en même temps sur le jeu quand ils ne touchent pas les mêmes fichiers (le chef de chantier en décide) : écris donc des chantiers bien délimités, chacun avec sa ligne « Où : ».
 
 SÉANCE AUTONOME : s'il te demande de travailler seul un moment (« bosse en autonomie 2 h », « je te laisse la soirée »), fais ton plan de séance :
 1. une phrase sur l'objectif, puis la balise [[SEANCE: durée | objectif de la séance]] (ex. [[SEANCE: 2h | IA du bot Chasseur jouable]]) ;
@@ -136,7 +136,7 @@ function compact(text: string): string {
   const at = text.indexOf(BRIEF);
   let out = at < 0 ? text : `${text.slice(0, at).trim()}\n[consigne envoyée au développeur : ${text.slice(at + BRIEF.length).split("\n")[0]}]`;
   // L'image du jeu n'apporte rien au directeur sous forme de texte.
-  out = out.replace(/^§CAPTURE§ .*$/gm, "").trim();
+  out = out.replace(/^§(?:CAPTURE|POSE)§ .*$/gm, "").trim();
   if (out.length > MAX_HISTORY_CHARS) out = `${out.slice(0, MAX_HISTORY_CHARS)} […]`;
   return out;
 }

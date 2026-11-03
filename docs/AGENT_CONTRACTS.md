@@ -228,6 +228,8 @@ type VerificationReport = Envelope & {
     criterion: string                    // un critère d'acceptation, ou une décision liée
     result: "pass" | "fail" | "not_verifiable"
     evidence: string                     // sortie de test, extrait de diff, référence
+    kind?: "rendu" | "regle" | "technique"       // « rendu » : ce qu'on voit ou ressent en jouant
+    source?: "demande" | "consigne" | "plan"     // « demande » : les mots du directeur créatif
   }[]
   decision_compliance: { decision: string, respected: boolean, note?: string }[]
   hidden_assumptions: string[]           // hypothèses non déclarées repérées
@@ -236,11 +238,15 @@ type VerificationReport = Envelope & {
 }
 ```
 
+> **Fusion (ADR-124)** : un `pass` ou `pass_with_notes` ne fusionne pas si un point qui n'est pas `pass` (`not_verifiable` compris) a `kind: "rendu"` ou `source: "demande"` : le hub le traite comme un échec à corriger (`blockingChecks`, `apps/hub/src/quality/verdict.ts`).
+
 ---
 
 ## 5. Protocoles d'échange
 
 **Consultation d'un spécialiste.** Le directeur appelle `consult(role, mandate)` avec DirectClaude, ou `delegate_task` avec Hermes et un `output_schema` égal au schéma attendu. Le mandat contient l'identifiant de la proposition et la question précise. Le spécialiste reçoit un context pack restreint au domaine. Le résultat est soit `{verdict, note}`, soit une objection ; il est rattaché à `specialist_reviews`.
+
+> **Implémenté autrement (ADR-98)** : le directeur, le Concepteur et le DA ont l'outil `consulter(agent, question, contexte)`, servi par le serveur MCP du hub avec un jeton par tour. Ils peuvent consulter le directeur, le Concepteur, le DA, le directeur sonore et le Testeur. Le collègue répond en texte, avec son propre contexte et la mémoire du studio (ADR-99), sans pouvoir consulter à son tour ; au plus 3 consultations par réponse. Chaque échange est gardé et montré au directeur créatif sous le message de l'agent. Les mêmes tours ont `retenir` (souvenir proposé, validé par vous seul) et la lecture du jeu en lecture seule (ADR-101).
 
 **Règle de non-modification.** Un agent qui pense qu'une décision validée est mauvaise produit une `Objection` sur elle, ou une `Proposal` avec `supersedes`. Toute tentative d'écriture directe est impossible : aucun outil, et `studio/**` est interdit à l'exécuteur.
 

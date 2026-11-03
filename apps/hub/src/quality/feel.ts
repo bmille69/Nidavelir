@@ -71,7 +71,7 @@ export class FeelService {
     const intensity = input.intensity ?? "marque";
     const goal = feelGoal({ moments, intensity, godot: isGodot(p.root), sims: existsSync(join(p.root, "tests", "sims")), replays: existsSync(join(p.root, "studio", "replays")) });
     const short = moments.length > 70 ? `${moments.slice(0, 67)}…` : moments;
-    const thread = this.#conversations.createThread(project, `Game feel : ${short}`);
+    const thread = this.#conversations.createThread(project, `Game feel : ${short}`, "feel");
     const task = this.#tasks.createFromConversation(project, { title: `Game feel : ${short}`, goal }, thread.id);
     const { after } = await this.#tasks.launch(project, task.id);
     this.#conversations.notify(

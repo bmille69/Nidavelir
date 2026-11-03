@@ -1,7 +1,7 @@
 import type { ExtractedItem } from "@studio/contracts";
 import type { OrchestratorPort } from "../src/orchestrator/port.ts";
 
-type Call = { kind: "reply" | "structured"; systemPrompt: string; prompt: string };
+type Call = { kind: "reply" | "structured"; systemPrompt: string; prompt: string; skillsDir?: string };
 
 /** Orchestrateur scripté et enregistreur, pour des tests déterministes et gratuits (ADR-08). */
 export class FakeOrchestrator implements OrchestratorPort {
@@ -16,8 +16,8 @@ export class FakeOrchestrator implements OrchestratorPort {
     return { text: this.replies.shift() ?? "Je note. Qu'est-ce qui compte le plus pour toi ici ?", costUsd: 0.001 };
   }
 
-  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object }) {
-    this.calls.push({ kind: "structured", systemPrompt: input.systemPrompt, prompt: input.prompt });
+  async structured(input: { systemPrompt: string; prompt: string; jsonSchema: object; skillsDir?: string }) {
+    this.calls.push({ kind: "structured", systemPrompt: input.systemPrompt, prompt: input.prompt, ...(input.skillsDir ? { skillsDir: input.skillsDir } : {}) });
     const next = this.extractions.shift() ?? [];
     if (next instanceof Error) throw next;
     const out: unknown = typeof next === "function" ? next(input.prompt) : next;

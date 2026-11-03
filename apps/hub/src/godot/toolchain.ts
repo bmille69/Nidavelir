@@ -52,10 +52,18 @@ const newer = (a: string, b: string) => {
  * habituels (deux niveaux). La version la plus récente l'emporte ; la version console n'est prise qu'à défaut.
  */
 export function findGodot(extraDirs: string[] = []): GodotInstall | null {
+  return godotInstalls(extraDirs)[0] ?? null;
+}
+
+/**
+ * Tous les Godot trouvés (ADR-120 : un projet démonté exige souvent une version précise, Mono de préférence),
+ * la version la plus récente d'abord ; à version égale, l'exécutable normal avant la console.
+ */
+export function godotInstalls(extraDirs: string[] = []): GodotInstall[] {
   const forced = process.env.STUDIO_GODOT;
   if (forced && existsSync(forced)) {
     const n = parseName(forced.split(/[\\/]/).pop()!);
-    return { exe: forced, version: n?.version ?? "?", mono: n?.mono ?? false };
+    return [{ exe: forced, version: n?.version ?? "?", mono: n?.mono ?? false }];
   }
   const home = homedir();
   const dirs = [
@@ -69,8 +77,8 @@ export function findGodot(extraDirs: string[] = []): GodotInstall | null {
     "C:\\Godot",
     "C:\\Games",
   ];
-  let best: (GodotInstall & { console: boolean }) | null = null;
-  const consider = (dir: string, depth: number) => {
+  const found: (GodotInstall & { console: boolean })[] = [];
+  const consider = (dir: string, depth: number, anyDir = false) => {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -81,15 +89,19 @@ export function findGodot(extraDirs: string[] = []): GodotInstall | null {
       if (e.isFile()) {
         const n = parseName(e.name);
         if (!n) continue;
-        const console = /_console\.exe$/i.test(e.name);
-        if (!best || newer(n.version, best.version) || (n.version === best.version && best.console && !console)) best = { exe: join(dir, e.name), ...n, console };
-      } else if (e.isDirectory() && depth > 0 && /godot/i.test(e.name)) consider(join(dir, e.name), depth - 1);
+        found.push({ exe: join(dir, e.name), ...n, console: /_console\.exe$/i.test(e.name) });
+      } else if (e.isDirectory() && depth > 0 && (anyDir || /godot/i.test(e.name))) consider(join(dir, e.name), depth - 1, anyDir);
     }
   };
-  for (const d of dirs) consider(d, 2);
-  if (!best) return null;
-  const { console: _, ...install } = best as GodotInstall & { console: boolean };
-  return install;
+  // Les dossiers du hub (ADR-120) ont une forme connue (`editors/4.5.1-mono/Godot_v…/Godot_v….exe`) : on y descend
+  // sans filtrer sur le nom. Ailleurs (Bureau, Program Files), seuls les dossiers « godot » sont ouverts.
+  for (const d of extraDirs) consider(d, 3, true);
+  for (const d of dirs.slice(extraDirs.length)) consider(d, 2);
+  // Dédoublonne par exécutable, la version la plus récente d'abord, l'exécutable normal avant la console.
+  const seen = new Set<string>();
+  const unique = found.filter((i) => (seen.has(i.exe) ? false : (seen.add(i.exe), true)));
+  unique.sort((a, b) => (a.version === b.version ? Number(a.console) - Number(b.console) : newer(a.version, b.version) ? -1 : 1));
+  return unique.map(({ console: _, ...i }) => i);
 }
 
 /**

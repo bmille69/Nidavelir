@@ -462,6 +462,148 @@ const MIGRATIONS: string[] = [
   ALTER TABLE runs ADD COLUMN route TEXT;
   ALTER TABLE runs ADD COLUMN tokens_json TEXT;
   `,
+  `
+  -- ADR-95 : une fiche de l'Archéologue peut être un « dossier de feature » (règles, données, scénarios chiffrés).
+  ALTER TABLE dissection_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note';
+  ALTER TABLE dissection_notes ADD COLUMN pack_json TEXT;
+  `,
+  `
+  -- ADR-97 : compétences tenues toutes seules (apprises des chantiers, importées d'Hermes), annexes et usage.
+  ALTER TABLE skills ADD COLUMN origin TEXT;
+  ALTER TABLE skills ADD COLUMN previous_json TEXT;
+  CREATE TABLE skill_files (
+    skill_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (skill_id, path)
+  );
+  CREATE TABLE skill_stats (
+    skill_id TEXT PRIMARY KEY,
+    offered INTEGER NOT NULL DEFAULT 0,
+    used INTEGER NOT NULL DEFAULT 0,
+    offered_since_use INTEGER NOT NULL DEFAULT 0,
+    last_offered_at TEXT,
+    last_used_at TEXT
+  );
+  CREATE TABLE skill_imports (
+    origin TEXT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    skill_id TEXT,
+    reason TEXT,
+    evaluated_at TEXT NOT NULL
+  );
+  `,
+  `
+  -- ADR-98 : les agents se consultent ; chaque échange est gardé et montré.
+  CREATE TABLE consultations (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    from_agent TEXT NOT NULL,
+    to_agent TEXT NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cost_usd REAL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX consultations_project ON consultations (project, at);
+  -- ADR-99 : la mémoire du studio, proposée par les agents, gardée par vous seul.
+  CREATE TABLE studio_memory (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL,
+    by_agent TEXT NOT NULL,
+    project TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+  );
+  -- ADR-100 : l'Atelier d'idées, avant les projets.
+  CREATE TABLE ideas (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    inspirations_json TEXT NOT NULL DEFAULT '[]',
+    insight_json TEXT,
+    conception TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
+  `
+  -- ADR-102 : quarantaine et essais automatiques des compétences, mesure continue, besoins, catalogue public.
+  ALTER TABLE skills ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+  ALTER TABLE skills ADD COLUMN trial_json TEXT;
+  CREATE TABLE skill_trials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    verdict TEXT,
+    detail_json TEXT,
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  CREATE TABLE skill_tasks (
+    skill_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    task TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (skill_id, project, task)
+  );
+  CREATE TABLE skill_needs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT,
+    topic TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE skill_catalog (
+    source TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    license TEXT,
+    status TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (source, path)
+  );
+  CREATE TABLE skill_lab (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  `,
+  // Les plans de production (ADR-107) : un objectif, tous les métiers enchaînés.
+  `
+  CREATE TABLE productions (
+    id TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    thread TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    auto INTEGER NOT NULL DEFAULT 0,
+    brief TEXT NOT NULL,
+    plan_json TEXT,
+    refs_json TEXT NOT NULL,
+    note TEXT,
+    cost_usd REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX productions_project ON productions (project, status);
+  `,
+  // Qui a ouvert une discussion (ADR-113) : vous, ou le hub pour un travail automatique (intégration, retouche, sons…).
+  `
+  ALTER TABLE threads ADD COLUMN origin TEXT;
+  `,
+  // Le projet démonté se recompile-t-il et démarre-t-il ? Mesuré, avec les fichiers recréés (ADR-120).
+  `
+  ALTER TABLE dissections ADD COLUMN launch_json TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): Db {

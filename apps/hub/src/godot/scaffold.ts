@@ -51,8 +51,18 @@ window/stretch/aspect="expand"
 
 renderer/rendering_method="${s.rendu}"
 renderer/rendering_method.mobile="${s.rendu === "forward_plus" ? "mobile" : s.rendu}"
-`;
+${s.dimension === "3d" ? JOLT_SECTION : ""}`;
 }
+
+/**
+ * Jolt pour la physique 3D (ADR-118). Godot 4.6 ne le choisit d'office que pour les projets créés par son propre
+ * gestionnaire : un project.godot écrit par le hub sans ce réglage restait sur l'ancien moteur (GodotPhysics3D).
+ */
+export const JOLT_SECTION = `
+[physics]
+
+3d/physics_engine="Jolt Physics"
+`;
 
 const MAIN_2D = `extends Node2D
 ## Scène de départ, posée par le hub : le premier chantier la remplace par le vrai jeu.
@@ -158,7 +168,7 @@ export function claudeMdGodot(version: string, s: GodotSetup): string {
   return `
 ## Godot dans le studio (section posée par le hub)
 
-- Moteur : **Godot ${version}** exactement (celui du PC). Rendu : ${FEATURE[s.rendu]}. Jeu ${s.dimension === "2d" ? "2D" : "3D"}, fenêtre de base ${s.largeur}×${s.hauteur}.
+- Moteur : **Godot ${version}** exactement (celui du PC). Rendu : ${FEATURE[s.rendu]}. Jeu ${s.dimension === "2d" ? "2D" : "3D"}, fenêtre de base ${s.largeur}×${s.hauteur}.${s.dimension === "3d" ? " Physique 3D : Jolt Physics (ne pas revenir à GodotPhysics3D ; quelques réglages de joints, comme le biais ou l'amortissement d'un PinJoint3D, y sont ignorés)." : ""}
 - Langage : ${s.langage === "csharp" ? "C# (.NET)" : "GDScript typé (\`var vie: int = 3\`, fonctions avec types de retour)"}.
 - Dossiers : \`scenes/\` (scènes .tscn), \`scripts/\`, \`assets/\` (modèles, images, sons), \`data/\` (réglages du jeu en Resources .tres), \`tests/\`, \`vitrines/\`.
 - Commandes (toujours sans fenêtre) :
@@ -167,6 +177,7 @@ export function claudeMdGodot(version: string, s: GodotSetup): string {
 - Tests : \`tests/**/test_*.gd\`, qui commencent par \`extends StudioTest\`, avec des fonctions \`func test_…()\`. Outils : assert_eq, assert_true, assert_almost_eq, add_scene("res://…tscn"), \`await wait_frames(n)\`, \`await hold_action("sauter", 0.3)\`. Toute règle du jeu a son test.
 - Commandes du joueur : toujours des actions de l'Input Map (Projet > Paramètres > Contrôles : « sauter », « tirer »…), jamais une touche en dur ; clavier et manette.
 - Le testeur du studio joue au vrai jeu par le relais \`addons/studio_bridge\` : il lit l'état par le nœud du groupe \`studio_test\` (méthode \`snapshot()\` qui rend un dictionnaire : score, vies, niveau…). Gardez ce nœud à jour quand le jeu grandit.
+- Poses de contrôle : ce même nœud, présent dès la scène de départ, peut exposer \`poses()\` (tableau de \`{ "nom": String, "description": String }\`) et \`pose(nom: String) -> String\` (met le jeu de façon déterministe dans la situation ; "" si tout va bien, sinon le message d'erreur). Le hub photographie chaque pose à chaque chantier. Tout rendu qui compte a sa pose.
 - Scènes vitrines : \`vitrines/a-0001.tscn\` pour chaque visuel intégré (voir vitrines/README.md).
 - Équilibrage : \`tests/sims/sim_*.gd\` (« extends StudioSim », \`func simulate(graine: int) -> Dictionary\`) joue une partie entière sans écran et rend ce qu'elle mesure ; l'équilibreur du hub en joue des centaines. À écrire dès que le jeu a des règles chiffrées (vagues, économie, dégâts).
 - Budget de performance : le hub mesure le jeu avant chaque fusion et refuse un chantier qui le ralentit nettement. \`vitrines/perf.tscn\` est la scène qu'il mesure : la scène de jeu la plus chargée, qui se lance seule. À créer dès qu'il y a une partie jouable, et à garder à jour.

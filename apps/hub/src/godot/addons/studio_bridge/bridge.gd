@@ -9,10 +9,12 @@ extends Node
 ## « --studio-record=<fichier> » enregistre la partie que vous jouez (vos entrées, image par image, et l'état du jeu) ;
 ## « --studio-replay=<fichier> » la rejoue à l'identique et compare l'état du jeu (ADR-85). « --studio-seed=<n> » fixe
 ## le hasard du jeu (seed() et set_seed() du nœud « studio_test »).
+## Poses de contrôle (ADR-122) : le nœud « studio_test » peut exposer poses() -> Array de { "nom", "description" } et
+## pose(nom) -> String, qui met le jeu dans une situation fixée (rend "" si tout va bien) ; le hub les photographie.
 ##
 ## Ce fichier appartient au hub : ne le modifiez pas, il est remplacé à chaque mise à jour.
 
-const VERSION := 3
+const VERSION := 4
 
 var _server: TCPServer
 var _peer: StreamPeerTCP
@@ -476,6 +478,16 @@ func _step(step: Dictionary, touch: bool) -> String:
 			else:
 				node.call(method)
 			return ""
+		"pose":
+			var node := get_tree().get_first_node_in_group("studio_test")
+			var pose_name := str(step.get("name", ""))
+			if node == null or not node.has_method("pose"):
+				return "le jeu n'a pas de nœud « studio_test » avec pose()"
+			var why = await node.call("pose", pose_name)
+			# Quelques images, pour que le rendu suive la situation.
+			for i in 5:
+				await get_tree().process_frame
+			return "" if why == null or str(why) == "" else "pose « %s » : %s" % [pose_name, str(why)]
 	return "action inconnue"
 
 
@@ -579,6 +591,13 @@ func _snapshot() -> Dictionary:
 		for m in ["snapshot", "reset", "set_seed", "step"]:
 			if test_node.has_method(m):
 				bridge.append(m)
+	var poses := []
+	if test_node and test_node.has_method("poses"):
+		var declared = test_node.call("poses")
+		if declared is Array:
+			for p in declared.slice(0, 8):
+				if p is Dictionary and p.has("nom"):
+					poses.append({"nom": str(p["nom"]), "description": str(p.get("description", ""))})
 	var size := DisplayServer.window_get_size()
 	return {
 		"scene": _scene_path(),
@@ -587,6 +606,7 @@ func _snapshot() -> Dictionary:
 		"controls": _controls(),
 		"state": state,
 		"bridge": bridge,
+		"poses": poses,
 		"actions": _actions(),
 		"resources": _resources(),
 	}

@@ -1,12 +1,15 @@
 import type { PlayRequest, PlayResult, PlaytestService } from "../quality/playtest.ts";
+import { readScripts } from "../quality/checks.ts";
 import { GODOT_IMPORT, GODOT_TESTS, hasBridge, hasStudioTests, installStudioAddons, isGodot } from "../godot/toolchain.ts";
-import type { SkillService } from "../skills/skill-service.ts";
+import type { SkillOverride, SkillService } from "../skills/skill-service.ts";
 import type { UsageService } from "../usage/usage-service.ts";
 import {
   ExecutionReportOutput,
   Plan,
   PlanOutput,
   Task,
+  TASK_REQUEST_MAX,
+  TASK_REQUEST_WORDS_MAX,
   VerificationOutput,
   type Escalation,
   type ItemFrontmatter,
@@ -24,11 +27,14 @@ import { transaction, type Db } from "../db/database.ts";
 import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import { canonicalJson, sha256 } from "../util/hash.ts";
-import { nextId } from "../util/ids.ts";
+import { nextGlobalId, nextId } from "../util/ids.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import type { VisionService } from "../vision/vision-service.ts";
+import { AgentPool } from "./agent-pool.ts";
 import { describeTool } from "./claude-code.ts";
+import { conflictBetween, type Foreman } from "./foreman.ts";
 import { PolicyEngine, TOOLS_BY_MODE, type Decision, type RunMode } from "./policy-engine.ts";
+import { resoudreRegistres } from "./registres.ts";
 import { linkSharedDirs, unlinkAllLinks } from "./shared-dirs.ts";
 import type { AgentBridge, ExecResult, ExecutorPort, RunEvent } from "./port.ts";
 import {
@@ -40,8 +46,11 @@ import {
   planningSystemPrompt,
   verificationPrompt,
   verificationSystemPrompt,
+  vitrineRules,
+  type PosePhoto,
   type ProjectContext,
 } from "./prompts.ts";
+import { visualsOfTask } from "../art/manifest.ts";
 
 export class TaskError extends Error {
   constructor(message: string) {
@@ -52,7 +61,18 @@ export class TaskError extends Error {
 
 const PLAN_SCHEMA = z.toJSONSchema(PlanOutput, { target: "draft-7" });
 const REPORT_SCHEMA = z.toJSONSchema(ExecutionReportOutput, { target: "draft-7" });
-const VERIFY_SCHEMA = z.toJSONSchema(VerificationOutput, { target: "draft-7" });
+/**
+ * Ce que le testeur doit rendre : « kind » et « source » obligatoires sur chaque point (ADR-124). Sans eux, un point de rendu
+ * non étiqueté laisserait fusionner comme avant. La lecture (VerificationOutput) reste tolérante pour les anciens passages.
+ */
+const VERIFY_SCHEMA = z.toJSONSchema(
+  VerificationOutput.extend({
+    checks: z
+      .array(VerificationOutput.shape.checks.element.extend({ kind: z.enum(["rendu", "regle", "technique"]), source: z.enum(["demande", "consigne", "plan"]) }))
+      .max(20),
+  }),
+  { target: "draft-7" },
+);
 const MAX_EVENTS = 500;
 /** Un chantier dans l'un de ces états occupe le projet : les suivants attendent leur tour (ADR-31). */
 const ACTIVE: readonly TaskStatus[] = ["planning", "plan_review", "approved", "running", "review", "changes_requested"];
@@ -64,6 +84,8 @@ export const isBigTask = (task: Pick<Task, "title">): boolean => /\(gros\)/i.tes
 const LIMIT_PAUSE = { five_hour: 0.85, seven_day: 0.95 } as const;
 /** Modifications qui ne doivent jamais sortir d'un run, quoi qu'il arrive. */
 const FORBIDDEN_CHANGE = /^(studio|\.git|\.claude)(\/|$)/i;
+/** Marqueurs qu'une fusion en conflit laisse dans un fichier (ADR-104) ; « ======= » seul ne compte pas (titres Markdown). */
+const CONFLICT_MARKER = /^(<{7}|>{7})( |\r?$)/m;
 
 type ActiveRun = {
   id: string;
@@ -79,10 +101,16 @@ type ActiveRun = {
   abort: AbortController;
   events: RunEvent[];
   waiting: Map<string, (allowed: boolean) => void>;
+  /** Refus du gardien par raison : au deuxième identique, l'agent est prié de changer d'approche (audit du 28/10). */
+  denials: Map<string, number>;
+  /** Compétences venues du catalogue public ouvertes pendant ce passage (ADR-105) : plus d'autorisation automatique hors plan. */
+  external?: string[];
+  /** Ce passage a la manette (le testeur, ou le développeur qui intègre un visuel, ADR-117). */
+  play?: boolean;
 };
 
 /** Ce que le hub a vérifié lui-même, transmis au testeur. */
-export type HubChecks = { summary: string; screenshot: string | null };
+export type HubChecks = { summary: string; screenshot: string | null; poses?: PosePhoto[] };
 
 export type RunOutcome ={ report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string };
 
@@ -92,7 +120,14 @@ export type TaskServiceOptions = {
   agentBaseUrl: () => string;
   escalationTimeoutMs?: number;
   maxTurns?: Partial<Record<RunMode, number>>;
+  /** Développeurs et testeurs au travail en même temps, tous jeux confondus (défaut : STUDIO_MAX_AGENTS, sinon 3). */
+  maxAgents?: number;
+  /** Chantiers en même temps sur un même jeu, avec le chef de chantier (ADR-104). 1 par défaut : un seul à la fois. */
+  parallel?: number;
 };
+
+/** Décision de l'ordonnanceur (ADR-104), pour les nouvelles dans la discussion. */
+export type ScheduleEvent = { kind: "parallel"; with: Task[] } | { kind: "waiting"; on: string; reason: string };
 
 /**
  * Tâches de développement sous contrôle (docs/SECURITY.md §3 à §5, ADR-15) :
@@ -121,6 +156,8 @@ export class TaskService {
   onRunFinished: ((task: Task, kind: RunMode) => unknown) | null = null;
   /** Carnet « État du jeu » donné aux agents (ADR-33). */
   gameState: ((project: string) => string | null) | null = null;
+  /** La mémoire du studio (ADR-99) : ce que le directeur créatif a appris à l'équipe, donné au développeur et au testeur. */
+  studioMemory: (() => string) | null = null;
   /** Vérifications du hub entre le développeur et le testeur : tests, lancement et capture du jeu (ADR-32, ADR-33). */
   beforeVerify: ((task: Task) => Promise<HubChecks | null>) | null = null;
   /** La manette du testeur (ADR-69) : absente, le testeur ne joue pas. */
@@ -139,6 +176,22 @@ export class TaskService {
   readonly #background = new Set<Promise<void>>();
   /** Chantiers du banc d'essai en cours (ADR-87) : jamais dans la liste des chantiers, jamais fusionnés. */
   readonly #bench = new Map<string, Task>();
+  /** Essais de compétences sur le banc (ADR-102) : compétence forcée ou retirée pour ce passage. */
+  readonly #benchSkills = new Map<string, SkillOverride>();
+  /** Réservoir d'agents (audit du 28/10) : plafond de passages simultanés, tous jeux confondus. */
+  readonly #pool: AgentPool;
+  /** Chantiers dont la prochaine passe du développeur prend le modèle des gros chantiers (dernière correction automatique). */
+  readonly #stronger = new Set<string>();
+  /** Chef de chantier (ADR-104) : file d'ordonnancement par projet, fiches en préparation, nouvelles déjà données. */
+  readonly #scheduling = new Map<string, Promise<void>>();
+  readonly #scouting = new Set<string>();
+  readonly #announced = new Map<string, string>();
+  /** Chantiers en réconciliation après une intégration en conflit : fichiers à vérifier sans marqueur avant d'enregistrer. */
+  readonly #integrating = new Map<string, string[]>();
+  /** Le chef de chantier (ADR-104) : sans lui, un seul chantier à la fois par jeu. */
+  foreman: Pick<Foreman, "scope"> | null = null;
+  /** Prévenu quand l'ordonnanceur lance un chantier en parallèle ou le fait attendre (nouvelles dans la discussion). */
+  onScheduled: ((task: Task, event: ScheduleEvent) => void) | null = null;
 
   constructor(deps: {
     db: Db;
@@ -160,10 +213,21 @@ export class TaskService {
     this.#vcs = deps.vcs;
     this.#executor = deps.executor;
     this.#opts = deps.options;
+    this.#pool = new AgentPool(deps.options.maxAgents ?? (Number(process.env.STUDIO_MAX_AGENTS) || 3));
+  }
+
+  /** Le réservoir d'agents : places occupées, en attente, plafond. */
+  agentPool(): { busy: number; waiting: number; max: number } {
+    return { busy: this.#pool.busy, waiting: this.#pool.waiting, max: this.#pool.max };
   }
 
   get executorName(): string {
     return this.#executor.name;
+  }
+
+  /** Sans réponse dans ce délai, une demande du Gardien est refusée (« À vous » affiche l'échéance, ADR-113). */
+  get escalationTimeoutMs(): number {
+    return this.#opts.escalationTimeoutMs ?? 15 * 60_000;
   }
 
   // ── Lecture ──────────────────────────────────────────────────────────────
@@ -245,7 +309,7 @@ export class TaskService {
    * lui avez donnée (ADR-22). Toujours appuyé sur des décisions validées ; le plan suit
    * ensuite les règles habituelles (votre accord, ou validation déléguée s'il est sans risque).
    */
-  createDelegated(project: string, input: { decisions: string[]; title?: string; goal?: string }, autonomy: string): Task {
+  createDelegated(project: string, input: { decisions: string[]; title?: string; goal?: string; request?: string }, autonomy: string): Task {
     if (this.#projects.get(project).autonomy === "supervised") throw new TaskError("Autonomie « Je valide tout » : c'est vous qui lancez les tâches");
     return this.#create(project, input, { delegated: true, autonomy });
   }
@@ -254,16 +318,19 @@ export class TaskService {
    * Mode atelier (ADR-24) : chantier lancé depuis une discussion quand vous dites « go ».
    * La consigne rédigée par le directeur tient lieu de cahier des charges ; la discussion est sa trace.
    */
-  createFromConversation(project: string, input: { title: string; goal: string; decisions?: string[]; reworks?: string[] }, thread: string): Task {
+  createFromConversation(project: string, input: { title: string; goal: string; decisions?: string[]; reworks?: string[]; request?: string }, thread: string): Task {
     if (this.#projects.get(project).autonomy === "supervised") throw new TaskError("Autonomie « Je valide tout » : c'est vous qui lancez les tâches");
     // Seul un chantier déjà fusionné peut être « repris » (ADR-32).
     const reworks = (input.reworks ?? []).filter((id) => this.list(project).some((t) => t.id === id && t.status === "merged"));
-    return this.#create(project, { decisions: input.decisions ?? [], title: input.title, goal: input.goal, reworks }, { delegated: true, thread, ...(reworks.length ? { reworks } : {}) }, { thread });
+    // Une plainte ancienne reste valable (ADR-121) : les mots des chantiers repris passent au nouveau.
+    const inherited = reworks.map((id) => this.get(project, id)).sort((a, b) => a.id.localeCompare(b.id)).map((t) => t.request);
+    const request = chainRequests(inherited, input.request);
+    return this.#create(project, { decisions: input.decisions ?? [], title: input.title, goal: input.goal, reworks, ...(request ? { request } : {}) }, { delegated: true, thread, ...(reworks.length ? { reworks } : {}) }, { thread });
   }
 
   #create(
     project: string,
-    input: { decisions: string[]; title?: string; goal?: string; reworks?: string[] },
+    input: { decisions: string[]; title?: string; goal?: string; reworks?: string[]; request?: string },
     extra: Record<string, unknown>,
     origin: { thread: string } | null = null,
   ): Task {
@@ -279,6 +346,7 @@ export class TaskService {
       project,
       title: input.title?.trim() || decisions[0]!.title,
       goal: input.goal?.trim() || decisions.map((d) => d.statement).join("\n\n"),
+      ...(input.request ? { request: input.request } : {}),
       authorized_by: decisions.map((d) => d.id),
       origin,
       reworks: input.reworks ?? [],
@@ -480,8 +548,10 @@ export class TaskService {
    * Atelier : un seul chantier à la fois par projet. Chacun part de la version du jeu qui contient
    * les précédents, donc deux chantiers ne se marchent jamais dessus (incident du 14/10, T-0013).
    * Si le projet est occupé, le chantier attend son tour et partira tout seul.
+   * Avec le chef de chantier (ADR-104), un chantier peut partir à côté d'un autre s'ils ne touchent pas les mêmes fichiers :
+   * il entre en file, sa fiche est préparée, puis l'ordonnanceur décide (`scouting`).
    */
-  async launch(project: string, id: string): Promise<{ task: Task; after: Task | null }> {
+  async launch(project: string, id: string): Promise<{ task: Task; after: Task | null; scouting?: boolean }> {
     let task = this.get(project, id);
     // Relancer un chantier en échec ou arrêté : il repart de zéro, sur la version actuelle du jeu (ADR-77).
     if (["failed", "cancelled"].includes(task.status) && ![...this.#active.values()].some((r) => r.task === id && r.project === project)) {
@@ -490,9 +560,27 @@ export class TaskService {
       this.#log(project, "task.reset", id, {});
     }
     if (task.status !== "draft") throw new TaskError(`Impossible de lancer depuis le statut « ${task.status} »`);
+    if (this.parallel > 1) {
+      const occupied = this.occupying(project).filter((t) => t.id !== id);
+      const waiting = this.queued(project).filter((t) => t.id !== id);
+      if (!occupied.length && !waiting.length) return { task: await this.startDirect(project, id, "workshop"), after: null };
+      const queuedTask = task.queued_at ? task : this.#update(task, { queued_at: this.#clock.now() });
+      this.#track(this.#schedule(project));
+      return { task: queuedTask, after: occupied[0] ?? waiting[0] ?? null, scouting: true };
+    }
     const after = this.busy(project, id) ?? this.queued(project).find((t) => t.id !== id) ?? null;
     if (after) return { task: task.queued_at ? task : this.#update(task, { queued_at: this.#clock.now() }), after };
     return { task: await this.startDirect(project, id, "workshop"), after: null };
+  }
+
+  /** Chantiers simultanés par jeu (ADR-104) : 1 = un seul à la fois, comme avant. Il faut un chef de chantier pour aller au-delà. */
+  get parallel(): number {
+    return this.foreman ? Math.max(1, Math.floor(this.#opts.parallel ?? 1)) : 1;
+  }
+
+  /** Chantiers qui occupent le projet (en cours, à relire, en train de démarrer). */
+  occupying(project: string): Task[] {
+    return this.list(project).filter((t) => ACTIVE.includes(t.status) || this.#starting.has(`${project}/${t.id}`));
   }
 
   /** Les chantiers que l'échec de celui-ci a retirés de la file. */
@@ -508,6 +596,8 @@ export class TaskService {
 
   /** Projet libéré : le chantier suivant de la file démarre. */
   async #pump(project: string): Promise<void> {
+    // Chef de chantier (ADR-104) : l'ordonnanceur peut lancer plusieurs chantiers compatibles.
+    if (this.parallel > 1) return this.#schedule(project);
     if (this.busy(project)) return;
     const next = this.queued(project)[0];
     if (!next) {
@@ -540,6 +630,178 @@ export class TaskService {
     }
   }
 
+  // ── Chef de chantier : plusieurs chantiers sur le même jeu (ADR-104) ────
+
+  /** Une seule décision d'ordonnancement à la fois par projet : deux passages simultanés lanceraient le même chantier. */
+  #schedule(project: string): Promise<void> {
+    const prev = this.#scheduling.get(project) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(() => this.#scheduleNow(project));
+    this.#scheduling.set(project, next);
+    void next.finally(() => {
+      if (this.#scheduling.get(project) === next) this.#scheduling.delete(project);
+    }).catch(() => {});
+    return next;
+  }
+
+  /**
+   * Lance, dans l'ordre de la file, chaque chantier compatible avec tous ceux qui occupent le jeu et avec ceux qui le
+   * précèdent dans la file (un chantier ne double jamais un chantier dont il dépend ou dont il partage des fichiers),
+   * jusqu'au plafond par jeu. Une fiche manquante arrête la recherche : elle est demandée au chef de chantier.
+   */
+  async #scheduleNow(project: string): Promise<void> {
+    const queue = this.queued(project);
+    const occupied = this.occupying(project);
+    if (!queue.length) {
+      if (!occupied.length) await this.onQueueEmpty?.(project);
+      return;
+    }
+    if (this.#projects.get(project).autonomy !== "workshop") {
+      if (!occupied.length) this.unqueue(project, queue[0]!.id);
+      return;
+    }
+    if (this.#paused.has(project) || occupied.length >= this.parallel) return;
+    const wait = this.#limitWait();
+    if (wait) {
+      this.#log(project, "queue.paused", queue[0]!.id, { until: wait.until, window: wait.window });
+      this.#paused.set(
+        project,
+        setTimeout(() => {
+          this.#paused.delete(project);
+          this.#track(this.#schedule(project));
+        }, wait.ms).unref(),
+      );
+      return;
+    }
+    // Ce que les chantiers en cours ont déjà réellement touché compte autant que leur fiche.
+    const busy = await Promise.all(occupied.map(async (t) => ({ task: t, id: t.id, scope: t.scope, touched: await this.#touched(t) })));
+    let i = 0;
+    if (!busy.length) {
+      // Jeu libre : le premier de la file part tout de suite, sans attendre de fiche (comme avant).
+      const first = queue[0]!;
+      if (!(await this.#startQueued(project, first))) return;
+      busy.push({ task: first, id: first.id, scope: first.scope, touched: [] });
+      i = 1;
+    }
+    const missing = [...busy.map((b) => b.task), ...queue.slice(i)].filter((t) => !t.scope);
+    if (missing.length) this.#track(this.#scout(project, missing));
+    const before: { id: string; scope: Task["scope"] }[] = [];
+    for (const c of queue.slice(i)) {
+      if (busy.length >= this.parallel) break;
+      if (!c.scope) break;
+      let blocker: { id: string; reason: string } | null = null;
+      for (const o of [...busy, ...before]) {
+        const reason = conflictBetween(c, o);
+        if (reason) {
+          blocker = { id: o.id, reason };
+          break;
+        }
+      }
+      if (blocker) {
+        this.#announce(c, { kind: "waiting", on: blocker.id, reason: blocker.reason });
+        before.push(c);
+        continue;
+      }
+      const alongside = busy.map((b) => b.task);
+      if (!(await this.#startQueued(project, c))) continue;
+      this.#log(project, "task.parallel", c.id, { alongside: alongside.map((t) => t.id) });
+      this.#announce(this.get(project, c.id), { kind: "parallel", with: alongside });
+      busy.push({ task: c, id: c.id, scope: c.scope, touched: [] });
+    }
+  }
+
+  async #startQueued(project: string, task: Task): Promise<boolean> {
+    try {
+      await this.startDirect(project, task.id, "workshop");
+      return true;
+    } catch (err) {
+      this.#log(project, "queue.failed", task.id, { error: (err as Error).message.slice(0, 300) });
+      this.#update(this.get(project, task.id), { status: "failed", queued_at: null });
+      return false;
+    }
+  }
+
+  /** Fichiers qu'un chantier en cours a déjà modifiés (enregistrés ou non dans sa copie). */
+  async #touched(task: Task): Promise<string[]> {
+    if (!task.worktree || !existsSync(task.worktree)) return [];
+    const out = new Set<string>();
+    try {
+      for (const line of (await this.#vcs.status(task.worktree)).split("\n")) {
+        const path = line.slice(3).split(" -> ").at(-1)?.trim().replace(/^"|"$/g, "");
+        if (path) out.add(path);
+      }
+      if (task.base_commit && task.branch) for (const f of (await this.#vcs.diff(this.#projects.get(task.project).root, task.base_commit, task.branch)).files) out.add(f.path);
+    } catch {
+      /* copie illisible : sa fiche suffit */
+    }
+    return [...out].filter((p) => !/^studio\//i.test(p));
+  }
+
+  /** Demande au chef de chantier la fiche des chantiers qui n'en ont pas, puis relance l'ordonnancement. */
+  async #scout(project: string, tasks: Task[]): Promise<void> {
+    const foreman = this.foreman;
+    const todo = tasks.filter((t) => !this.#scouting.has(`${project}/${t.id}`));
+    if (!foreman || !todo.length) return;
+    for (const t of todo) this.#scouting.add(`${project}/${t.id}`);
+    try {
+      for (const t of todo) {
+        const others = [...this.occupying(project), ...this.queued(project)].filter((o) => o.id !== t.id);
+        const scope = await foreman.scope(this.get(project, t.id), others, this.#clock.now());
+        this.#update(this.get(project, t.id), { scope });
+        this.#log(project, "task.scoped", t.id, { files: scope.files, depends_on: scope.depends_on, confident: scope.confident });
+      }
+    } finally {
+      for (const t of todo) this.#scouting.delete(`${project}/${t.id}`);
+    }
+    await this.#schedule(project);
+  }
+
+  /** Nouvelles de l'ordonnancement, une fois par décision (pas de répétition à chaque passage). */
+  #announce(task: Task, event: ScheduleEvent): void {
+    const key = `${task.project}/${task.id}`;
+    const sig = event.kind === "parallel" ? "parallel" : `${event.on}|${event.reason}`;
+    if (this.#announced.get(key) === sig) return;
+    this.#announced.set(key, sig);
+    try {
+      this.onScheduled?.(task, event);
+    } catch {
+      /* un observateur ne doit jamais casser l'ordonnancement */
+    }
+  }
+
+  /**
+   * Fusion en file (ADR-104). Un chantier parti à côté d'un autre n'a pas vu ce qui a été fusionné depuis son départ.
+   * Avant de le fusionner, la version actuelle du jeu est fusionnée dans SA copie :
+   * - rien n'a bougé : « ready » ;
+   * - fusion propre : les vérifications du hub sont refaites sur l'ensemble (« integrated ») ;
+   * - conflit sur des registres seulement : fusion clé par clé par le hub, puis comme une fusion propre (ADR-119) ;
+   * - autre conflit : la fusion reste en cours avec ses marqueurs, pour une passe de réconciliation du développeur (« conflict »).
+   * Le point de départ du chantier devient la version intégrée : son diff ne montre plus que son propre travail.
+   */
+  async integrate(project: string, id: string): Promise<{ status: "ready" } | { status: "integrated"; checks: HubChecks | null } | { status: "conflict"; files: string[] }> {
+    const task = this.get(project, id);
+    if (task.status !== "review" || !task.branch || !task.worktree) throw new TaskError("Seul un chantier en revue s'intègre à la version du jeu");
+    const repo = this.#projects.get(project).root;
+    const head = await this.#vcs.head(repo);
+    if (await this.#vcs.isAncestor(repo, head, task.branch)) return { status: "ready" };
+    const message = `studio: ${task.id} intègre la version actuelle du jeu`;
+    const res = await this.#vcs.merge(task.worktree, head, message, { keepConflicts: true });
+    if (!res.ok && (res.untracked?.length || !res.conflicts.length)) {
+      throw new TaskError(`Impossible de réunir ${task.id} avec la version actuelle du jeu : ${res.untracked?.length ? `fichiers non enregistrés dans la copie (${res.untracked.slice(0, 3).join(", ")})` : (res.detail ?? "Git a refusé")}.`);
+    }
+    this.#update(this.get(project, id), { base_commit: head });
+    const registres = !res.ok && this.parallel > 1 ? await resoudreRegistres(this.#vcs, task.worktree, message) : null;
+    const fondus = registres && !registres.remaining.length;
+    if (fondus && !res.ok) this.#log(project, "task.registers_merged", id, { files: res.conflicts, resolved: registres.resolved });
+    if (res.ok || fondus) {
+      this.#log(project, "task.integrated", id, { head, conflicts: [] });
+      const checks = await Promise.resolve(this.beforeVerify?.(this.get(project, id)) ?? null).catch(() => null);
+      return { status: "integrated", checks };
+    }
+    this.#integrating.set(`${project}/${id}`, res.conflicts);
+    this.#log(project, "task.integrated", id, { head, conflicts: res.conflicts });
+    return { status: "conflict", files: res.conflicts };
+  }
+
   /** La jauge d'abonnement est presque pleine : rien de nouveau ne démarre (chantiers, file des visuels). */
   limitPaused(): boolean {
     return !!this.#limitWait();
@@ -564,7 +826,7 @@ export class TaskService {
     return null;
   }
 
-  async #execute(project: string, id: string): Promise<Task> {
+  async #execute(project: string, id: string, correction = false): Promise<Task> {
     const task = this.get(project, id);
     if (task.status !== "approved" || !task.plan) throw new TaskError("Le plan doit être validé avant l'exécution");
     const plan = this.plan(project, task.plan);
@@ -572,10 +834,27 @@ export class TaskService {
     const running = this.#update(task, { status: "running" });
     const decisions = this.#decisions(task);
     const ctx = this.#context(task);
+    // Correction dans la même copie : ce que la passe précédente a fait et ce que le testeur a relevé passent à la suivante,
+    // pour que rien ne se perde d'une passe à l'autre (audit du 28/10 : 12 corrections sur 34 échouaient encore).
+    const before = correction ? this.runs(project, id) : [];
+    const lastReport = before.findLast((r) => r.result?.report)?.result?.report ?? null;
+    const lastVerdict = before.findLast((r) => r.result?.verification)?.result?.verification ?? null;
+    const repo = this.#projects.get(project).root;
+    const already = task.direct && lastReport ? (await this.#vcs.diff(repo, task.base_commit!, task.branch!).catch(() => ({ files: [] }))).files.map((f) => f.path) : [];
+    // Plusieurs chantiers sur le jeu (ADR-104) : le développeur connaît son périmètre et ce que les autres ont en main.
+    const others = this.parallel > 1 && task.direct ? this.occupying(project).filter((t) => t.id !== id && t.scope?.files.length) : [];
+    const lanes =
+      this.parallel > 1 && task.direct && (task.scope?.files.length || others.length)
+        ? { mine: task.scope?.files ?? [], reserved: others.map((t) => ({ id: t.id, title: t.title, files: t.scope!.files })) }
+        : null;
 
-    this.#spawn(running, "execute", new PolicyEngine({ mode: "execute", root: task.worktree!, plan, readable: this.#readable(task) }), {
-      systemPrompt: task.direct ? directExecutionSystemPrompt(ctx) : executionSystemPrompt(ctx),
-      prompt: task.direct ? directExecutionPrompt(task, decisions) : executionPrompt(task, plan, decisions),
+    // Un visuel intégré ou retouché dans un jeu Godot : le développeur voit sa vitrine avec la manette (ADR-117).
+    const vitrines = this.playtest !== null && isGodot(task.worktree!) && canPlay(task.worktree!) ? integratedVisuals(task) : [];
+    const system = task.direct ? directExecutionSystemPrompt(ctx) : executionSystemPrompt(ctx);
+    this.#spawn(running, "execute", new PolicyEngine({ mode: "execute", root: task.worktree!, plan, readable: this.#readable(task), ...(vitrines.length ? { play: true } : {}) }), {
+      systemPrompt: vitrines.length ? `${system}\n\n${vitrineRules(vitrines)}` : system,
+      ...(vitrines.length ? { play: true } : {}),
+      prompt: task.direct ? directExecutionPrompt(task, decisions, lastReport ? { files: already, report: lastReport } : null, lanes) : executionPrompt(task, plan, decisions),
       jsonSchema: REPORT_SCHEMA,
       onResult: async (r) => {
         const parsed = ExecutionReportOutput.safeParse(r.structured);
@@ -587,8 +866,20 @@ export class TaskService {
           const path = line.startsWith("?? ") ? line.slice(3).trim() : "";
           if (/^studio\/.*\.(import|uid)$/i.test(path)) rmSync(join(task.worktree!, path), { force: true });
         }
+        // Réconciliation après une intégration en conflit (ADR-104) : rien ne s'enregistre tant qu'un marqueur reste.
+        const conflicted = this.#integrating.get(`${project}/${id}`);
+        if (conflicted) {
+          const left = conflicted.filter((f) => {
+            try {
+              return CONFLICT_MARKER.test(readFileSync(join(task.worktree!, f), "utf8"));
+            } catch {
+              return false;
+            }
+          });
+          if (left.length) throw new TaskError(`Réconciliation inachevée : marqueurs de conflit encore présents dans ${left.join(", ")}. Relancez le chantier : il repartira de la version actuelle du jeu.`);
+          this.#integrating.delete(`${project}/${id}`);
+        }
         await this.#vcs.commitAll(task.worktree!, `studio: ${task.id} — ${task.title} (plan ${plan.id})`);
-        const repo = this.#projects.get(project).root;
         const { files, patch } = await this.#vcs.diff(repo, task.base_commit!, task.branch!);
         const violations = files.filter((f) => FORBIDDEN_CHANGE.test(f.path));
         if (violations.length) {
@@ -599,7 +890,7 @@ export class TaskService {
         // Vérification QA automatique, en lecture seule.
         this.#spawn(this.get(project, id), "verify", new PolicyEngine({ mode: "verify", root: task.worktree!, plan, readable: this.#readable(task) }), {
           systemPrompt: verificationSystemPrompt(ctx, this.playtest !== null && canPlay(task.worktree!)),
-          prompt: verificationPrompt(task, plan, decisions, patch, report, hubChecks),
+          prompt: verificationPrompt(task, plan, decisions, patch, report, hubChecks, { previous: lastVerdict, files: files.map((f) => f.path), base: task.base_commit }),
           jsonSchema: VERIFY_SCHEMA,
           onResult: (v) => {
             const verification = VerificationOutput.parse(v.structured);
@@ -700,17 +991,39 @@ export class TaskService {
   async #merge(task: Task, approval: string): Promise<{ task: Task; sha: string }> {
     const { project, id } = task;
     const repo = this.#projects.get(project).root;
-    const dirty = await this.#vcs.trackedChanges(repo);
+    let dirty = await this.#vcs.trackedChanges(repo);
+    // studio/ appartient au hub (vision, visuels du DA) : ce qu'il y a écrit sans l'enregistrer ne doit pas bloquer la
+    // fusion ni vous demander un commit (audit du 28/10 : « studio/art/assets.json » non commité bloquait des fusions).
+    const studio = dirty.filter((p) => /^studio\//i.test(p) && !p.includes(" -> ") && !p.startsWith('"'));
+    if (studio.length && studio.length === dirty.length) {
+      await this.#vcs.commitPaths(repo, studio, `studio: état du studio enregistré avant la fusion de ${id}`).catch(() => null);
+      this.#log(project, "studio.saved", id, { files: studio });
+      dirty = await this.#vcs.trackedChanges(repo);
+    }
     if (dirty.length) {
       throw new TaskError(
         `Votre projet a des modifications non commitées (${dirty.slice(0, 3).join(", ")}${dirty.length > 3 ? "…" : ""}). Commitez-les ou mettez-les de côté avant de fusionner.`,
       );
     }
     if (!(await this.#vcs.currentBranch(repo))) throw new TaskError("Votre projet n'est sur aucune branche (HEAD détachée)");
-    const res = await this.#vcs.merge(repo, task.branch!, `studio: fusion de ${task.id} — ${task.title} (${approval})`);
+    const message = `studio: fusion de ${task.id} — ${task.title} (${approval})`;
+    // Fusion, résolution des registres et annulation d'un seul tenant : le dépôt du joueur ne reste pas ouvert entre les étapes
+    // aux enregistrements du hub ni à une autre fusion, qui échoueraient ou annuleraient celle-ci (ADR-119).
+    const res = await this.#vcs.exclusive(repo, async () => {
+      const merged = await this.#vcs.merge(repo, task.branch!, message, { keepConflicts: this.parallel > 1 });
+      if (merged.ok || !merged.conflicts.length || this.parallel <= 1) return merged;
+      const registres = await resoudreRegistres(this.#vcs, repo, message);
+      if (registres && !registres.remaining.length) {
+        this.#log(project, "task.registers_merged", id, { files: merged.conflicts, resolved: registres.resolved });
+        return { ok: true as const, sha: await this.#vcs.head(repo) };
+      }
+      await this.#vcs.abortMerge(repo);
+      return merged;
+    });
     if (!res.ok && res.untracked?.length)
       throw new TaskError(`Votre projet contient des fichiers non enregistrés que ce chantier crée aussi (${res.untracked.slice(0, 3).join(", ")}${res.untracked.length > 3 ? "…" : ""}). Enregistrez-les (commit) ou supprimez-les, puis dites « fusionne ». Rien n'a été modifié dans votre projet.`);
-    if (!res.ok) throw new TaskError(`Conflit de fusion sur : ${res.conflicts.join(", ") || "?"}. Rien n'a été modifié dans votre projet.`);
+    if (!res.ok && !res.conflicts.length) throw new TaskError(`Git a refusé la fusion${res.detail ? ` : ${res.detail}` : ""}. Rien n'a été modifié dans votre projet.`);
+    if (!res.ok) throw new TaskError(`Conflit de fusion sur : ${res.conflicts.join(", ")}. Rien n'a été modifié dans votre projet.`);
     await this.#cleanup(task);
     this.#log(project, "task.merged", id, { approval, commit: res.sha });
     return { task: this.#update(this.get(project, id), { status: "merged", worktree: null }), sha: res.sha };
@@ -731,12 +1044,14 @@ export class TaskService {
    * Atelier (ADR-31) : nouvelle passe du développeur dans la même copie du jeu, avec les remarques
    * du testeur ou les vôtres (dites dans la discussion), puis nouvelle vérification.
    */
-  async correct(project: string, id: string, feedback: string, by: "tester" | "you"): Promise<Task> {
+  async correct(project: string, id: string, feedback: string, by: "tester" | "you", opts: { stronger?: boolean } = {}): Promise<Task> {
     const task = this.get(project, id);
     if (task.status !== "review" || !task.direct || !task.plan) throw new TaskError("Seul un chantier d'atelier en revue peut être corrigé ainsi");
     this.#update(task, { status: "approved", feedback: [...task.feedback, feedback.trim()].filter(Boolean) });
-    this.#log(project, "task.changes_requested", id, { feedback, direct: true, by });
-    return this.#execute(project, id);
+    this.#log(project, "task.changes_requested", id, { feedback, direct: true, by, ...(opts.stronger ? { stronger: true } : {}) });
+    // Dernière correction automatique : le modèle des gros chantiers prend le relais plutôt que de refaire la même passe.
+    if (opts.stronger && !isBigTask(task)) this.#stronger.add(`${project}/${id}`);
+    return this.#execute(project, id, true);
   }
 
   async abandon(session: HumanSession, project: string, id: string): Promise<Task> {
@@ -769,7 +1084,7 @@ export class TaskService {
       const workshop = t.direct && t.origin && this.#projects.get(t.project).autonomy === "workshop";
       this.#update(t, { status: workshop ? "cancelled" : "failed" });
       if (!workshop) continue;
-      const again = this.#create(t.project, { decisions: t.authorized_by, title: t.title, goal: t.goal, reworks: t.reworks }, { restarted: t.id }, t.origin);
+      const again = this.#create(t.project, { decisions: t.authorized_by, title: t.title, goal: t.goal, reworks: t.reworks, ...(t.request ? { request: t.request } : {}) }, { restarted: t.id }, t.origin);
       // Avant tout le reste de la file (seule une intégration de visuel passe devant).
       this.#update(again, { queued_at: "0000-00-00T00:00:00.000Z" });
       this.#log(t.project, "task.restarted", again.id, { interrupted: t.id });
@@ -779,9 +1094,15 @@ export class TaskService {
   }
 
   /** Au démarrage, une fois le hub prêt : chaque projet qui a une file reprend son chantier suivant. */
-  resumeQueues(): void {
+  resumeQueues(only?: string): void {
     const projects = this.#db.prepare("SELECT DISTINCT project FROM tasks WHERE status = 'draft'").all() as { project: string }[];
-    for (const { project } of projects) if (this.queued(project).length) this.#track(this.#pump(project));
+    for (const { project } of projects) if ((only === undefined || only === project) && this.queued(project).length) this.#track(this.#pump(project));
+  }
+
+  /** Les jeux qui ont des chantiers en file, pour une reprise échelonnée au démarrage (ADR-130). */
+  queuedProjects(): string[] {
+    const projects = this.#db.prepare("SELECT DISTINCT project FROM tasks WHERE status = 'draft' ORDER BY project").all() as { project: string }[];
+    return projects.map((p) => p.project).filter((p) => this.queued(p).length > 0);
   }
 
   async idle(): Promise<void> {
@@ -796,13 +1117,28 @@ export class TaskService {
     const d = run.policy.evaluate(tool, input, run.cwd);
     if (d.decision !== "allow") this.#event(run, "info", `${d.decision === "deny" ? "Refusé" : "Demande d'autorisation"} : ${this.#describe(run, tool, input)} (${d.reason})`);
     if (d.decision === "deny") this.#log(run.project, "policy.denied", run.task, { run: run.id, tool, reason: d.reason, input: summarizeInput(input) });
+    // Compétence ouverte par l'agent : comptée pour la page Compétences (ADR-97).
+    if (d.decision === "allow" && tool === "Skill" && typeof input.skill === "string") {
+      this.skills?.recordUse(input.skill, { project: run.project, task: run.task });
+      if (this.skills?.isExternal(input.skill)) (run.external ??= []).push(input.skill.replace(/^[^:]+:/, ""));
+    }
+    if (d.decision === "deny") {
+      // Le même refus revient : l'agent tourne en rond sur des variantes (audit du 28/10, 602 refus). On le lui dit.
+      const kind = d.reason.split(" : ")[0]!.split(" (dans")[0]!;
+      const n = (run.denials.get(kind) ?? 0) + 1;
+      run.denials.set(kind, n);
+      if (n >= 2) return { ...d, reason: `${d.reason}. ${n}e refus pour la même raison : ne tente pas une variante de la même commande ; change d'approche (Read, Grep, Glob, Edit, Write, ou une commande simple sans $ ni redirection) ou signale-le dans ton rapport.` };
+    }
     return d;
   }
 
-  /** L'outil « jouer » du testeur (ADR-69) : seulement pendant sa vérification, dans la copie du chantier. */
+  /**
+   * L'outil « jouer » du testeur (ADR-69) : seulement pendant sa vérification, dans la copie du chantier ; et pour le
+   * développeur qui intègre un visuel d'un jeu Godot (ADR-117).
+   */
   async agentPlay(runId: string, token: string, req: PlayRequest): Promise<PlayResult> {
     const run = this.#authRun(runId, token);
-    if (run.kind !== "verify" || !this.playtest) throw new TaskError("Seul le testeur peut jouer au jeu");
+    if ((run.kind !== "verify" && !run.play) || !this.playtest) throw new TaskError("Seul le testeur peut jouer au jeu");
     return this.playtest.handle({ id: run.id, project: run.project, task: run.task, cwd: run.root }, req);
   }
 
@@ -816,7 +1152,14 @@ export class TaskService {
     // du jeu que vous relirez avant fusion. On laisse travailler, et on le note.
     // Le banc d'essai (ADR-87) travaille comme l'atelier : personne n'attend devant, et sa copie est jetée.
     const bench = this.#bench.get(`${run.project}/${run.task}`);
-    if (bench || this.#projects.get(run.project).autonomy === "workshop") {
+    // Une compétence externe a été ouverte (ADR-105) : ce qui sort du plan vous est demandé, même en atelier.
+    // Le banc garde l'autorisation automatique : sa copie est jetée, rien n'est jamais fusionné.
+    const external = !bench && run.external?.length ? run.external : null;
+    if (external) {
+      this.#log(run.project, "escalation.external_skill", run.task, { skills: external, summary: this.#describe(run, tool, input) });
+      this.#event(run, "info", `Hors plan après une compétence externe (${external.join(", ")}) : votre accord est demandé`);
+    }
+    if (!external && (bench || this.#projects.get(run.project).autonomy === "workshop")) {
       const summary = this.#describe(run, tool, input);
       this.#log(run.project, "escalation.auto_allowed", run.task, { summary, reason: d.reason });
       // En exécution directe il n'y a pas de plan : rien d'« hors plan » à signaler à chaque action.
@@ -832,7 +1175,7 @@ export class TaskService {
       tool,
       summary: this.#describe(run, tool, input),
       input: summarizeInput(input),
-      reason: d.reason,
+      reason: external ? `${d.reason} — après la compétence externe ${external.join(", ")}` : d.reason,
       status: "pending",
       created_at: this.#clock.now(),
       decided_at: null,
@@ -850,7 +1193,7 @@ export class TaskService {
 
     const allowed = await new Promise<boolean>((resolve) => {
       run.waiting.set(esc.id, resolve);
-      setTimeout(() => resolve(false), this.#opts.escalationTimeoutMs ?? 15 * 60_000).unref?.();
+      setTimeout(() => resolve(false), this.escalationTimeoutMs).unref?.();
     });
     run.waiting.delete(esc.id);
     const current = this.escalations(run.project).find((e) => e.id === esc.id);
@@ -873,9 +1216,11 @@ export class TaskService {
       jsonSchema: object;
       onResult: (r: ExecResult) => RunOutcome | Promise<RunOutcome>;
       onFailure: (error: string) => void;
+      /** La manette en dehors de la vérification : le développeur qui intègre un visuel (ADR-117). */
+      play?: boolean;
     },
   ): string {
-    const id = nextId(this.#db, task.project, "RUN");
+    const id = nextGlobalId(this.#db, "RUN");
     const token = randomBytes(32).toString("base64url");
     const run: ActiveRun = {
       id,
@@ -889,6 +1234,7 @@ export class TaskService {
       abort: new AbortController(),
       events: [],
       waiting: new Map(),
+      denials: new Map(),
     };
     this.#active.set(id, run);
     this.#db
@@ -910,20 +1256,38 @@ export class TaskService {
       let outcome: RunOutcome | null = null;
       try {
         const runDir = join(this.#opts.dataDir, "runs", id);
-        const play = kind === "verify" && this.playtest !== null && canPlay(task.worktree!);
+        const play = (kind === "verify" || !!spec.play) && this.playtest !== null && canPlay(task.worktree!);
+        run.play = play;
         // Compétences du studio (ADR-29) : un plugin propre au run, seules ces skills sont permises.
-        const plugin = this.skills?.pluginFor(kind === "verify" ? "qa" : "developer", task.project, runDir) ?? null;
+        const plugin =
+          this.skills?.pluginFor(kind === "verify" ? "qa" : "developer", task.project, runDir, { task: task.id, override: this.#benchSkills.get(`${task.project}/${task.id}`) }) ?? null;
+        // Les annexes des compétences (references/…) se lisent avec Read : leur dossier est lisible, rien d'autre du run.
+        if (plugin) policy.addReadable(plugin.dir);
         if (plugin) this.#event(run, "info", `Compétences disponibles : ${plugin.names.map((n) => n.split(":")[1]).join(", ")}`);
-        const result = await this.#executor.run({
+        // Dernière correction automatique : le modèle des gros chantiers prend le relais (audit du 28/10).
+        const stronger = kind === "execute" && this.#stronger.delete(`${task.project}/${task.id}`);
+        if (stronger) this.#event(run, "info", "Dernière correction automatique : le développeur prend le modèle des gros chantiers.");
+        // Réservoir d'agents : la place n'est tenue que le temps de Claude Code (le testeur doit pouvoir passer après).
+        if (!this.#pool.free) this.#event(run, "info", `En attente d'une place : ${this.#pool.max} agents du studio sont déjà au travail.`);
+        const release = await this.#pool.acquire(run.abort.signal);
+        let result: ExecResult;
+        try {
+          result = await this.#executor.run({
           kind,
           runId: id,
           cwd: task.worktree!,
           runDir,
-          systemPrompt: plugin
-            ? `${spec.systemPrompt}
+          systemPrompt: [
+            plugin
+              ? `${spec.systemPrompt}
 
 Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. Consulte celles qui concernent ta tâche avant de commencer, en particulier les leçons du projet si elles existent.`
-            : spec.systemPrompt,
+              : spec.systemPrompt,
+            // Besoins de compétences signalés par l'agent (ADR-102) : le hub cherche ou écrit ce qui manque.
+            this.skills?.needsHint() ?? "",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
           prompt: spec.prompt,
           jsonSchema: spec.jsonSchema,
           tools: plugin ? [...TOOLS_BY_MODE[kind], "Skill"] : TOOLS_BY_MODE[kind],
@@ -931,14 +1295,17 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
           play,
           // Jouer prend des tours : un paquet d'actions, puis une photo, puis un autre paquet (ADR-69).
           maxTurns: this.#opts.maxTurns?.[kind] ?? { plan: 40, execute: 120, verify: play ? 60 : 30 }[kind],
-          big: isBigTask(task),
+          big: isBigTask(task) || stronger,
           bridge,
           bridgeUrl: `${this.#opts.agentBaseUrl()}/${id}`,
           token,
           onEvent: (type, text) => this.#event(run, type, text),
           signal: run.abort.signal,
           taskId: task.id,
-        });
+          });
+        } finally {
+          release();
+        }
         cost = result.costUsd;
         // Mesure par passage (ADR-92) : jetons réels rapportés par Claude Code et chemin pris.
         route = result.route ?? "direct";
@@ -1098,7 +1465,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
    */
   async benchRun<T>(
     project: string,
-    input: { title: string; goal: string; base: string },
+    input: { title: string; goal: string; base: string; skills?: SkillOverride },
     inspect: (worktree: string) => Promise<T>,
   ): Promise<{ id: string; report: ExecutionReportOutput | null; error: string | null; costUsd: number | null; tokens: number | null; model: string | null; seconds: number; files: string[]; checks: T | null }> {
     const repo = this.#projects.get(project).root;
@@ -1112,6 +1479,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
     const pseudo = { ...task, id } as Task;
     const key = `${project}/${id}`;
     this.#bench.set(key, pseudo);
+    if (input.skills) this.#benchSkills.set(key, input.skills);
     const started = Date.now();
     try {
       await linkSharedDirs(repo, path, this.#vcs);
@@ -1137,6 +1505,7 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
       return { id, report: done.report, error, costUsd: done.costUsd, tokens: done.tokens, model: done.model, seconds: Math.round((Date.now() - started) / 1000), files, checks };
     } finally {
       this.#bench.delete(key);
+      this.#benchSkills.delete(key);
       unlinkAllLinks(path);
       await this.#vcs.removeWorktree(repo, path).catch(() => {});
       if (await this.#vcs.branchHead(repo, branch)) await this.#vcs.deleteBranch(repo, branch).catch(() => {});
@@ -1154,7 +1523,10 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
 
   #context(task: Task): ProjectContext {
     const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
-    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")), state: this.gameState?.(task.project) ?? null, godot: isGodot(task.worktree!) };
+    const godot = isGodot(task.worktree!);
+    // ADR-128 : un jeu web avec sa suite de bout en bout, que le hub lance lui-même.
+    const e2e = !godot && !!readScripts(task.worktree!)?.["test:e2e"];
+    return { brief: read(join(task.worktree!, "studio", "BRIEF.md")), claudeMd: read(join(task.worktree!, "CLAUDE.md")), state: this.gameState?.(task.project) ?? null, godot, memory: this.studioMemory?.() || null, e2e };
   }
 
   #update(task: Task, patch: Partial<Task> & { status?: TaskStatus }): Task {
@@ -1196,12 +1568,34 @@ Compétences du studio disponibles (outil Skill) : ${plugin.names.join(", ")}. C
 }
 
 /** Version courte et sûre de l'entrée d'un outil pour l'affichage et le journal. */
+const REQUEST_SEPARATOR = "\n\n---\n\n";
+
+/**
+ * Les mots du directeur créatif pour un chantier (ADR-121) : ceux des chantiers repris, la chaîne complète et sans doublon,
+ * la plus ancienne d'abord, puis les siens. Faute de place, ce sont les plus anciennes qui tombent.
+ */
+export function chainRequests(inherited: (string | undefined)[], own?: string): string | undefined {
+  const parts = [...new Set([...inherited.flatMap((r) => r?.split(REQUEST_SEPARATOR) ?? []), ...(own?.trim() ? [own.trim().slice(-TASK_REQUEST_WORDS_MAX)] : [])])];
+  while (parts.length > 1 && parts.join(REQUEST_SEPARATOR).length > TASK_REQUEST_MAX) parts.shift();
+  return parts.join(REQUEST_SEPARATOR).slice(-TASK_REQUEST_MAX) || undefined;
+}
+
 function summarizeInput(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
     out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}…` : v;
   }
   return out;
+}
+
+/**
+ * Les visuels qu'un chantier intègre ou retouche (ADR-117) : ceux de son titre ou attendus par sa consigne (comme la page
+ * Production), ou les assets que sa consigne cite avec leur vitrine (une retouche demandée par le bilan).
+ */
+function integratedVisuals(task: Task): string[] {
+  const ids = visualsOfTask(task);
+  if (ids.length) return ids;
+  return /vitrine/i.test(task.goal) ? [...new Set(task.goal.match(/A-\d{4,}/g) ?? [])] : [];
 }
 
 /** Jeu que la manette du testeur sait lancer : un jeu web (script « dev », comme « ▶ Essayer ») ou un jeu Godot avec le relais du studio (ADR-73). */

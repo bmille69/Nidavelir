@@ -2,6 +2,7 @@ import type { HubEvent } from "@studio/contracts";
 import type { Hub } from "../hub.ts";
 import type { UsageSnapshot } from "../usage/usage-service.ts";
 import { MODEL_CHOICES, type ModelSetting } from "../usage/model-service.ts";
+import { projectInbox } from "./inbox.ts";
 
 export type AgentId = "you" | "concepteur" | "director" | "art_director" | "archivist" | "developer" | "qa" | "guardian";
 export type AgentState = "idle" | "working" | "waiting";
@@ -42,8 +43,18 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
     acts.concepteur.push({ project: c.project ?? "", text: `Conçoit « ${c.title} »`, href: `#/c/${c.id}`, since: c.since });
     if (c.project) busy.add(c.project);
   }
-  for (const c of hub.conceptions.list().filter((x) => x.status === "open" && x.data.questions.length)) {
+  // Les conceptions d'un jeu passent par sa boîte « À vous » ; ici, celles d'un jeu à créer.
+  for (const c of hub.conceptions.list().filter((x) => x.status === "open" && x.data.questions.length && !(x.project && names.has(x.project)))) {
     acts.you.push({ project: c.project ?? "", text: `Le Concepteur attend vos réponses : ${c.title}`, href: `#/c/${c.id}` });
+  }
+  // L'Atelier d'idées (ADR-100) : le Concepteur enrichit une idée.
+  for (const i of hub.ideas.activity()) acts.concepteur.push({ project: "", text: `Enrichit l'idée « ${i.title} »`, href: `#/idees/${i.id}`, since: i.since });
+  // L'équipe (ADR-98) : un collègue consulté répond.
+  const TEAM_ID = { directeur: "director", concepteur: "concepteur", da: "art_director", son: "art_director", testeur: "qa" } as const;
+  const TEAM_NAME = { directeur: "au Directeur", concepteur: "au Concepteur", da: "au Directeur artistique", son: "au directeur sonore", testeur: "au Testeur" } as const;
+  for (const c of hub.team.activity()) {
+    acts[TEAM_ID[c.to]].push({ project: c.project ?? "", text: `${c.to === "son" ? "Le directeur sonore répond" : "Répond"} ${TEAM_NAME[c.from]}`, detail: c.question.slice(0, 160), href: c.project ? `#/p/${c.project}` : "#/idees", since: c.since });
+    if (c.project) busy.add(c.project);
   }
   const conv = hub.conversations.activity();
   for (const r of conv.replying) {
@@ -114,22 +125,18 @@ export function studioSnapshot(hub: Hub): StudioSnapshot {
         href: `#/p/${p.slug}/tasks/${r.task}`,
         since: r.started_at,
       });
-      acts.guardian.push({ project: p.slug, text: `Surveille ${r.kind === "verify" ? "le QA" : "le développeur"} (${r.task})`, href: `#/p/${p.slug}/tasks/${r.task}`, since: r.started_at });
+      acts.guardian.push({ project: p.slug, text: `Surveille ${r.kind === "verify" ? "le Testeur" : "le développeur"} (${r.task})`, href: `#/p/${p.slug}/tasks/${r.task}`, since: r.started_at });
       busy.add(p.slug);
     }
     for (const e of hub.tasks.escalations(p.slug, { status: "pending" })) {
       waiting.developer = waiting.guardian = true;
       acts.guardian.unshift({ project: p.slug, text: `Bloque une action hors plan : ${e.summary}`, detail: "En attente de votre autorisation", href: `#/p/${p.slug}/tasks/${e.task}` });
-      you(p.slug, `Autoriser ou refuser : ${e.summary}`, `#/p/${p.slug}/tasks/${e.task}`);
     }
-    for (const t of tasks) {
-      if (t.status === "plan_review") you(p.slug, `Valider le plan : ${t.title}`, `#/p/${p.slug}/tasks/${t.id}`);
-      if (t.status === "review")
-        you(p.slug, t.origin ? `${t.id} « ${t.title} » attend votre mot (« fusionne », à corriger…)` : `Relire le résultat : ${t.title}`, t.origin ? `#/p/${p.slug}/t/${t.origin.thread}` : `#/p/${p.slug}/tasks/${t.id}`);
-    }
-    for (const w of hub.art.waiting(p.slug)) you(p.slug, w.text, w.href);
-    const proposals = hub.vision.list(p.slug, { type: "proposal", status: "submitted" }).length;
-    if (proposals) you(p.slug, `${proposals} proposition(s) à arbitrer`, `#/p/${p.slug}/decisions`, proposals);
+    // Ce qui vous attend : la même liste que la boîte « À vous » du projet (ADR-113), les propositions en une ligne.
+    const inbox = projectInbox(hub, p.slug);
+    for (const i of inbox) if (i.kind !== "proposal") you(p.slug, i.line, i.href);
+    const proposals = inbox.filter((i) => i.kind === "proposal").length;
+    if (proposals) you(p.slug, `${proposals} proposition(s) à arbitrer`, `#/p/${p.slug}`, proposals);
   }
 
   const state = (id: AgentId): AgentState => (id === "you" ? (acts.you.length ? "waiting" : "idle") : waiting[id] ? "waiting" : acts[id].length ? "working" : "idle");

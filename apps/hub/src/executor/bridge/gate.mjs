@@ -19,7 +19,7 @@ const TOOL = {
 const STEP = {
   type: "object",
   properties: {
-    do: { type: "string", enum: ["click", "press", "type", "wait", "bridge"] },
+    do: { type: "string", enum: ["click", "press", "type", "wait", "bridge", "pose"] },
     x: { type: "number" },
     y: { type: "number" },
     text: { type: "string", description: "click : texte du bouton ou de l'élément ; type : texte à écrire" },
@@ -29,6 +29,7 @@ const STEP = {
     ms: { type: "number", description: "wait : 0 à 5000 ms" },
     method: { type: "string", enum: ["reset", "setSeed", "step"], description: "bridge : méthode de window.__STUDIO_TEST__" },
     value: { type: "number" },
+    name: { type: "string", description: "pose : nom d'une pose de contrôle que le jeu déclare (voir la réponse)" },
   },
   required: ["do"],
 };
@@ -44,6 +45,7 @@ const PLAY = {
       path: { type: "string", description: "open : ajouté à l'adresse du jeu (« ?niveau=2 »)" },
       steps: { type: "array", items: STEP, maxItems: 20 },
       capture: { type: "boolean", description: "act : prendre une photo après les étapes" },
+      change: { type: "boolean", description: "capture ou act : cette photo montre le changement du chantier (celle que verra le directeur créatif)" },
     },
     required: ["action"],
   },

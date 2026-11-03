@@ -21,7 +21,7 @@ export const RECOMMENDED: Record<ModelRole, { model: ModelId; why: string }> = {
   archivist: { model: "sonnet", why: "Noter les idées et tenir le carnet ne demande pas plus." },
   developer: { model: "sonnet", why: "Chantiers ordinaires : environ 10 fois moins cher que Fable par action, et largement suffisant." },
   developer_big: { model: "fable", why: "Chantiers marqués « (gros) » : là, le meilleur raisonnement évite les chantiers repris." },
-  qa: { model: "haiku", why: "Les vrais tests et le lancement du jeu font l'essentiel ; il relit." },
+  qa: { model: "sonnet", why: "Il relit le code, joue au jeu et juge chaque exigence : sur Haiku, une correction sur trois échouait encore et des régressions passaient (audit du 28/10). Quelques centimes par chantier." },
   archeologue: { model: "sonnet", why: "Il lit beaucoup de code : Sonnet comprend vite sans épuiser votre quota." },
   art_director: { model: "sonnet", why: "Regarde vos images, cherche des références et tient la bible : Sonnet suffit ; Opus pour un regard plus fin." },
   art_workshop: { model: "fable", why: "L'artisan 3D retouche le modèle dans Blender pas à pas, en regardant ses photos : le travail le plus difficile du circuit visuel (ADR-52)." },

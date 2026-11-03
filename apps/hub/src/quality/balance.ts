@@ -126,7 +126,7 @@ export class BalanceService {
     const text = this.describe(project, id);
     if (!text) throw new BalanceError("Ce passage n'a pas de résultats");
     const run = this.#rows(project, 20).find((r) => r.id === id)!;
-    const thread = this.#conversations.createThread(project, "Équilibrage");
+    const thread = this.#conversations.createThread(project, "Équilibrage", "balance");
     const message = [
       `Le hub a joué ${run.runs} parties de chaque simulation d'équilibrage, sans écran, sur la version ${run.commit?.slice(0, 7) ?? "actuelle"} du jeu (une graine par partie, stratégie de la simulation).`,
       "",

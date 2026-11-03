@@ -1,5 +1,6 @@
 import type { PlanOutput } from "@studio/contracts";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type Decision = { decision: "allow" | "deny" | "ask"; reason: string };
@@ -15,6 +16,8 @@ export type PolicyInput = {
    * les modules partagés (node_modules), et les captures du hub (ADR-33).
    */
   readable?: string[];
+  /** Le développeur reçoit aussi la manette : il intègre un visuel et doit voir sa vitrine (ADR-117). */
+  play?: boolean;
 };
 
 /** Nom du plugin qui porte les compétences fournies par le hub à un run. */
@@ -66,6 +69,8 @@ const FIND_ACTIONS = /^-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls
 const RISKY_SCRIPT = /deploy|publish|release|push|upload|install|clean|reset/i;
 
 const HEREDOC = "« <<EOF » interdit : pour écrire un fichier, utilise l'outil Write ou Edit";
+/** Un heredoc VIDE envoyé à /dev/null, en tête de commande : sans aucun effet. */
+const NOOP_HEREDOC = /^cat\s*>>?\s*\/dev\/null\s*<<-?\s*(['"]?)(\w+)\1[ \t]*\r?\n\2[ \t]*(?:\r?\n|$)/;
 const REDIRECT = "redirection vers un fichier interdite : pour écrire un fichier, utilise l'outil Write ou Edit (seules 2>&1 et >/dev/null sont permises)";
 const SUBST = "substitutions et variables ($, `…`, parenthèses, accolades) interdites : écris la commande en clair";
 
@@ -104,6 +109,8 @@ export function splitCommand(cmd: string): { segments: Segment[] } | { error: st
     }
     if (quote === '"') {
       if (c === '"') quote = null;
+      // Un $ d'expression régulière (grep -v "^$", "fin$|") n'est pas une variable : le shell le laisse tel quel.
+      else if (c === "$" && !/[A-Za-z0-9_{([?!#@*$-]/.test(cmd[i + 1] ?? "")) word += c;
       else if (c === "$" || c === "`") return { error: SUBST };
       else if (c === "\\" && /["\\$`]/.test(cmd[i + 1] ?? "")) word += cmd[++i];
       else word += c;
@@ -140,7 +147,7 @@ export function splitCommand(cmd: string): { segments: Segment[] } | { error: st
     if (c === "<" || c === ">" || (!inWord && /[12]/.test(c) && cmd[i + 1] === ">")) {
       if (cmd.startsWith("<<", i)) return { error: HEREDOC };
       // Vers nulle part ou fusion des sorties : sans effet sur les fichiers.
-      const m = /^(?:[12]?>&[12]|[12]?>\s*(?:\/dev\/null|nul)(?![\w.]))/i.exec(cmd.slice(i));
+      const m = /^(?:[12]?>&[12]|[12]?>>?\s*(?:\/dev\/null|nul)(?![\w.]))/i.exec(cmd.slice(i));
       if (!m) return { error: REDIRECT };
       endWord();
       i += m[0].length - 1;
@@ -169,15 +176,25 @@ export class PolicyEngine {
   readonly #writable: Set<string>;
   readonly #deletable: Set<string>;
   readonly #commands: Set<string>;
+  readonly #play: boolean;
 
   constructor(input: PolicyInput) {
     this.#mode = input.mode;
+    this.#play = input.mode === "execute" && !!input.play;
     this.#root = realRoot(input.root);
     this.#readable = (input.readable ?? []).filter((p) => existsSync(p)).map(realRoot);
+    // Les sorties longues que Claude Code range lui-même pour ce dossier de travail (%TEMP%\claude\<dossier>\…) : lisibles,
+    // même si le dossier n'existe pas encore (audit du 28/10 : l'agent ne pouvait pas lire le résultat de ses propres tests).
+    this.#readable.push(claudeScratch(input.root));
     const plan = input.plan ?? { files_to_create: [], files_to_modify: [], files_to_delete: [], commands: [] };
     this.#writable = new Set([...plan.files_to_create, ...plan.files_to_modify].map(normRel));
     this.#deletable = new Set(plan.files_to_delete.map(normRel));
     this.#commands = new Set(plan.commands.map((c) => c.cmd.trim()));
+  }
+
+  /** Rend un dossier lisible en plus, en lecture seule (compétences du run et leurs annexes, ADR-97). */
+  addReadable(dir: string): void {
+    if (existsSync(dir)) this.#readable.push(realRoot(dir));
   }
 
   /** `cwd` : dossier courant du terminal de l'agent ; il persiste d'une commande à l'autre (ADR-38). */
@@ -189,7 +206,8 @@ export class PolicyEngine {
     // Outil interne de Claude Code pour rendre la réponse au format --json-schema : aucun effet (constaté le 14/10/2026).
     if (tool === "StructuredOutput") return allow("rendu du résultat final");
     // La manette du testeur (ADR-69) : le hub ouvre lui-même le jeu de la copie ; aucune écriture, aucune autre adresse.
-    if (tool === PLAY_TOOL) return this.#mode === "verify" ? allow("le testeur joue au jeu") : deny("seul le testeur joue au jeu");
+    if (tool === PLAY_TOOL)
+      return this.#mode === "verify" ? allow("le testeur joue au jeu") : this.#play ? allow("le développeur regarde la vitrine du visuel qu'il intègre") : deny("seul le testeur joue au jeu");
     if (tool === CAVEMAN_RETRIEVE_TOOL) return this.#mode === "verify" ? deny("le testeur ne passe pas par Caveman") : allow("relit un passage que le relais Caveman a compressé");
     if (READ_TOOLS.has(tool)) return this.#read(tool, input);
     if (WRITE_TOOLS.has(tool)) return this.#write(tool, input);
@@ -253,7 +271,8 @@ export class PolicyEngine {
    * Un refus l'emporte, puis une demande ; sinon la commande passe.
    */
   #bash(command: string, from?: string): Decision {
-    const cmd = command.trim();
+    // Habitude de Claude Code : un « cat > /dev/null <<'EOF' » vide devant la vraie commande. Il n'écrit rien : on l'ignore.
+    const cmd = command.trim().replace(NOOP_HEREDOC, "").trim();
     if (!cmd) return deny("commande vide");
     // Commande prévue telle quelle dans le plan.
     if (this.#mode !== "plan" && this.#commands.has(cmd) && !commandProblem(cmd)) return allow("commande prévue dans le plan");
@@ -316,6 +335,7 @@ export class PolicyEngine {
   /**
    * Brancher un visuel du Directeur artistique (ADR-43) : Write ne sait pas écrire une image, donc on permet
    * « cp studio/art/<fichier> <destination> » (un fichier, sans option) et « mkdir [-p] <dossier> », dans la copie, hors zones protégées.
+   * Même règle pour les données d'un dossier de feature de l'Atelier de démontage (studio/references/, ADR-95).
    */
   #artCopy(words: string[], cwd: string): Decision | null {
     const [head, ...rest] = words;
@@ -329,8 +349,9 @@ export class PolicyEngine {
     if (!/^(cp|copy)$/i.test(head ?? "") || rest.length !== 2 || rest.some((a) => a.startsWith("-"))) return null;
     const src = this.#relInside(unixDrive(rest[0]!), cwd);
     const dest = this.#relInside(unixDrive(rest[1]!), cwd);
-    if (src === null || dest === null || !src.startsWith("studio/art/") || isSecret(src)) return null;
+    if (src === null || dest === null || !/^studio\/(art|references)\//.test(src) || isSecret(src)) return null;
     if (dest === "" || isReadOnly(dest) || isSecret(dest)) return null;
+    if (src.startsWith("studio/references/")) return allow(`copie d'une donnée de référence (dossier de feature) : ${src} → ${dest}`);
     return allow(`copie d'un visuel du Directeur artistique : ${src} → ${dest}`);
   }
 
@@ -475,6 +496,14 @@ function godotCommand(words: string[]): string | null {
 /** Chemin à la manière de Git Bash (/c/Games/…) → C:/Games/… */
 function unixDrive(p: string): string {
   return p.replace(/^\/([a-zA-Z])(\/|$)/, "$1:/");
+}
+
+/**
+ * Dossier où Claude Code range les sorties longues d'un dossier de travail : %TEMP%\claude\<chemin, chaque caractère hors
+ * lettres et chiffres changé en « - »> (ex. C--Games-Ambition--data-worktrees-jeu-T-0034). Propre à cette copie.
+ */
+export function claudeScratch(root: string): string {
+  return join(realRoot(tmpdir()), "claude", resolve(root).replace(/[^A-Za-z0-9]/g, "-"));
 }
 
 function readScripts(pkg: string): Record<string, string> | null {

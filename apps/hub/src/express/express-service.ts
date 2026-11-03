@@ -201,7 +201,7 @@ export class ExpressService {
     for (let i = 2; taken.has(slug); i++) slug = `${g.slug}-${i}`;
     const project = await this.#projects.register(session, { path: g.root, slug, name: g.title, initGit: true });
     this.#update(id, { project: project.slug });
-    const thread = this.#conversations.createThread(project.slug, "Suite du jeu express");
+    const thread = this.#conversations.createThread(project.slug, "Suite du jeu express", "express");
     const text = [
       `Ce jeu vient du Jeu express : une première version faite en quelques minutes (JavaScript pur, sans outils de construction).`,
       g.concept ? `Le principe : ${g.concept.pitch}` : "",

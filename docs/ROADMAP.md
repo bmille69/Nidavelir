@@ -138,6 +138,24 @@ Idées retenues après l'audit du 27/10, toutes réalisées le jour même (ADR-8
 
 ---
 
+## Phase 7 : une équipe autonome, tout dans l'application ✅ (28/10/2026)
+
+Le directeur créatif veut se passer d'un assistant extérieur pour créer ses jeux. Les agents du hub reçoivent ce qui les séparait d'Hermes (ADR-98 à ADR-101) :
+
+1. ✅ Ils se consultent entre eux pendant une réponse (serveur MCP du hub, un jeton par tour), et chaque échange vous est montré.
+2. ✅ Une mémoire du studio commune à tous les agents et à tous les jeux. Les agents la proposent, vous seul la validez.
+3. ✅ L'Atelier d'idées, avant les projets : idées, inspirations, enrichissement par le Concepteur, puis « En faire un projet ».
+4. ✅ Ils lisent le jeu en conversation (lecture seule, secrets filtrés par le hub) et ont plus d'étapes pour vérifier.
+
+5. ✅ Une chaîne de production en béton (ADR-103) : numéros de passage uniques et réservoir d'agents (socle du parallélisme), rien ne se perd entre deux passes du développeur et du testeur, testeur qui juge la consigne exigence par exigence, dernière correction sur le modèle des gros chantiers, gardien qui ne refuse plus ce qui est sans danger, fusion qui n'exige plus d'enregistrer studio/.
+6. ✅ Le chef de chantier (ADR-104) : plusieurs développeurs sur le même jeu quand leurs chantiers ne se croisent pas, fusion en file avec revérification, réconciliation des conflits par le développeur.
+7. ✅ La Forge (ADR-106) : l'équipe de chaque jeu en voxels, à ses postes, selon les vrais états ; fiches au clic, cycle jour / nuit, aperçu sur l'accueil.
+8. ✅ Le plan de production (ADR-107) : un objectif, tous les métiers enchaînés (chantiers, visuels, sons) par les circuits existants, validé d'un clic, avec une vérification d'ensemble qui fixe les critères par des tests ; il part seul en séance autonome. C'est la réponse à la question de l'orchestrateur : le hub le reste lui-même, sans Hermes (ADR-18).
+
+Prochaines pistes si le besoin se confirme : une « réunion » à plusieurs agents sur une question ; les images comme inspirations dans l'Atelier.
+
+---
+
 ## Hors feuille de route, tant que le besoin n'est pas démontré
 
 Multi-utilisateur, déploiement distant, base vectorielle, agents planifiés ou permanents, application de bureau, intégration GitHub distante.

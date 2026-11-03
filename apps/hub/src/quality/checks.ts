@@ -1,5 +1,6 @@
 import { spawn, execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/database.ts";
@@ -9,6 +10,8 @@ import type { ProjectRegistry } from "../projects/project-registry.ts";
 import { GodotGame, godotImport, godotReplay, godotTests } from "../godot/run.ts";
 import { runSavedReplays } from "./replays.ts";
 import { hasBridge, hasStudioTests, isGodot, type GodotInstall } from "../godot/toolchain.ts";
+import type { VerificationOutput } from "@studio/contracts";
+import type { PosePhoto } from "../executor/prompts.ts";
 
 /** Résultat d'une vérification faite par le hub lui-même ; « none » = rien à vérifier ou impossible ici. */
 export type CheckOutcome = {
@@ -20,7 +23,25 @@ export type CheckOutcome = {
   loaded?: string[];
   /** Les performances mesurées par le relais (jeu Godot, ADR-83). */
   perf?: PerfSample | null;
+  /** Les poses de contrôle que le jeu déclare (ADR-122). */
+  poses?: PoseDeclared[];
 };
+
+/** Une pose de contrôle déclarée par le jeu (`poses()` du nœud « studio_test », ADR-122). */
+export type PoseDeclared = { nom: string; description: string };
+
+/** Ligne « §POSE§ T-0001 <date> <nom> » : l'interface y affiche la photo de cette pose (ADR-122). */
+export const POSE_MARK = "§POSE§ ";
+/** Poses photographiées au plus par vérification, et images dans un compte rendu. */
+export const MAX_POSES = 8;
+const MAX_POSES_SHOWN = 3;
+
+/** Les photos à montrer dans le compte rendu : celles que le testeur cite d'abord (dans ses preuves, ses résumés). */
+export function relevantPoses(report: Pick<CheckReport, "poses">, verdict: VerificationOutput | null): PosePhoto[] {
+  const said = verdict ? JSON.stringify(verdict) : "";
+  const taken = (report.poses ?? []).filter((p) => p.file);
+  return [...taken.filter((p) => said.includes(p.nom)), ...taken.filter((p) => !said.includes(p.nom))].slice(0, MAX_POSES_SHOWN);
+}
 
 /** Ce que le relais Godot mesure en quelques secondes, synchronisation verticale coupée (ADR-83). */
 export type PerfSample = {
@@ -90,10 +111,14 @@ export type CheckReport = {
   launch: CheckOutcome;
   /** Vos parties gardées comme tests, rejouées dans la copie (jeu Godot, ADR-85). */
   replays?: CheckOutcome | null;
+  /** Les tests de bout en bout (`npm run test:e2e`), lancés par le hub dans la copie (jeu web, ADR-128) ; absent si rien à lancer. */
+  e2e?: CheckOutcome | null;
   /** Mêmes vérifications sur le jeu actuel, faites seulement si le chantier échoue : l'échec était-il déjà là ? */
-  before: { tests: CheckOutcome | null; launch: CheckOutcome | null; replays?: CheckOutcome | null };
+  before: { tests: CheckOutcome | null; launch: CheckOutcome | null; replays?: CheckOutcome | null; e2e?: CheckOutcome | null };
   /** Performances du jeu Godot face à son budget (ADR-83) ; absent pour un jeu web ou un relais trop ancien. */
   perf?: PerfCheck | null;
+  /** Les poses de contrôle photographiées dans le vrai jeu (ADR-122). Une pose ratée n'est pas une régression. */
+  poses?: PosePhoto[];
   /** Le chantier casse quelque chose qui marchait. */
   regression: boolean;
   at: string;
@@ -106,6 +131,10 @@ export interface CheckerPort {
   launch(key: string, cwd: string, screenshot?: string, path?: string): Promise<CheckOutcome>;
   /** Vos parties gardées (studio/replays), rejouées dans `cwd` (ADR-85). */
   replays?(cwd: string): Promise<CheckOutcome>;
+  /** Photographie les poses déclarées dans une même instance du jeu de `cwd` ; `file` donne le chemin de chaque photo (ADR-122). */
+  poses?(cwd: string, poses: PoseDeclared[], file: (pose: PoseDeclared, index: number) => string): Promise<PosePhoto[]>;
+  /** La suite de bout en bout du jeu (`npm run test:e2e`), lancée dans `cwd` (ADR-128). */
+  e2e?(cwd: string): Promise<CheckOutcome>;
 }
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -124,7 +153,17 @@ export class CheckService {
   readonly #shotsDir: string;
   readonly #budget: PerfBudget;
 
-  constructor(deps: { db: Db; clock: Clock; journal: Journal; projects: ProjectRegistry; checker: CheckerPort; shotsDir: string; perfBudget?: PerfBudget }) {
+  /**
+   * Un seul gros contrôle à la fois pour tout le studio (ADR-130) : tests, lancement, parties rejouées, suite de bout en bout
+   * et photos de contrôle d'un chantier passent d'un bloc. Jusqu'à trois chantiers (réservoir d'agents, ADR-103) lançaient
+   * chacun leur navigateur caché, leur serveur de dev ou Godot en même temps sur un processeur de 6 cœurs. Les autres attendent leur tour.
+   */
+  readonly #heavyLimit: number;
+  #heavyRunning = 0;
+  readonly #heavyWaiting: (() => void)[] = [];
+
+  constructor(deps: { db: Db; clock: Clock; journal: Journal; projects: ProjectRegistry; checker: CheckerPort; shotsDir: string; perfBudget?: PerfBudget; heavyLimit?: number }) {
+    this.#heavyLimit = Math.max(1, Math.floor(deps.heavyLimit ?? 1));
     this.#db = deps.db;
     this.#clock = deps.clock;
     this.#journal = deps.journal;
@@ -139,7 +178,56 @@ export class CheckService {
     return join(this.#shotsDir, project.replace(/[^\w-]/g, "_"), `${task.replace(/[^\w-]/g, "_")}.png`);
   }
 
+  /** La capture à montrer pour un chantier (Récap, comptes rendus) : la photo « en jeu » du Testeur d'abord (ADR-113). */
+  taskShot(project: string, task: string): TaskShot | null {
+    return pickTaskShot(this.#shotsDir, project, task);
+  }
+
+  /**
+   * La suite de bout en bout sur le jeu actuel, une seule fois par commit (ADR-128) : mesurée sur Bordée, elle prend 9 min
+   * sous charge et un test déjà cassé dans le jeu la ferait relancer après CHAQUE passe de chaque chantier. Deux chantiers
+   * qui la demandent en même temps partagent le même lancement. Sans Git lisible, pas de mémoire : on relance.
+   */
+  readonly #rootE2eRuns = new Map<string, Promise<CheckOutcome>>();
+  async #rootE2e(root: string, safe: (p: Promise<CheckOutcome>) => Promise<CheckOutcome>): Promise<CheckOutcome | null> {
+    if (!this.#checker.e2e) return null;
+    const head = await new Promise<string | null>((resolve) =>
+      execFile("git", ["rev-parse", "HEAD"], { cwd: root, windowsHide: true }, (err, out) => resolve(err ? null : String(out).trim() || null)),
+    );
+    if (!head) return safe(this.#checker.e2e(root));
+    const key = `${root}@${head}`;
+    let run = this.#rootE2eRuns.get(key);
+    if (!run) {
+      run = safe(this.#checker.e2e(root));
+      this.#rootE2eRuns.set(key, run);
+      // Une expiration ou une panne n'est pas un fait sur ce commit : on ne la garde pas.
+      void run.then((o) => {
+        if (o.status === "none" || /ne se sont pas terminés/.test(o.detail)) this.#rootE2eRuns.delete(key);
+      });
+      while (this.#rootE2eRuns.size > 20) this.#rootE2eRuns.delete(this.#rootE2eRuns.keys().next().value!);
+    }
+    return run;
+  }
+
+  /** Combien de contrôles attendent leur tour (ADR-130). */
+  get waiting(): number {
+    return this.#heavyWaiting.length;
+  }
+
   async run(project: string, task: string, worktree: string): Promise<CheckReport> {
+    if (this.#heavyRunning >= this.#heavyLimit) await new Promise<void>((resolve) => this.#heavyWaiting.push(resolve));
+    else this.#heavyRunning++;
+    try {
+      return await this.#run(project, task, worktree);
+    } finally {
+      // Le tour passe directement au suivant : le compteur ne redescend que si personne n'attend.
+      const next = this.#heavyWaiting.shift();
+      if (next) next();
+      else this.#heavyRunning--;
+    }
+  }
+
+  async #run(project: string, task: string, worktree: string): Promise<CheckReport> {
     const root = this.#projects.get(project).root;
     const safe = (p: Promise<CheckOutcome>) => p.catch((err: Error): CheckOutcome => ({ status: "none", detail: `vérification impossible : ${err.message.slice(0, 300)}` }));
     const tests = await safe(this.#checker.tests(worktree));
@@ -147,18 +235,25 @@ export class CheckService {
     mkdirSync(dirname(shot), { recursive: true });
     const launch = await safe(this.#checker.launch(`${project}/check-${task}`, worktree, shot));
     const replays = this.#checker.replays ? await safe(this.#checker.replays(worktree)) : null;
+    // ADR-128 : la suite de bout en bout, lancée par le hub plutôt que relancée sans fin par le Développeur.
+    const e2eRun = this.#checker.e2e ? await safe(this.#checker.e2e(worktree)) : null;
+    const e2e = e2eRun && e2eRun.status !== "none" ? e2eRun : null;
     const before = {
       tests: tests.status === "fail" ? await safe(this.#checker.tests(root)) : null,
       launch: launch.status === "fail" ? await safe(this.#checker.launch(`${project}/check-jeu`, root)) : null,
       replays: replays?.status === "fail" && this.#checker.replays ? await safe(this.#checker.replays(root)) : null,
+      // Rapports sans e2e inchangés : la clé n'apparaît que si la suite a tourné.
+      ...(e2e ? { e2e: e2e.status === "fail" ? await this.#rootE2e(root, safe) : null } : {}),
     };
     const perf = launch.perf ? await this.#perf(project, root, launch.perf, safe) : null;
+    const poses = launch.status !== "fail" && launch.poses?.length ? await this.#poses(project, task, worktree, launch.poses) : [];
     const regression =
       (tests.status === "fail" && before.tests?.status !== "fail") ||
       (launch.status === "fail" && before.launch?.status !== "fail") ||
       (replays?.status === "fail" && before.replays?.status !== "fail") ||
+      (e2e?.status === "fail" && before.e2e?.status !== "fail") ||
       !!perf?.regression;
-    const report: CheckReport = { tests, launch, replays, before, perf, regression, at: this.#clock.now() };
+    const report: CheckReport = { tests, launch, replays, ...(e2e ? { e2e } : {}), before, perf, ...(poses.length ? { poses } : {}), regression, at: this.#clock.now() };
     this.#db
       .prepare("INSERT INTO checks (project, task, data_json, at) VALUES (?, ?, ?, ?) ON CONFLICT (project, task) DO UPDATE SET data_json = excluded.data_json, at = excluded.at")
       .run(project, task, JSON.stringify(report), report.at);
@@ -167,9 +262,26 @@ export class CheckService {
       actor: { kind: "system" },
       type: "check.done",
       subject: task,
-      payload: { tests: tests.status, launch: launch.status, regression, ...(perf ? { perf: perf.status, fps: perf.sample.fps } : {}), ...(replays && replays.status !== "none" ? { replays: replays.status } : {}) },
+      payload: { tests: tests.status, launch: launch.status, regression, ...(perf ? { perf: perf.status, fps: perf.sample.fps } : {}), ...(replays && replays.status !== "none" ? { replays: replays.status } : {}), ...(e2e ? { e2e: e2e.status } : {}), ...(poses.length ? { poses: poses.length, poses_failed: poses.filter((p) => !p.file).length } : {}) },
     });
     return report;
+  }
+
+  /** Les photos de contrôle (ADR-122), rangées avec la capture du chantier. Un échec ici est noté, jamais une régression. */
+  async #poses(project: string, task: string, worktree: string, declared: PoseDeclared[]): Promise<PosePhoto[]> {
+    if (!this.#checker.poses) return [];
+    const poses = declared.slice(0, MAX_POSES);
+    try {
+      return await this.#checker.poses(worktree, poses, (p, k) => join(dirname(this.screenshotPath(project, task)), `${safeName(task)}-pose-${k}-${safeName(p.nom)}.jpg`));
+    } catch (err) {
+      return poses.map((p) => ({ ...p, file: null, error: (err as Error).message.slice(0, 200) }));
+    }
+  }
+
+  /** La photo d'une pose de la dernière vérification (seuls les noms du rapport donnent un fichier). */
+  poseShot(project: string, task: string, nom: string): string | null {
+    const file = this.get(project, task)?.poses?.find((p) => p.nom === nom)?.file ?? null;
+    return file && existsSync(file) ? file : null;
   }
 
   /**
@@ -222,7 +334,7 @@ export function describeChecks(c: CheckReport): string {
   const part = (label: string, o: CheckOutcome, before: CheckOutcome | null) =>
     o.status === "none" ? null : o.status === "pass" ? `${label} ✓` : `${label} ✗${before?.status === "fail" ? " (déjà le cas avant ce chantier)" : ""}`;
   const perf = c.perf ? (c.perf.status === "pass" ? `performances ✓ (${n(c.perf.sample.fps)} images/s)` : `performances ✗${c.perf.regression ? "" : " (déjà le cas avant ce chantier)"}`) : null;
-  const parts = [part("tests du jeu", c.tests, c.before.tests), part("le jeu se lance", c.launch, c.before.launch), c.replays ? part("vos parties rejouées", c.replays, c.before.replays ?? null) : null, perf].filter(Boolean);
+  const parts = [part("tests du jeu", c.tests, c.before.tests), part("le jeu se lance", c.launch, c.before.launch), c.replays ? part("vos parties rejouées", c.replays, c.before.replays ?? null) : null, c.e2e ? part("tests de bout en bout", c.e2e, c.before.e2e ?? null) : null, perf].filter(Boolean);
   return parts.length ? `Vérifié par le hub : ${parts.join(", ")}.` : "";
 }
 
@@ -240,13 +352,15 @@ export function checksForTester(c: CheckReport): string {
       : `- Performances (budget du studio) : ÉCHEC${c.perf.regression ? " (le jeu était plus rapide avant ce chantier : RÉGRESSION)" : ""}\n${c.perf.detail}`
     : null;
   const replays = c.replays && c.replays.status !== "none" ? line("Les parties du directeur créatif, rejouées à l'identique", c.replays, c.before.replays ?? null) : null;
-  return [line("Tests du jeu (npm test)", c.tests, c.before.tests), line("Le jeu se lance dans le navigateur", c.launch, c.before.launch), replays, perf].filter(Boolean).join("\n");
+  const e2e = c.e2e && c.e2e.status !== "none" ? line("Tests de bout en bout (npm run test:e2e)", c.e2e, c.before.e2e ?? null) : null;
+  return [line("Tests du jeu (npm test)", c.tests, c.before.tests), e2e, line("Le jeu se lance dans le navigateur", c.launch, c.before.launch), replays, perf].filter(Boolean).join("\n");
 }
 
 /** Ce qu'il faut dire au développeur quand le hub trouve une régression. */
 export function regressionFeedback(c: CheckReport): string {
   const lines = ["Le hub a vérifié ton travail lui-même et il a cassé quelque chose qui marchait avant :"];
   if (c.tests.status === "fail" && c.before.tests?.status !== "fail") lines.push(`- Les tests du jeu (npm test) ne passent plus. Fin de la sortie :\n${c.tests.detail}`);
+  if (c.e2e?.status === "fail" && c.before.e2e?.status !== "fail") lines.push(`- Les tests de bout en bout (npm run test:e2e) ne passent plus. Fin de la sortie :\n${c.e2e.detail}`);
   if (c.launch.status === "fail" && c.before.launch?.status !== "fail") lines.push(`- Le jeu ne se lance plus correctement dans le navigateur : ${c.launch.detail}`);
   if (c.replays?.status === "fail" && c.before.replays?.status !== "fail") {
     lines.push(
@@ -267,14 +381,16 @@ export function regressionFeedback(c: CheckReport): string {
 export class RealChecker implements CheckerPort {
   readonly #previews: PreviewService;
   readonly #testTimeoutMs: number;
+  readonly #e2eTimeoutMs: number;
   readonly #watchMs: number;
 
   readonly #godot: () => GodotInstall | null;
 
-  constructor(options: { workDir: string; testTimeoutMs?: number; watchMs?: number; godot?: () => GodotInstall | null }) {
+  constructor(options: { workDir: string; testTimeoutMs?: number; e2eTimeoutMs?: number; watchMs?: number; godot?: () => GodotInstall | null }) {
     // Instance à part : ne coupe jamais le jeu que vous êtes en train d'essayer.
     this.#previews = new PreviewService({ workDir: options.workDir });
     this.#testTimeoutMs = options.testTimeoutMs ?? 5 * 60_000;
+    this.#e2eTimeoutMs = options.e2eTimeoutMs ?? 15 * 60_000;
     this.#watchMs = options.watchMs ?? 6000;
     this.#godot = options.godot ?? (() => null);
   }
@@ -298,13 +414,32 @@ export class RealChecker implements CheckerPort {
   }
 
   #npmTest(cwd: string): Promise<CheckOutcome> {
+    return this.#npm(cwd, "npm test", {}, this.#testTimeoutMs, "les tests");
+  }
+
+  /**
+   * La suite de bout en bout du jeu web (ADR-128), sur un port libre choisi ici : deux chantiers en parallèle ne se
+   * disputent pas le serveur de dev. Avec Playwright, un test instable est rejoué une fois avant de compter comme échec.
+   */
+  async e2e(cwd: string): Promise<CheckOutcome> {
+    if (isGodot(cwd)) return { status: "none", detail: "tests de bout en bout : jeux web seulement" };
+    const script = readScripts(cwd)?.["test:e2e"];
+    if (!script) return { status: "none", detail: "pas de script « test:e2e »" };
+    if (!existsSync(join(cwd, "node_modules"))) return { status: "none", detail: "dépendances absentes (node_modules)" };
+    const port = await freePort();
+    // Commande fixe, sans argument venu de l'extérieur.
+    const command = /playwright/.test(script) ? "npm run test:e2e -- --retries=1" : "npm run test:e2e";
+    return this.#npm(cwd, command, { E2E_PORT: String(port) }, this.#e2eTimeoutMs, "les tests de bout en bout");
+  }
+
+  #npm(cwd: string, command: string, env: Record<string, string>, timeoutMs: number, label: string): Promise<CheckOutcome> {
     return new Promise((resolve) => {
       // Commande fixe, sans argument venu de l'extérieur.
-      const child = spawn("npm test", {
+      const child = spawn(command, {
         cwd,
         shell: true,
         windowsHide: true,
-        env: { ...process.env, CI: "1", FORCE_COLOR: "0" },
+        env: { ...process.env, CI: "1", FORCE_COLOR: "0", ...env },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let out = "";
@@ -315,8 +450,8 @@ export class RealChecker implements CheckerPort {
       child.stderr!.on("data", onData);
       const timer = setTimeout(() => {
         killTree(child.pid);
-        resolve({ status: "fail", detail: `les tests ne se sont pas terminés en ${Math.round(this.#testTimeoutMs / 60_000)} min` });
-      }, this.#testTimeoutMs);
+        resolve({ status: "fail", detail: `${label} ne se sont pas terminés en ${Math.round(timeoutMs / 60_000)} min` });
+      }, timeoutMs);
       child.on("exit", (code) => {
         clearTimeout(timer);
         resolve({ status: code === 0 ? "pass" : "fail", detail: out.replace(ANSI, "").trim().slice(-1500) });
@@ -392,6 +527,42 @@ export class RealChecker implements CheckerPort {
     return runSavedReplays(cwd, (c, f, w) => godotReplay(godot.exe, c, f, w));
   }
 
+  /**
+   * Les poses de contrôle (ADR-122) : une nouvelle instance du jeu, hors de l'écran, à côté de celle du lancement que la
+   * mesure de performance a pu changer de scène. Pose, photo, pose suivante, dans un temps borné.
+   */
+  async poses(cwd: string, poses: PoseDeclared[], file: (pose: PoseDeclared, index: number) => string): Promise<PosePhoto[]> {
+    const godot = this.#godot();
+    if (!godot || !isGodot(cwd)) return poses.map((p) => ({ ...p, file: null, error: "Godot introuvable sur ce PC" }));
+    const deadline = Date.now() + POSES_BUDGET_MS;
+    const game = await GodotGame.start(godot.exe, cwd, {});
+    try {
+      await new Promise((r) => setTimeout(r, Math.min(this.#watchMs, 3000)));
+      const out: PosePhoto[] = [];
+      for (const [k, p] of poses.entries()) {
+        const left = deadline - Date.now();
+        if (left <= 0 || !game.alive) {
+          out.push({ ...p, file: null, error: game.alive ? "temps dépassé pour les poses" : "le jeu s'est fermé" });
+          continue;
+        }
+        const wait = Math.min(left, POSE_TIMEOUT_MS);
+        const moved = await game.call("act", { steps: [{ do: "pose", name: p.nom }] }, wait);
+        const note = !moved.ok ? String(moved.error ?? "le relais n'a pas répondu") : ((moved.notes as string[] | undefined)?.[0] ?? "");
+        if (note) {
+          out.push({ ...p, file: null, error: note.slice(0, 300) });
+          continue;
+        }
+        const target = file(p, k);
+        mkdirSync(dirname(target), { recursive: true });
+        const shot = await game.call("capture", { path: target }, wait);
+        out.push(shot.ok ? { ...p, file: target } : { ...p, file: null, error: String(shot.error || "photo impossible").slice(0, 300) });
+      }
+      return out;
+    } finally {
+      await game.close();
+    }
+  }
+
   /** Jeu Godot (ADR-73) : import, puis le jeu hors de l'écran avec le relais ; ses erreurs, une photo, les fichiers chargés. */
   async #launchGodot(cwd: string, screenshot: string | undefined, path: string): Promise<CheckOutcome> {
     const godot = this.#godot();
@@ -407,7 +578,8 @@ export class RealChecker implements CheckerPort {
     }
     try {
       await new Promise((r) => setTimeout(r, this.#watchMs));
-      const snap = (await game.call("snapshot")).snapshot as { resources?: unknown; scene?: string } | undefined;
+      const snap = (await game.call("snapshot")).snapshot as { resources?: unknown; scene?: string; poses?: unknown } | undefined;
+      const poses = declaredPoses(snap?.poses);
       const shot = screenshot ? ((await game.call("capture", { path: screenshot })).ok ? screenshot : null) : null;
       // Les performances, après la photo : sur vitrines/perf.tscn si le jeu l'a (la scène la plus chargée), sinon sur la
       // scène affichée. Un relais trop ancien ne sait pas mesurer (ADR-83).
@@ -418,10 +590,88 @@ export class RealChecker implements CheckerPort {
       const loaded = godotLoaded(snap?.resources);
       if (!game.alive) return { status: "fail", detail: `le jeu s'est fermé tout seul${errors.length ? ` : ${errors.slice(0, 4).join(" | ")}` : ""}`, screenshot: shot, loaded, perf };
       if (errors.length) return { status: "fail", detail: `erreurs dans le jeu : ${errors.slice(0, 4).join(" | ").slice(0, 600)}`, screenshot: shot, loaded, perf };
-      return { status: "pass", detail: `lancé sans erreur (${Math.round(this.#watchMs / 1000)} s d'observation${snap?.scene ? `, scène ${snap.scene}` : ""})`, screenshot: shot, loaded, perf };
+      return { status: "pass", detail: `lancé sans erreur (${Math.round(this.#watchMs / 1000)} s d'observation${snap?.scene ? `, scène ${snap.scene}` : ""})`, screenshot: shot, loaded, perf, ...(poses.length ? { poses } : {}) };
     } finally {
       await game.close();
     }
+  }
+}
+
+const safeName = (s: string) => s.replace(/[^\w-]/g, "_");
+
+/** Le temps des photos de contrôle, tout compris, et d'un seul aller-retour avec le relais (ADR-122). */
+const POSES_BUDGET_MS = 120_000;
+const POSE_TIMEOUT_MS = 30_000;
+
+/** Ce que le relais rend pour `poses()`, nettoyé : jamais plus de 8, sans doublon ni nom vide. */
+export function declaredPoses(raw: unknown): PoseDeclared[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: PoseDeclared[] = [];
+  for (const p of raw as { nom?: unknown; description?: unknown }[]) {
+    const nom = typeof p?.nom === "string" ? p.nom.trim().slice(0, 80) : "";
+    if (!nom || seen.has(nom)) continue;
+    seen.add(nom);
+    out.push({ nom, description: typeof p.description === "string" ? p.description.slice(0, 300) : "" });
+  }
+  return out.slice(0, MAX_POSES);
+}
+
+/** La photo « en jeu » d'un chantier : prise par le Testeur là où le changement se voit (outil jouer, change=true, ADR-113). */
+export function inGameShotPath(shotsDir: string, project: string, task: string): string {
+  return join(shotsDir, safeName(project), `${safeName(task)}-en-jeu.jpg`);
+}
+
+export type TaskShot = { file: string; type: "image/png" | "image/jpeg"; kind: "in_game" | "launch" | "play" };
+
+/**
+ * Quelle capture montrer pour un chantier (ADR-113) :
+ * 1. la photo « en jeu » du Testeur, si elle date de la dernière vérification (le hub reprend la capture du lancement
+ *    juste avant chaque passage du Testeur : une photo en jeu plus ancienne montre une version d'avant la correction) ;
+ * 2. sinon la capture du lancement prise par le hub (souvent le menu d'accueil) ;
+ * 3. sinon la dernière photo prise par le Testeur en jouant (jeux Godot sans capture de lancement).
+ */
+export function pickTaskShot(shotsDir: string, project: string, task: string): TaskShot | null {
+  const dir = join(shotsDir, safeName(project));
+  const mtime = (f: string) => {
+    try {
+      return statSync(f).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
+  const launch = join(dir, `${safeName(task)}.png`);
+  const inGame = inGameShotPath(shotsDir, project, task);
+  const [l, g] = [mtime(launch), mtime(inGame)];
+  const typeOf = (f: string): TaskShot["type"] => (sniffPng(f) ? "image/png" : "image/jpeg");
+  if (g !== null && (l === null || g >= l)) return { file: inGame, type: typeOf(inGame), kind: "in_game" };
+  if (l !== null) return { file: launch, type: "image/png", kind: "launch" };
+  let play: { file: string; at: number } | null = null;
+  try {
+    for (const f of readdirSync(dir)) {
+      if (!f.startsWith(`play-${safeName(task)}-`)) continue;
+      const at = mtime(join(dir, f));
+      if (at !== null && (!play || at > play.at)) play = { file: join(dir, f), at };
+    }
+  } catch {
+    /* pas encore de dossier de captures */
+  }
+  return play ? { file: play.file, type: typeOf(play.file), kind: "play" } : null;
+}
+
+/** Le relais Godot écrit en PNG ou en JPEG selon l'extension demandée : on lit la signature plutôt que le nom. */
+function sniffPng(file: string): boolean {
+  try {
+    const fd = openSync(file, "r");
+    try {
+      const head = Buffer.alloc(4);
+      readSync(fd, head, 0, 4, 0);
+      return head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
   }
 }
 
@@ -435,7 +685,21 @@ export function godotLoaded(resources: unknown): string[] {
   return Array.isArray(resources) ? resources.filter((r): r is string => typeof r === "string" && r.startsWith("res://")).map((r) => `/${r.slice(6)}`).sort() : [];
 }
 
-function readScripts(cwd: string): Record<string, string> | null {
+/** Un port TCP libre à l'instant, choisi par le système (ADR-128). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** Les scripts du package.json de `cwd` ; null s'il n'y en a pas ou s'il est illisible. */
+export function readScripts(cwd: string): Record<string, string> | null {
   const pkg = join(cwd, "package.json");
   if (!existsSync(pkg)) return null;
   try {

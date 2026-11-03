@@ -205,4 +205,23 @@ describe("liste des discussions (ADR-35)", () => {
     expect(() => sb.hub.conversations.renameThread(P, a.id, "   ")).toThrow(/Titre vide/);
     expect(() => sb.hub.conversations.renameThread("autre", a.id, "x")).toThrow();
   });
+
+  it("range à part les fils que le hub ouvre seul (ADR-113) : d'après leur origine, le titre en repli pour les anciens", () => {
+    const mine = sb.hub.conversations.createThread(P, "Intégrer A-0009 : mon idée à moi");
+    const art = sb.hub.conversations.createThread(P, "Intégrer A-0001 : Grouillot", "art");
+    const sound = sb.hub.conversations.createThread(P, "Sons : tir", "sound");
+    const conception = sb.hub.conversations.createThread(P, "Conception : Boss", "conception");
+    // Deux fils d'avant le marqueur : l'un ouvert par le hub, l'autre par vous.
+    const legacy = sb.hub.conversations.createThread(P, "Retoucher A-0002 dans le jeu");
+    const legacyMine = sb.hub.conversations.createThread(P, "Les retouches du HUD");
+    sb.hub.db.prepare("UPDATE threads SET origin = NULL WHERE id IN (?, ?)").run(legacy.id, legacyMine.id);
+
+    const byId = new Map(sb.hub.conversations.listThreads(P).map((t) => [t.id, t]));
+    expect(byId.get(mine.id)).toMatchObject({ origin: "human", automatic: false });
+    expect(byId.get(art.id)).toMatchObject({ origin: "art", automatic: true });
+    expect(byId.get(sound.id)).toMatchObject({ origin: "sound", automatic: true });
+    expect(byId.get(conception.id)).toMatchObject({ origin: "conception", automatic: false });
+    expect(byId.get(legacy.id)).toMatchObject({ origin: null, automatic: true });
+    expect(byId.get(legacyMine.id)).toMatchObject({ origin: null, automatic: false });
+  });
 });

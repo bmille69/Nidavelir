@@ -8,7 +8,7 @@ import type { Hub } from "../hub.ts";
  */
 export type Monitor = {
   at: string;
-  queues: { project: string; name: string; running: { id: string; title: string; status: string } | null; next: { id: string; title: string } | null; queued: number; paused: { until: string; window: string } | null }[];
+  queues: { project: string; name: string; running: { id: string; title: string; status: string } | null; alongside: { id: string; title: string; status: string }[]; next: { id: string; title: string } | null; queued: number; paused: { until: string; window: string } | null }[];
   machine: { cpu: number | null; ram: { used: number; total: number }; gpu: { name: string; load: number; memUsed: number; memTotal: number } | null };
   tokens: ReturnType<Hub["usage"]["recent"]>;
 };
@@ -63,6 +63,8 @@ export async function studioMonitor(hub: Hub): Promise<Monitor> {
       project: p.slug,
       name: p.name,
       running: running ? { id: running.id, title: running.title, status: running.status } : null,
+      // Chef de chantier (ADR-104) : les autres chantiers en cours sur le même jeu.
+      alongside: hub.tasks.occupying(p.slug).filter((t) => t.id !== running?.id).map((t) => ({ id: t.id, title: t.title, status: t.status })),
       next: queued[0] ? { id: queued[0].id, title: queued[0].title } : null,
       queued: queued.length,
       paused: paused ? { until: paused.until, window: paused.window } : null,

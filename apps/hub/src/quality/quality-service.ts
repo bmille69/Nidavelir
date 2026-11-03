@@ -7,6 +7,7 @@ import type { Journal } from "../journal/journal.ts";
 import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import type { CheckService } from "./checks.ts";
+import { effectiveVerdict } from "./verdict.ts";
 
 export class QualityError extends Error {
   constructor(message: string) {
@@ -163,7 +164,8 @@ export class QualityService {
     const escalations = this.#tasks.escalations(t.project, { task: t.id }).filter((e) => e.status === "allowed" || e.status === "denied").length;
     const runs = this.#tasks.runs(t.project, t.id);
     const minutes = runs.reduce((n, r) => n + (r.finished_at ? (Date.parse(r.finished_at) - Date.parse(r.started_at)) / 60_000 : 0), 0);
-    const verdict = runs.findLast((r) => r.result?.verification)?.result?.verification?.verdict ?? null;
+    const lastVerification = runs.findLast((r) => r.result?.verification)?.result?.verification ?? null;
+    const verdict = lastVerification ? effectiveVerdict(lastVerification) : null;
     const mergeCommit = (JSON.parse(events.findLast((e) => e.type === "task.merged")?.payload_json ?? "{}") as { commit?: string }).commit;
     const reverted = !!mergeCommit && revertedShas.some((s) => mergeCommit.startsWith(s) || s.startsWith(mergeCommit));
     const held = t.status === "merged" && !reworkedBy.length && !reverted;

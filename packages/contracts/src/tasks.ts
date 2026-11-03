@@ -21,11 +21,20 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 
 export const TaskId = z.string().regex(/^T-\d{4,}$/);
 
+/** Les mots d'un même chantier, puis toute la chaîne des chantiers repris (ADR-121). */
+export const TASK_REQUEST_WORDS_MAX = 4000;
+export const TASK_REQUEST_MAX = 12_000;
+
 export const Task = z.object({
   id: TaskId,
   project: z.string(),
   title: z.string().min(1).max(160),
   goal: z.string().min(1).max(4000),
+  /**
+   * La demande du directeur créatif, mot pour mot (ADR-121), avec celles des chantiers repris, la plus ancienne d'abord.
+   * Elle prime sur la consigne du Directeur. Absente pour un chantier qui ne vient pas de ses mots.
+   */
+  request: z.string().max(TASK_REQUEST_MAX).optional(),
   /** Décisions de la bible qui fondent la tâche ; vide pour un chantier lancé depuis une discussion (mode atelier). */
   authorized_by: z.array(ItemId).default([]),
   /** Discussion d'où vient le chantier (mode atelier, ADR-24) : le hub y donne les nouvelles. */
@@ -36,6 +45,20 @@ export const Task = z.object({
   queued_at: z.string().nullable().default(null),
   /** Chantiers déjà fusionnés que celui-ci reprend parce qu'ils ne suffisaient pas (tableau « Qualité », ADR-32). */
   reworks: z.array(TaskId).default([]),
+  /**
+   * Fiche du chef de chantier (ADR-104) : fichiers que le chantier va probablement toucher et chantiers dont il dépend.
+   * Le hub ne lance en parallèle sur un même jeu que des chantiers sans fichier commun ni dépendance.
+   */
+  scope: z
+    .object({
+      files: z.array(z.string().max(300)).max(80),
+      depends_on: z.array(TaskId).max(20),
+      confident: z.boolean(),
+      note: z.string().max(600),
+      at: z.string(),
+    })
+    .nullable()
+    .default(null),
   status: TaskStatus,
   /** Commentaires de votre part transmis au prochain plan (demande de corrections). */
   feedback: z.array(z.string()).default([]),
@@ -125,7 +148,17 @@ export const VerificationOutput = z.object({
   verdict: z.enum(["pass", "pass_with_notes", "fail"]),
   summary_simple: z.string().max(800),
   checks: z
-    .array(z.object({ criterion: z.string().max(300), result: z.enum(["pass", "fail", "not_verifiable"]), evidence: z.string().max(600) }))
+    .array(
+      z.object({
+        criterion: z.string().max(300),
+        result: z.enum(["pass", "fail", "not_verifiable"]),
+        evidence: z.string().max(600),
+        /** « rendu » : ce qu'on voit ou ressent en jouant (ADR-124). */
+        kind: z.enum(["rendu", "regle", "technique"]).optional(),
+        /** D'où vient l'exigence : les mots du directeur créatif, la consigne du Directeur, le plan (ADR-124). */
+        source: z.enum(["demande", "consigne", "plan"]).optional(),
+      }),
+    )
     .max(20),
   decision_compliance: z.array(z.object({ decision: ItemId, respected: z.boolean(), note: z.string().max(400) })).max(20),
   hidden_assumptions: z.array(z.string().max(300)).max(10),

@@ -18,6 +18,7 @@ import { godotTests } from "../godot/run.ts";
 import { claudeMdGodot, DEFAULT_SETUP, scaffoldGodot } from "../godot/scaffold.ts";
 import type { GodotInstall } from "../godot/toolchain.ts";
 import { PENDING_VISUALS } from "../art/manifest.ts";
+import { compactMarks, withMarks, type TeamService } from "../team/team-service.ts";
 
 export class ConceptionError extends Error {
   constructor(message: string) {
@@ -70,7 +71,7 @@ export class ConceptionService {
   /** Prévenu à la fin de chaque tour (notification, ADR-30). */
   onTurn: ((c: Conception) => void) | null = null;
   /** Compétences ajoutées aux consignes du Concepteur (ADR-29). */
-  skills: { promptBlock(agent: "concepteur", project: string | null): string } | null = null;
+  skills: { promptFor(agent: "concepteur", project: string | null): { text: string; dir: string | null } } | null = null;
   /** Racine des jeux, pour créer un projet quand vous dites « transmets » (posée par le serveur). */
   gamesRoot: string | null = null;
   /** Le Godot du PC (ADR-73) : sa version guide le Concepteur, et « Créer le projet » pose le socle d'un jeu Godot. */
@@ -80,6 +81,8 @@ export class ConceptionService {
   /** Le Directeur artistique, qui reçoit les visuels de la conception (ADR-59) ; et ce qu'il a déjà, pour ne pas le redemander. */
   art: ArtBriefPort | null = null;
   artState: ((project: string) => string | null) | null = null;
+  /** L'équipe (ADR-98) : consulter un collègue, proposer un souvenir, lire le jeu d'une fonctionnalité. */
+  team: TeamService | null = null;
 
   constructor(deps: {
     db: Db;
@@ -348,7 +351,7 @@ export class ConceptionService {
     } catch {
       thread = null;
     }
-    thread ??= this.#conversations.createThread(project, `Conception : ${c.data.title}`).id;
+    thread ??= this.#conversations.createThread(project, `Conception : ${c.data.title}`, "conception").id;
     const launch = opts.launch && p.autonomy === "workshop";
     // Les visuels partent d'abord chez le Directeur artistique : leurs numéros (A-xxxx) entrent dans les consignes.
     let ids: Record<string, string> = {};
@@ -416,21 +419,32 @@ export class ConceptionService {
       const history = this.messages(id).slice(-HISTORY);
       const prompt = [
         c.data.dossier ? `<dossier_actuel>\n${esc(c.data.dossier)}\n</dossier_actuel>` : "<dossier_actuel>(vide : premier tour)</dossier_actuel>",
-        `<echanges>\n${history.map((m) => (m.role === "human" ? `<directeur_creatif>${esc(m.text)}</directeur_creatif>` : `<toi>${esc(m.text)}</toi>`)).join("\n")}\n</echanges>`,
+        `<echanges>\n${history.map((m) => (m.role === "human" ? `<directeur_creatif>${esc(m.text)}</directeur_creatif>` : `<toi>${esc(compactMarks(m.text))}</toi>`)).join("\n")}\n</echanges>`,
         "Réponds au dernier message du directeur créatif, mets le dossier à jour, puis pose les questions les plus utiles (ou aucune).",
       ].join("\n\n");
-      const { data, costUsd } = await this.#orchestrator.structured({
-        systemPrompt: [conceptSystemPrompt(c.kind, context, c.kind === "project" ? (this.godot?.() ?? null) : null), this.skills?.promptBlock("concepteur", c.project) ?? ""].filter(Boolean).join("\n\n"),
-        prompt,
-        jsonSchema: CONCEPT_SCHEMA,
-        meta: { project: c.project, agent: "concepteur" },
-        tools: this.#web ? WEB_TOOLS : undefined,
-        tier: "concept",
-      });
+      const skills = this.skills?.promptFor("concepteur", c.project) ?? { text: "", dir: null };
+      // L'équipe (ADR-98) : il peut consulter le DA, le directeur sonore… et lire le jeu d'une fonctionnalité.
+      const team = this.team?.open(c.project, "concepteur", { consult: true, remember: true, read: c.kind === "feature" }) ?? null;
+      let out: { data: unknown; costUsd: number | null };
+      try {
+        out = await this.#orchestrator.structured({
+          systemPrompt: [conceptSystemPrompt(c.kind, context, c.kind === "project" ? (this.godot?.() ?? null) : null), skills.text, team?.prompt ?? ""].filter(Boolean).join("\n\n"),
+          prompt,
+          jsonSchema: CONCEPT_SCHEMA,
+          meta: { project: c.project, agent: "concepteur" },
+          tools: this.#web ? WEB_TOOLS : undefined,
+          tier: "concept",
+          ...(skills.dir ? { skillsDir: skills.dir } : {}),
+          ...(team ? { team: team.grant } : {}),
+        });
+      } finally {
+        team?.close();
+      }
+      const { data, costUsd } = out;
       const parsed = ConceptTurn.parse(data);
       // Le hub numérote lui-même les chantiers : on retire « 1. » ou « 1) » en tête de titre.
       const turn = { ...parsed, chantiers: parsed.chantiers.map((ch) => ({ ...ch, title: ch.title.replace(/^\s*\d+\s*[.)-]\s*/, "") })) };
-      this.#insert(id, "concepteur", turn.reply, turn, costUsd);
+      this.#insert(id, "concepteur", withMarks(turn.reply, team), turn, costUsd);
       const { reply: _r, transmettre, ...rest } = turn;
       this.#update(id, { status: transmettre ? "thinking" : "open", title: turn.title, data: { ...rest, thread: c.data.thread, claude_md: c.kind === "project" ? turn.claude_md : "" } });
       if (transmettre) {

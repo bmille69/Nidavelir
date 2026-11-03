@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHub, type Hub } from "../src/hub.ts";
 import { PolicyEngine } from "../src/executor/policy-engine.ts";
+import { inGameShotPath, pickTaskShot } from "../src/quality/checks.ts";
 import { gameUrl, PlayRequest, PlaytestService, type PlayDriver, type PlaySession, type PlaySnapshot, type PlayStep, type Screen } from "../src/quality/playtest.ts";
 import { FakeExecutor, REPORT, VERIFIED } from "./fake-executor.ts";
 import { FakeOrchestrator } from "./fake-orchestrator.ts";
@@ -119,6 +120,66 @@ describe("la manette du testeur (ADR-69)", () => {
   });
 });
 
+describe("la photo « en jeu » du Testeur (ADR-113)", () => {
+  it("change=true garde la photo à part : c'est elle que le Récap montre, au-delà même de la limite", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "play-"));
+    try {
+      const events: { payload: unknown }[] = [];
+      const service = new PlaytestService({ driver: new FakeDriver(), shotsDir: dir, journal: { append: (e: { payload: unknown }) => events.push(e) } as never });
+      const run = { id: "RUN-0001", project: P, task: "T-0001", cwd: "C:/copie" };
+      await service.handle(run, { action: "open" });
+      expect(existsSync(inGameShotPath(dir, P, "T-0001"))).toBe(false);
+      for (let k = 0; k < 14; k++) await service.handle(run, { action: "capture" });
+      // Un act avec change=true prend la photo même sans capture=true, et même après 15 photos.
+      const r = await service.handle(run, { action: "act", steps: [{ do: "press", key: "ArrowRight" }], change: true });
+      expect(r.image).toBeDefined();
+      expect(r.text).toContain("Gardée comme photo du changement");
+      expect(readFileSync(inGameShotPath(dir, P, "T-0001"), "utf8")).toBe("JPEG");
+      await service.closeRun(run.id);
+      expect(events.at(-1)!.payload).toMatchObject({ change: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("le choix de la capture : en jeu si elle date de la dernière vérification, sinon le lancement, sinon une photo de partie", () => {
+    const dir = mkdtempSync(join(tmpdir(), "shots-"));
+    try {
+      const sub = join(dir, P);
+      mkdirSync(sub, { recursive: true });
+      const at = (file: string, seconds: number) => utimesSync(file, seconds, seconds);
+      const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+      // Rien : pas de capture.
+      expect(pickTaskShot(dir, P, "T-0001")).toBeNull();
+      // Seulement des photos de partie (jeu Godot sans capture de lancement) : la plus récente.
+      writeFileSync(join(sub, "play-T-0001-RUN-0002-1.jpg"), "a");
+      writeFileSync(join(sub, "play-T-0001-RUN-0002-2.jpg"), "b");
+      writeFileSync(join(sub, "play-T-0010-RUN-0003-1.jpg"), "autre chantier");
+      at(join(sub, "play-T-0001-RUN-0002-1.jpg"), 1000);
+      at(join(sub, "play-T-0001-RUN-0002-2.jpg"), 2000);
+      at(join(sub, "play-T-0010-RUN-0003-1.jpg"), 9000);
+      expect(pickTaskShot(dir, P, "T-0001")).toEqual({ file: join(sub, "play-T-0001-RUN-0002-2.jpg"), type: "image/jpeg", kind: "play" });
+      // La capture du lancement prise par le hub passe avant.
+      writeFileSync(join(sub, "T-0001.png"), PNG);
+      at(join(sub, "T-0001.png"), 3000);
+      expect(pickTaskShot(dir, P, "T-0001")).toEqual({ file: join(sub, "T-0001.png"), type: "image/png", kind: "launch" });
+      // La photo en jeu, prise après : elle gagne.
+      writeFileSync(inGameShotPath(dir, P, "T-0001"), "JPEG");
+      at(inGameShotPath(dir, P, "T-0001"), 4000);
+      expect(pickTaskShot(dir, P, "T-0001")).toEqual({ file: inGameShotPath(dir, P, "T-0001"), type: "image/jpeg", kind: "in_game" });
+      // Une correction relance la vérification : nouvelle capture de lancement, l'ancienne photo en jeu ne vaut plus.
+      at(join(sub, "T-0001.png"), 5000);
+      expect(pickTaskShot(dir, P, "T-0001")!.kind).toBe("launch");
+      // Le relais Godot peut écrire du PNG : le type suit le contenu.
+      writeFileSync(inGameShotPath(dir, P, "T-0001"), PNG);
+      at(inGameShotPath(dir, P, "T-0001"), 6000);
+      expect(pickTaskShot(dir, P, "T-0001")).toMatchObject({ kind: "in_game", type: "image/png" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("le relais MCP du studio (gate.mjs)", () => {
   const GATE = fileURLToPath(new URL("../src/executor/bridge/gate.mjs", import.meta.url));
 
@@ -186,7 +247,7 @@ describe("le relais MCP du studio (gate.mjs)", () => {
 });
 
 describe("le testeur joue avant de donner son avis (atelier)", () => {
-  async function setup(driver: PlayDriver | undefined, scripts: Record<string, string> = { dev: "vite" }) {
+  async function setup(driver: PlayDriver | undefined, scripts: Record<string, string> = { dev: "vite" }, files?: Record<string, string>) {
     const fake = new FakeOrchestrator();
     const exec = new FakeExecutor();
     const sb: Sandbox = sandbox();
@@ -202,7 +263,7 @@ describe("le testeur joue avant de donner son avis (atelier)", () => {
       playDriver: driver,
     });
     sb.hub = hub;
-    const root = sb.makeGameRepo("games/destiny", { "README.md": "# Destiny\n", "package.json": JSON.stringify({ name: "destiny", scripts }), "src/main.ts": "export {};\n" });
+    const root = sb.makeGameRepo("games/destiny", files ?? { "README.md": "# Destiny\n", "package.json": JSON.stringify({ name: "destiny", scripts }), "src/main.ts": "export {};\n" });
     await hub.projects.register(sb.human(), { path: root, slug: P, name: "Destiny Survivor" });
     hub.projects.setAutonomy(sb.human(), P, "workshop");
     return { sb, hub, fake, exec };
@@ -244,6 +305,9 @@ describe("le testeur joue avant de donner son avis (atelier)", () => {
     expect(exec.requests.map((r) => [r.kind, Boolean(r.play)])).toEqual([["execute", false], ["verify", true]]);
     expect(exec.requests[1]!.maxTurns).toBe(60);
     expect(exec.requests[1]!.systemPrompt).toContain("TU PEUX JOUER AU JEU de cette copie avec l'outil jouer");
+    // La photo du changement est demandée au testeur seulement (ADR-113).
+    expect(exec.requests[1]!.systemPrompt).toContain("LA PHOTO DU CHANGEMENT");
+    expect(exec.requests[0]!.systemPrompt).not.toContain("LA PHOTO DU CHANGEMENT");
     expect(exec.requests[0]!.systemPrompt).toContain("window.__STUDIO_TEST__");
     // Dans la copie du chantier, jamais dans votre jeu.
     expect(driver.opened[0]!.cwd).toMatch(/[\\/]worktrees[\\/]destiny[\\/]T-0001$/);
@@ -255,6 +319,44 @@ describe("le testeur joue avant de donner son avis (atelier)", () => {
     expect(last).toMatch(/fusionné dans votre jeu/);
     expect(last).toContain("▶ Essayé en jouant : J'ai foncé à droite : le personnage avance et le score reste affiché.");
     expect(last).toContain("Pas vérifié en jeu : le dash au téléphone");
+  });
+
+  it("le développeur qui intègre un visuel d'un jeu Godot voit sa vitrine avec la manette ; un autre chantier non (ADR-117)", async () => {
+    const driver = new FakeDriver();
+    const godot = { "project.godot": 'config_version=5\n\n[autoload]\n\nStudioBridge="*res://addons/studio_bridge/bridge.gd"\n', "addons/studio_bridge/bridge.gd": "extends Node\n", "scripts/main.gd": "extends Node\n" };
+    const { hub, fake, exec } = await setup(driver, undefined, godot);
+    exec.scripts.execute.push(async (t, req) => {
+      await t.write("scripts/chien.gd", "extends Node\n");
+      expect(await t.req.bridge.preTool("mcp__studio__jouer", { action: "open" })).toMatchObject({ decision: "allow" });
+      await hub.tasks.agentPlay(req.runId, req.token, { action: "open", path: "?vitrine=A-0002" });
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
+    exec.scripts.execute.push(async (t) => {
+      await t.write("scripts/menu.gd", "extends Node\n");
+      expect(await t.req.bridge.preTool("mcp__studio__jouer", { action: "open" })).toMatchObject({ decision: "deny" });
+      await expect(hub.tasks.agentPlay(t.req.runId, t.req.token, { action: "open" })).rejects.toThrow(/Seul le testeur/);
+      return REPORT;
+    });
+    exec.scripts.verify.push(() => VERIFIED);
+    fake.replies.push(brief("A-0002 Chien : intégration du modèle 3D"));
+    const t = hub.conversations.createThread(P, "x");
+    await hub.conversations.send(P, t.id, "go");
+    await settle(hub);
+    fake.replies.push(brief("Menu principal"));
+    await hub.conversations.send(P, t.id, "encore");
+    await settle(hub);
+
+    const runs = exec.requests.map((r) => [r.kind, Boolean(r.play)]);
+    expect(runs).toEqual([["execute", true], ["verify", true], ["execute", false], ["verify", true]]);
+    const [dev, , other] = exec.requests;
+    expect(dev!.systemPrompt).toContain("TU PEUX VOIR LA VITRINE du visuel que tu intègres (A-0002)");
+    expect(dev!.systemPrompt).toMatch(/« \?vitrine=A-0002 »[\s\S]*a-0002-3d-\*-trois-quarts\.png[\s\S]*Ne déclare jamais une couleur ou une lumière corrigée/);
+    expect(dev!.maxTurns).toBe(120);
+    expect(driver.opened[0]!.cwd).toMatch(/[\\/]worktrees[\\/]destiny[\\/]T-0001$/);
+    // Un chantier ordinaire : la consigne du développeur, sa manette et ses tours, comme avant.
+    expect(other!.systemPrompt).not.toContain("VITRINE");
+    expect(other!.maxTurns).toBe(120);
   });
 
   it("sans script « dev » (ou sans manette), le testeur ne la reçoit pas et le compte rendu ne prétend rien", async () => {

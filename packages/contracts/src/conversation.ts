@@ -15,8 +15,19 @@ export const Thread = z.object({
   last_seq: z.number().optional(),
   last_at: z.string().nullable().optional(),
   last_role: z.enum(["human", "director"]).nullable().optional(),
+  /**
+   * Qui l'a ouverte (ADR-113) : « human » (vous), ou le service du hub qui l'a créée pour un travail (« art », « sound »,
+   * « feel », « balance », « conception »…). Absent sur les discussions d'avant ce marqueur.
+   */
+  origin: z.string().nullable().optional(),
+  /** Ouverte par le hub pour un travail automatique (intégrer un visuel, le retoucher, brancher des sons…) : rangée à part. */
+  automatic: z.boolean().optional(),
 });
 export type Thread = z.infer<typeof Thread>;
+
+/** Les origines des discussions que le hub ouvre seul pour un travail, rangées sous « Automatiques » (ADR-113). */
+export const AUTOMATIC_THREAD_ORIGINS = ["art", "sound", "feel", "balance"] as const;
+export type ThreadOrigin = "human" | "conception" | "express" | "reverse" | "mod" | (typeof AUTOMATIC_THREAD_ORIGINS)[number];
 
 export const ExtractionStatus = z.enum(["none", "pending", "done", "failed"]);
 

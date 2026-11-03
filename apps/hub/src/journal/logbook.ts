@@ -97,7 +97,8 @@ export class LogbookService {
         const runs = this.#tasks.runs(project, t.id);
         const report = runs.filter((r) => r.kind === "execute").at(-1)?.result?.report ?? null;
         const check = this.#checks?.get(project, t.id) ?? null;
-        const shot = this.#checks ? existsSync(this.#checks.screenshotPath(project, t.id)) : false;
+        // Une capture à montrer, la photo « en jeu » du Testeur en priorité (ADR-113).
+        const shot = !!this.#checks?.taskShot(project, t.id);
         return [{ task: t.id, title: t.title, at: e.at, summary: report?.summary_simple ?? "", costUsd: Math.round(runs.reduce((a, r) => a + (r.cost_usd ?? 0), 0) * 100) / 100, checks: check ? describeChecks(check) : "", shot }];
       } catch {
         return [];
@@ -128,7 +129,7 @@ export class LogbookService {
         benchRuns: count("bench.ran"),
         replaysSaved: count("replay.saved"),
       },
-      gif: entries.filter((e) => e.shot).length >= 2,
+      gif: !!this.#checks && entries.filter((e) => existsSync(this.#checks!.screenshotPath(project, e.task))).length >= 2,
       story: story ?? null,
     };
   }
@@ -137,7 +138,8 @@ export class LogbookService {
   gif(project: string, week: string): Buffer | null {
     if (!this.#checks) return null;
     const w = this.week(project, week);
-    const shots = w.entries.filter((e) => e.shot).map((e) => this.#checks!.screenshotPath(project, e.task));
+    // Les images du GIF : les captures du lancement (PNG, même cadrage d'une fusion à l'autre ; ADR-113 garde ce choix).
+    const shots = w.entries.map((e) => this.#checks!.screenshotPath(project, e.task)).filter((f) => existsSync(f));
     if (shots.length < 2) return null;
     const dir = join(this.#dir, project.replace(/[^\w-]/g, "_"));
     const file = join(dir, `${w.week}-${shots.length}.gif`);

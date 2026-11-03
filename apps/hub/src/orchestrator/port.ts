@@ -6,6 +6,8 @@
  * rend indépendant de la mémoire de session de Claude Code comme d'Hermes.
  * La délégation et l'annulation viendront avec les spécialistes et Hermes.
  */
+import type { TeamGrant } from "../llm/claude-cli.ts";
+
 export interface OrchestratorPort {
   readonly name: string;
   /** Un tour de conversation du directeur. */
@@ -22,6 +24,12 @@ export interface OrchestratorPort {
     /** readDir ne sert qu'à regarder des images jointes (ADR-72) : le modèle du directeur est gardé. */
     images?: boolean;
     timeoutMs?: number;
+    /** Compétences à lire à la demande (ADR-97) : dossier rendu lisible, Read seulement. */
+    skillsDir?: string;
+    /** Outils de l'équipe (ADR-98) : consulter un collègue, retenir, lire le jeu. */
+    team?: TeamGrant;
+    /** « team » : réponse d'un collègue consulté, dans sa propre file (ADR-98). */
+    lane?: "team";
   }): Promise<{ text: string; costUsd: number | null }>;
   /** Une sortie structurée validée par JSON Schema (extraction, propositions…). */
   structured(input: {
@@ -36,6 +44,14 @@ export interface OrchestratorPort {
     /** Dossier à lire, et « art » pour le modèle du Directeur artistique (validateur, ADR-43), « artisan » pour l'artisan 3D (ADR-52). */
     readDir?: string;
     role?: "art" | "artisan" | "artisan_renfort";
+    /** Compétences à lire à la demande (ADR-97). */
+    skillsDir?: string;
+    /** Outils de l'équipe (ADR-98). */
+    team?: TeamGrant;
+    /** « team » : hors des autres files, pour un appel qui ne doit ni attendre le directeur ni le bloquer (ADR-125). */
+    lane?: "team";
+    /** Délai propre, à la place de celui de son genre d'appel. */
+    timeoutMs?: number;
   }): Promise<{
     data: unknown;
     costUsd: number | null;
