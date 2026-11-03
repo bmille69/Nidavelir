@@ -4,7 +4,7 @@ import { Icon } from "./Icon.tsx";
 
 const PAGES: Partial<Record<Route["page"], string>> = {
   dashboard: "Accueil",
-  live: "En direct",
+  forge: "La Forge",
   pilot: "Pilotage",
   import: "Importer un jeu",
   quality: "Qualité",
@@ -18,14 +18,30 @@ const PAGES: Partial<Record<Route["page"], string>> = {
   mod: "Mod",
   conceive: "Concevoir",
   conception: "Conception",
+  memory: "Mémoire et équipe",
+  ideas: "Atelier d'idées",
+  idea: "Idée",
 };
-const VIEWS = { discussion: "Discussion", decisions: "Décisions", vision: "Le jeu", tasks: "Chantiers", art: "Direction artistique" } as const;
+/** Les onglets du projet (ADR-113) et les pages qu'ils contiennent. */
+const VIEWS = { discussion: "Discussion", recap: "Récap", tasks: "Récap", plans: "Plans de production", decisions: "Toutes les décisions", vision: "Le jeu", art: "Art & son" } as const;
 
 /**
  * Barre de titre de l'application de bureau (apps/desktop) : la fenêtre n'a plus de cadre Windows,
  * cette barre la déplace, dit où l'on est, ouvre la palette et montre l'état du studio.
  * Les boutons réduire / agrandir / fermer sont ceux de Windows, posés par-dessus à droite.
  */
+/**
+ * « Redémarrer et mettre à jour » (application de bureau) : le hub s'arrête proprement, puis Nidavellir se relance,
+ * reprend la dernière version et recompile l'interface si elle a changé. Confirmation si l'équipe travaille.
+ */
+export function restartApp(working: number) {
+  if (!window.nidavellir?.restart) return;
+  const ask = working
+    ? `${working} agent${working > 1 ? "s travaillent" : " travaille"} en ce moment : le redémarrage interrompt leur travail en cours. Redémarrer quand même ?`
+    : "Redémarrer Nidavellir pour prendre la dernière version ? La fenêtre se ferme puis revient d'elle-même.";
+  if (window.confirm(ask)) window.nidavellir.restart();
+}
+
 export function TitleBar({ route }: { route: Route }) {
   const snap = useStudio();
   const working = snap?.agents.filter((a) => a.id !== "you" && a.state !== "idle").length ?? 0;
@@ -57,10 +73,16 @@ export function TitleBar({ route }: { route: Route }) {
         <kbd>Ctrl K</kbd>
       </button>
       <div className="titlebar-status">
-        <a href="#/direct" className={`titlebar-live ${working ? "on" : ""}`} title="Le studio en direct">
+        <a href="#/forge" className={`titlebar-live ${working ? "on" : ""}`} title="La Forge : l'équipe à ses postes">
           <span className="titlebar-dot" />
           {working ? `${working} au travail` : "Au repos"}
         </a>
+        {window.nidavellir?.restart && (
+          <button className="titlebar-restart" onClick={() => restartApp(working)} title="Redémarrer et mettre à jour : prend la dernière version de Nidavellir">
+            <Icon name="refresh" size={14} />
+            <span>Mettre à jour</span>
+          </button>
+        )}
       </div>
     </header>
   );

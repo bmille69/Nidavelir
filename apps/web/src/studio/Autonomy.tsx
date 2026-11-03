@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Autonomy, type Item } from "../api.ts";
 import { formatDate } from "../pages/labels.ts";
 import { useStudioRefresh } from "./context.tsx";
+import { Icon } from "./Icon.tsx";
 
 export const AUTONOMY: Record<Autonomy, { label: string; short: string; explain: string[] }> = {
   workshop: {
@@ -85,7 +86,7 @@ export function AutonomyPicker({ slug, level }: { slug: string; level: Autonomy 
           <i className={level === "autonomous" || level === "workshop" ? "on" : ""} />
         </span>
         <span className="autonomy-prefix">Autonomie : </span>
-        {AUTONOMY[level].label}
+        <span className="autonomy-label">{AUTONOMY[level].label}</span>
       </button>
       {open && (
         <div className="autonomy-menu" role="dialog" aria-label="Niveau d'autonomie">
@@ -112,7 +113,7 @@ export function AutonomyPicker({ slug, level }: { slug: string; level: Autonomy 
 }
 
 /** Ce que le directeur a décidé seul, avec la possibilité de revenir dessus. */
-export function DelegatedDigest({ slug }: { slug: string }) {
+export function DelegatedDigest({ slug, onChange }: { slug: string; onChange?: () => void }) {
   const [items, setItems] = useState<Item[]>([]);
   const [all, setAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +138,7 @@ export function DelegatedDigest({ slug }: { slug: string }) {
       const why = await api.why(slug, d.id);
       await api.abandon(slug, d.id, why.hash);
       await load();
+      onChange?.();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -146,11 +148,14 @@ export function DelegatedDigest({ slug }: { slug: string }) {
   const shown = all ? items : items.slice(0, 5);
   return (
     <section className="card delegated">
-      <div className="proposal-head">
-        <h2 className="grow">Décidé par le directeur</h2>
-        <span className="muted small">{items.length} décision(s) prise(s) seul</span>
+      {/* « Décidé seul par le directeur » (ADR-113) : en tête du jeu hors « Je valide tout », comme dans la maquette. */}
+      <div className="proposal-head delegated-h">
+        <Icon name="shield" size={16} />
+        <h2 className="grow">Décidé seul par le directeur</h2>
+        <span className="muted small">
+          {items.length} décision{items.length > 1 ? "s" : ""} · il a tranché sans vous demander, vous pouvez revenir dessus
+        </span>
       </div>
-      <p className="muted small">Ce qui ne faisait pas débat. Tout est dans la vision ; vous pouvez revenir sur chaque point.</p>
       <ul className="delegated-list">
         {shown.map((d) => (
           <li key={d.id}>

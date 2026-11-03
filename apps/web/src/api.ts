@@ -58,7 +58,7 @@ export type Mod = {
 /** Le moniteur du studio (ADR-64). */
 export type Monitor = {
   at: string;
-  queues: { project: string; name: string; running: { id: string; title: string; status: string } | null; next: { id: string; title: string } | null; queued: number; paused: { until: string; window: string } | null }[];
+  queues: { project: string; name: string; running: { id: string; title: string; status: string } | null; alongside: { id: string; title: string; status: string }[]; next: { id: string; title: string } | null; queued: number; paused: { until: string; window: string } | null }[];
   machine: { cpu: number | null; ram: { used: number; total: number }; gpu: { name: string; load: number; memUsed: number; memTotal: number } | null };
   tokens: { buckets: { at: string; tokens: number; costUsd: number }[]; last15: { tokens: number; costUsd: number; calls: number }; hour: { tokens: number; costUsd: number; calls: number } };
 };
@@ -112,6 +112,30 @@ export type QualityReport = { overall: QualityStats; weeks: (QualityStats & { we
 export type RunInfo = Run & { result: { report?: ExecutionReportOutput; verification?: VerificationOutput; text?: string } | null };
 export type TaskDetail = { task: Task; plan: Plan | null; runs: RunInfo[]; escalations: Escalation[]; decisions: ItemFrontmatter[]; executor: string };
 export type RunEvent = { seq: number; at: string; type: "text" | "tool" | "result" | "info" | "error"; text: string };
+
+/** La Forge (ADR-106) : établis, file et fusions d'un jeu, pour la vue en voxels (apps/hub/src/studio/forge.ts). */
+export type ForgePhase = "starting" | "plan" | "plan_review" | "execute" | "checks" | "verify" | "review" | "changes";
+export type ForgeBench = {
+  task: { id: string; title: string; status: Task["status"] };
+  phase: ForgePhase;
+  run: { id: string; kind: "plan" | "execute" | "verify"; started_at: string; last: { at: string; type: string; text: string } | null } | null;
+  note: string | null;
+  files: string[];
+  since: string;
+};
+export type ForgeSnapshot = {
+  at: string;
+  project: { slug: string; name: string; autonomy: string };
+  parallel: number;
+  pool: { busy: number; waiting: number; max: number };
+  benches: ForgeBench[];
+  queue: { id: string; title: string; scoped: boolean; waiting: string }[];
+  scouting: boolean;
+  escalations: { id: string; task: string; summary: string }[];
+  merged: { id: string; title: string; at: string }[];
+  today: { merged: number; failed: number };
+  paused: { until: string; window: string } | null;
+};
 export type Review = {
   task: Task;
   plan: Plan | null;
@@ -172,6 +196,8 @@ export type Art3D = {
   blender: { installed: boolean; installing: { step: string; progress: number } | null; error: string | null; size: string };
   tripo: { configured: boolean; month: string; credits: number; cap: number };
 };
+/** Google Gemini (ADR-110) : la clé n'est jamais renvoyée, seulement si elle est configurée ; dépense du mois en dollars. */
+export type ArtGoogle = { configured: boolean; month: string; usd: number; cap: number };
 export type ArtStage = "croquis" | "image" | "planche" | "tripo" | "atelier" | "controle";
 export type ArtGenerating = {
   asset: string;
@@ -220,6 +246,7 @@ export type ArtState = {
   queue?: { id: string; need: { id: string; title: string } | null }[];
   generator: ArtGenerator;
   workshop3d: Art3D;
+  google?: ArtGoogle | null;
   /** Ce que chaque visuel a coûté et son plafond (ADR-82). */
   spend?: Record<string, ArtSpend>;
 };
@@ -245,6 +272,43 @@ export type SoundState = {
   sounds: Sound[];
   busy: { proposing: boolean; generating: string[] };
   error: string | null;
+};
+/** Le plan de production (ADR-107) : un objectif, tous les métiers enchaînés. */
+export type ProductionStepState = "todo" | "active" | "you" | "done" | "failed" | "skipped";
+export type ProductionStep = {
+  key: string;
+  kind: "chantier" | "visuel" | "son" | "sons" | "verification";
+  label: string;
+  ref: string | null;
+  state: ProductionStepState;
+  detail: string;
+  href: string | null;
+  skippable: boolean;
+};
+export type Production = {
+  id: string;
+  project: string;
+  thread: string;
+  title: string;
+  status: "preparing" | "proposed" | "running" | "paused" | "done" | "cancelled";
+  auto: boolean;
+  brief: string;
+  plan: {
+    titre: string;
+    objectif: string;
+    criteres: string[];
+    visuels: { cle: string; nom: string; type: string; usage: string; specs: string }[];
+    sons: { nom: string; usage: string }[];
+    chantiers: { cle: string; titre: string; consigne: string; visuels: string[]; sons: string[] }[];
+    note: string;
+  } | null;
+  refs: { dossier: string | null; tasks: Record<string, string>; soundTask: string | null; final: string | null; replacedBy: string | null; started_at: string | null; finished_at: string | null };
+  note: string | null;
+  steps: ProductionStep[];
+  waiting: { text: string; href: string; own?: boolean }[];
+  spent: number;
+  created_at: string;
+  updated_at: string;
 };
 /** L'export local des jeux Godot (ADR-90). */
 export type GameBuild = { id: string; exe: string; bytes: number; at: string; commit: string | null; seconds: number; smoke: { ok: boolean; detail: string } };
@@ -341,6 +405,10 @@ export type GameScan = {
   recoverable: string;
   moddable: string | null;
   tool: string | null;
+  incomplete?: string | null;
+  public?: { source: string; patch: string } | null;
+  /** Quels outils, dans quel ordre, et pourquoi (ADR-126). Absent des fiches démontées avant cette décision. */
+  plan?: { id: string; role: "obligatoire" | "conseillé" | "dernier recours"; why: string }[];
 };
 export type Dissection = {
   id: string;
@@ -348,7 +416,7 @@ export type Dissection = {
   path: string;
   status: "detected" | "blocked" | "running" | "extracted" | "failed";
   scan: GameScan;
-  mode: "code" | "complet" | null;
+  mode: "code" | "complet" | "fonctions" | null;
   out: string;
   error: string | null;
   created_at: string;
@@ -358,9 +426,36 @@ export type Dissection = {
   mod_project: string | null;
   updated: boolean;
   previous: boolean;
+  needs: string[];
+  functions: boolean;
+  /** Le projet se recompile-t-il et démarre-t-il ? Mesuré par le hub (ADR-120). */
+  launch: LaunchReport | null;
 };
-export type DissectionNote = { id: number; dissection: string; title: string; question: string; body: string; status: "thinking" | "done" | "failed"; created_at: string };
+export type LaunchReport = {
+  verdict: "playable" | "partiel" | "echec" | "outil";
+  reason: string;
+  need: { version: string | null; mono: boolean } | null;
+  editor: { exe: string; version: string; mono: boolean } | null;
+  rounds: { imported: boolean; built: boolean; ran: boolean; code: number | null; errors: number; note: string }[];
+  repairs: { file: string; kind: string; note: string }[];
+  missing: { kind: string; path: string; detail: string }[];
+  seconds: number;
+  at: string;
+};
+export type FeaturePack = { donnees: string[]; scenarios: { situation: string; attendu: string; source?: string }[]; dependances: string[]; refuses: string[] };
+export type DissectionNote = {
+  id: number;
+  dissection: string;
+  title: string;
+  question: string;
+  body: string;
+  status: "thinking" | "done" | "failed";
+  created_at: string;
+  kind: "note" | "feature";
+  pack: FeaturePack | null;
+};
 export type DissectionDetail = Dissection & { notes: DissectionNote[] };
+export type PublicSource = { id: string; game: string; label: string; description: string; defaultPatch: string; patchHint: string };
 export type ReverseTool = { id: string; name: string; repo: string; purpose: string; size: string; installed: boolean; version: string | null };
 export type ModelSetting = { role: ModelRole; model: string; recommended: string; why: string };
 export type ModelChoice = { id: string; label: string; note: string };
@@ -384,6 +479,68 @@ export type Job = {
   costUsd: number;
 };
 export type ProposalCard = { proposal: ItemFrontmatter; hash: string; sources: ItemFrontmatter[]; supersedes: ItemFrontmatter[] };
+/**
+ * La boîte « À vous » d'un projet (ADR-113) : ce qui attend votre décision, trié par urgence (le Gardien d'abord),
+ * avec ce qu'il faut pour trancher sur place. `url` : la page de détail ; `deadline` : passé ce moment, le hub décide seul.
+ */
+type InboxBase = { id: string; title: string; text: string; urgency: number; at: string | null; deadline: string | null; url: string; href: string; line: string };
+export type InboxItem = InboxBase &
+  (
+    | { kind: "escalation"; data: { escalation: string; task: string; taskTitle: string; summary: string; reason: string; tool: string; content: string | null } }
+    | { kind: "review"; data: { task: string; summary: string | null; verdict: "pass" | "pass_with_notes" | "fail" | null; tester: string | null; played: string | null; thread: string | null; updated_at: string } }
+    | { kind: "task_plan"; data: { task: string; plan: string; hash: string; summary: string; problems: string[] } }
+    | { kind: "proposal"; data: ProposalCard }
+    | { kind: "art"; data: { what: "question" | "sketch" | "model" | "image" | "render"; asset: string | null; name: string | null; sketches: { file: string; label: string }[]; image: string | null; verdict: { ok: boolean; summary: string; points: string[] } | null } }
+    | { kind: "production"; data: { plan: string; status: string; thread: string; objective: string | null; steps: number } }
+    | { kind: "sound"; data: { plan: string; sound: string; name: string; usage: string; status: Sound["status"]; takes: string[]; configured: boolean } }
+    | { kind: "conception"; data: { conception: string; questions: ConceptQuestion[] } }
+    | { kind: "failed"; data: { task: string; error: string | null; updated_at: string } }
+  );
+/**
+ * Le Récap des chantiers (ADR-113, apps/hub/src/studio/recap.ts) : les chiffres d'une période et les chantiers par
+ * semaine. `shot` : la capture montrée, la photo « en jeu » du Testeur d'abord.
+ */
+export type RecapPeriod = "week" | "lastweek" | "30d";
+export type RecapGroup = "merged" | "failed" | "running";
+export type RecapCard = {
+  id: string;
+  title: string;
+  status: Task["status"];
+  group: RecapGroup;
+  created_at: string;
+  at: string;
+  merged_at: string | null;
+  summary: string | null;
+  tech: string | null;
+  how_to_test: string[];
+  verdict: "pass" | "pass_with_notes" | "fail" | null;
+  tester: string | null;
+  played: string | null;
+  unverified: string[];
+  cost_usd: number;
+  minutes: number;
+  corrections: number;
+  reworks: string[];
+  reworked_by: string[];
+  first_try: boolean;
+  shot: "in_game" | "launch" | "play" | null;
+  thread: { id: string; title: string } | null;
+  error: string | null;
+  queue_rank: number | null;
+  queued: boolean;
+  pending_escalations: number;
+};
+export type RecapStats = { total: number; merged: number; failed: number; running: number; cost_usd: number; minutes: number; first_try: number; first_try_pct: number | null; visuals: number };
+export type RecapWeek = { week: string; from: string; to: string; merged: number; failed: number; cost_usd: number; minutes: number; tasks: RecapCard[] };
+export type Recap = {
+  period: RecapPeriod;
+  from: string;
+  to: string;
+  stats: RecapStats;
+  counts: Record<"all" | RecapGroup, number>;
+  weeks: RecapWeek[];
+  story: { week: string; text: string | null; at: string | null; gif: boolean };
+};
 export type SynthesisJob = {
   id: string;
   status: "running" | "done" | "failed";
@@ -435,6 +592,36 @@ export type Conception = {
 };
 export type ConceptionMessage = { id: string; seq: number; role: "human" | "concepteur"; text: string; turn: ConceptTurn | null; cost_usd: number | null; at: string };
 export type SkillAgent = "director" | "concepteur" | "developer" | "qa" | "art_director";
+/** L'équipe (ADR-98) : qui peut consulter qui. */
+export type TeamAgent = "directeur" | "concepteur" | "da" | "son" | "testeur";
+export type Consultation = { id: string; project: string | null; from: TeamAgent; to: TeamAgent; question: string; answer: string; status: "ok" | "failed"; cost_usd: number | null; at: string };
+/** La mémoire du studio (ADR-99). */
+export type StudioMemoryEntry = { id: string; text: string; status: "active" | "proposed" | "rejected"; by: string; project: string | null; reason: string | null; created_at: string; decided_at: string | null };
+/** L'Atelier d'idées (ADR-100). */
+export type IdeaInsight = {
+  title: string;
+  pitch: string;
+  synthese: string;
+  pistes: string[];
+  questions: string[];
+  references: { titre: string; url: string | null; pourquoi: string }[];
+  liees: { id: string; pourquoi: string }[];
+  at: string;
+  team?: string;
+};
+export type Idea = {
+  id: string;
+  title: string;
+  body: string;
+  status: "idee" | "projet" | "archivee";
+  inspirations: { id: string; url: string | null; note: string; at: string }[];
+  insight: IdeaInsight | null;
+  thinking: boolean;
+  error: string | null;
+  conception: string | null;
+  created_at: string;
+  updated_at: string;
+};
 export type Skill = {
   id: string;
   name: string;
@@ -442,9 +629,32 @@ export type Skill = {
   body: string;
   agents: SkillAgent[];
   enabled: boolean;
-  source: "starter" | "user" | "lessons";
+  /** learned : apprise d'un chantier difficile ; hermes : reprise de la bibliothèque d'Hermes (ADR-97). */
+  source: "starter" | "user" | "lessons" | "learned" | "hermes" | "public";
   project: string | null;
   updated_at: string;
+  origin: string | null;
+  files: { path: string; size: number }[];
+  stats: { offered: number; used: number; last_used_at: string | null };
+  has_previous: boolean;
+  /** quarantine : en attente de son essai automatique ; rejected : écartée par un essai ou la mesure (ADR-102). */
+  status: "active" | "quarantine" | "rejected";
+  trial: { kind: "bench" | "blind" | "review"; verdict: "pass" | "fail" | "inconclusive"; summary: string; at: string } | null;
+};
+export type SkillStatus = {
+  learn: boolean;
+  hermes: { dir: string | null; last_sync: string | null; syncing: boolean; imported: number; ignored: number; failed: number };
+  recent: { at: string; project: string | null; type: string; subject: string | null; payload: Record<string, unknown> }[];
+  lab: {
+    enabled: boolean;
+    trials: { bench: number; blind: number; benchMax: number; blindMax: number };
+    quarantine: number;
+    untested: number;
+    needs: { id: number; project: string | null; topic: string; origin: string; status: string; result: string | null; at: string }[];
+    catalog: { entries: number; sources: string[]; refreshed: string | null };
+    last: string | null;
+    busy: boolean;
+  };
 };
 /** `desktop` : un jeu Godot, ouvert dans sa fenêtre sur le PC (ADR-73). */
 export type Preview = { key: string; project: string; task: string | null; url: string; started_at: string; desktop?: boolean };
@@ -504,6 +714,7 @@ export const api = {
   projects: () => request<Project[]>("GET", "/projects"),
   studio: () => request<StudioSnapshot>("GET", "/studio"),
   monitor: () => request<Monitor>("GET", "/studio/monitor"),
+  forge: (slug: string) => request<ForgeSnapshot>("GET", `/projects/${slug}/forge`),
   modGames: () => request<ModGame[]>("GET", "/mods/games"),
   modLoaderInstall: (appid: string) => request<{ ok: true }>("POST", "/mods/loader/install", { appid }),
   modLoaderRemove: (appid: string) => request<{ ok: true }>("POST", "/mods/loader/remove", { appid }),
@@ -572,6 +783,8 @@ export const api = {
   artInstallKontext: () => request<ArtGenerator>("POST", "/art/kontext/install", {}),
   artInstallBlender: () => request<Art3D>("POST", "/art/blender/install", {}),
   artTripoKey: (key: string) => request<Art3D>("POST", "/art/tripo/key", { key }),
+  artGoogleKey: (key: string) => request<ArtGoogle>("POST", "/art/google/key", { key }),
+  artGoogleCap: (usd: number) => request<ArtGoogle>("POST", "/art/google/cap", { usd }),
   artModel: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/model`, {}),
   artLaunch: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/launch`, {}),
   artAside: (slug: string, id: string, aside: boolean) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/aside`, { aside }),
@@ -585,13 +798,18 @@ export const api = {
   artLookAccept: (slug: string, id: string) => request<ArtAsset>("POST", `/projects/${slug}/art/assets/${id}/look/accept`, {}),
   artAtelierFile: (slug: string, id: string, name: string) => `/api/human/projects/${slug}/art/atelier/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
   artFile: (slug: string, rel: string) => `/api/human/projects/${slug}/art/files/${rel.split("/").map(encodeURIComponent).join("/")}`,
-  reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[] }>("GET", "/reverse"),
+  reverse: () => request<{ dissections: Dissection[]; tools: ReverseTool[]; sources: PublicSource[] }>("GET", "/reverse"),
+  reversePublic: (source: string, patch: string) => request<Dissection>("POST", "/reverse/public", { source, patch }),
+  reverseFeature: (id: string, request_: string) => request<DissectionNote>("POST", `/reverse/${id}/feature`, { request: request_ }),
   reverseBrowse: () => request<{ path: string | null }>("POST", "/reverse/browse", {}),
   reverseCreate: (path: string) => request<Dissection>("POST", "/reverse", { path }),
   reverseGet: (id: string) => request<DissectionDetail>("GET", `/reverse/${id}`),
   reverseInstall: (tool: string) => request<ReverseTool>("POST", `/reverse/tools/${tool}/install`, {}),
-  reverseRun: (id: string, mode: "code" | "complet") => request<Dissection>("POST", `/reverse/${id}/run`, { mode }),
+  reverseRun: (id: string, mode: "code" | "complet" | "fonctions") => request<Dissection>("POST", `/reverse/${id}/run`, { mode }),
   reverseCancel: (id: string) => request<{ ok: boolean }>("POST", `/reverse/${id}/cancel`, {}),
+  reverseRelaunch: (id: string) => request<Dissection>("POST", `/reverse/${id}/relaunch`, {}),
+  reverseEditor: (id: string) => request<Dissection>("POST", `/reverse/${id}/editor`, {}),
+  reverseOpen: (id: string, how: "editor" | "play") => request<{ ok: true; editor: string }>("POST", `/reverse/${id}/open`, { how }),
   reverseAsk: (id: string, question: string) => request<DissectionNote>("POST", `/reverse/${id}/ask`, { question }),
   reverseSend: (id: string, note: number, project: string) => request<{ thread: string }>("POST", `/reverse/${id}/notes/${note}/send`, { project }),
   reverseMod: (id: string) => request<{ project: string; thread: string }>("POST", `/reverse/${id}/mod`, {}),
@@ -629,6 +847,8 @@ export const api = {
   gameState: (slug: string) => request<{ text: string | null; updated_at: string | null; task: string | null }>("GET", `/projects/${slug}/game-state`),
   /** Capture du jeu prise par le hub pour un chantier (ADR-33) ; `v` évite l'ancienne image en cache. */
   screenshotUrl: (slug: string, id: string, v = "") => `/api/human/projects/${slug}/tasks/${id}/screenshot${v ? `?v=${encodeURIComponent(v)}` : ""}`,
+  /** Photo d'une pose de contrôle (ADR-122) ; `nom` est déjà encodé dans le message. */
+  poseUrl: (slug: string, id: string, nom: string, v = "") => `/api/human/projects/${slug}/tasks/${id}/poses/${nom}${v ? `?v=${encodeURIComponent(v)}` : ""}`,
   createTask: (slug: string, decisions: string[]) => request<Task>("POST", `/projects/${slug}/tasks`, { decisions }),
   task: (slug: string, id: string) => request<TaskDetail>("GET", `/projects/${slug}/tasks/${id}`),
   startPlan: (slug: string, id: string) => request<Task>("POST", `/projects/${slug}/tasks/${id}/plan`, {}),
@@ -655,6 +875,26 @@ export const api = {
   skills: (project?: string) => request<Skill[]>("GET", `/skills${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   saveSkill: (s: { id?: string; name: string; description: string; body: string; agents: SkillAgent[]; enabled: boolean }) => request<Skill>("POST", "/skills", s),
   deleteSkill: (id: string) => request<{ deleted: boolean }>("POST", `/skills/${id}/delete`, {}),
+  skillStatus: () => request<SkillStatus>("GET", "/skills/status"),
+  skillDetail: (id: string) => request<Skill & { file_contents: { path: string; content: string }[] }>("GET", `/skills/${id}`),
+  revertSkill: (id: string) => request<Skill>("POST", `/skills/${id}/revert`, {}),
+  syncHermes: () => request<SkillStatus>("POST", "/skills/hermes/sync", {}),
+  // L'équipe, la mémoire du studio, l'Atelier d'idées (ADR-98 à ADR-100)
+  consultations: (project?: string) => request<Consultation[]>("GET", `/team/consultations${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  memory: () => request<StudioMemoryEntry[]>("GET", "/memory"),
+  addMemory: (text: string) => request<StudioMemoryEntry>("POST", "/memory", { text }),
+  editMemory: (id: string, text: string) => request<StudioMemoryEntry>("POST", `/memory/${id}`, { text }),
+  decideMemory: (id: string, keep: boolean) => request<StudioMemoryEntry>("POST", `/memory/${id}/decide`, { keep }),
+  deleteMemory: (id: string) => request<{ ok: true }>("POST", `/memory/${id}/delete`, {}),
+  ideas: () => request<Idea[]>("GET", "/ideas"),
+  idea: (id: string) => request<Idea>("GET", `/ideas/${id}`),
+  createIdea: (body: string, title?: string) => request<Idea>("POST", "/ideas", { body, ...(title ? { title } : {}) }),
+  updateIdea: (id: string, patch: { title?: string; body?: string; status?: "idee" | "archivee" }) => request<Idea>("POST", `/ideas/${id}`, patch),
+  addInspiration: (id: string, input: { url?: string | null; note?: string }) => request<Idea>("POST", `/ideas/${id}/inspirations`, input),
+  removeInspiration: (id: string, inspiration: string) => request<Idea>("POST", `/ideas/${id}/inspirations/${inspiration}/delete`, {}),
+  enrichIdea: (id: string) => request<Idea>("POST", `/ideas/${id}/enrich`, {}),
+  ideaToProject: (id: string) => request<{ idea: Idea; conception: string }>("POST", `/ideas/${id}/project`, {}),
+  deleteIdea: (id: string) => request<{ ok: true }>("POST", `/ideas/${id}/delete`, {}),
   conceptions: () => request<Conception[]>("GET", "/conceptions"),
   startConception: (body: { kind: "project" | "feature"; project?: string; idea: string; thread?: string }) => request<Conception>("POST", "/conceptions", body),
   conception: (id: string) => request<{ conception: Conception; messages: ConceptionMessage[] }>("GET", `/conceptions/${id}`),
@@ -677,6 +917,11 @@ export const api = {
   soundChoose: (slug: string, id: string, file: string) => request<Sound>("POST", `/projects/${slug}/sound/${id}/choose`, { file }),
   soundIntegrate: (slug: string) => request<{ task: { id: string }; after: string | null }>("POST", `/projects/${slug}/sound/integrate`, {}),
   soundTake: (slug: string, file: string) => `/api/human/projects/${slug}/sound/takes/${file}`,
+  productions: (slug: string) => request<Production[]>("GET", `/projects/${slug}/productions`),
+  production: (slug: string, id: string) => request<Production>("GET", `/projects/${slug}/productions/${id}`),
+  productionStart: (slug: string, id: string) => request<Production>("POST", `/projects/${slug}/productions/${id}/start`, {}),
+  productionCancel: (slug: string, id: string) => request<Production>("POST", `/projects/${slug}/productions/${id}/cancel`, {}),
+  productionSkip: (slug: string, id: string, ref: string) => request<Production>("POST", `/projects/${slug}/productions/${id}/skip`, { ref }),
   exportState: (slug: string) => request<ExportState>("GET", `/projects/${slug}/export`),
   exportStart: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export`, {}),
   exportTemplates: (slug: string) => request<ExportState>("POST", `/projects/${slug}/export/templates`, {}),
@@ -698,6 +943,8 @@ export const api = {
   deleteRecording: (slug: string, id: string) => request<{ ok: true }>("POST", `/projects/${slug}/recordings/${id}/delete`, {}),
   deleteReplay: (slug: string, file: string) => request<{ ok: true }>("POST", `/projects/${slug}/replays/${file}/delete`, {}),
   stopPreview: (slug: string) => request<{ stopped: boolean }>("POST", `/projects/${slug}/preview/stop`, {}),
+  inbox: (slug: string) => request<InboxItem[]>("GET", `/projects/${slug}/inbox`),
+  recap: (slug: string, period?: RecapPeriod) => request<Recap>("GET", `/projects/${slug}/recap${period ? `?period=${period}` : ""}`),
   pendingEscalations: (slug: string) => request<Escalation[]>("GET", `/projects/${slug}/escalations`),
   decideEscalation: (slug: string, id: string, allowed: boolean) => request<Escalation>("POST", `/projects/${slug}/escalations/${id}/decide`, { allowed }),
   jobs: (slug: string) => request<Job[]>("GET", `/projects/${slug}/jobs`),

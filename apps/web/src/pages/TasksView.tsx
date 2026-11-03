@@ -7,6 +7,7 @@ import { RatingBox } from "../studio/Rating.tsx";
 import { Capture } from "../studio/Capture.tsx";
 import { withImage } from "../studio/Annotator.tsx";
 import { money } from "../studio/Workshop.tsx";
+import { useStudio } from "../studio/context.tsx";
 
 export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accent" | "warn" | "ok" | "error" }> = {
   draft: { label: "Brouillon", tone: "muted" },
@@ -15,11 +16,11 @@ export const TASK_STATUS: Record<string, { label: string; tone: "muted" | "accen
   approved: { label: "Plan validé", tone: "accent" },
   running: { label: "En cours", tone: "accent" },
   review: { label: "À relire", tone: "warn" },
-  merged: { label: "Fusionnée", tone: "ok" },
+  merged: { label: "Fusionné", tone: "ok" },
   changes_requested: { label: "Corrections demandées", tone: "accent" },
   rejected: { label: "Plan refusé", tone: "muted" },
-  cancelled: { label: "Arrêtée", tone: "muted" },
-  abandoned: { label: "Abandonnée", tone: "muted" },
+  cancelled: { label: "Arrêté", tone: "muted" },
+  abandoned: { label: "Abandonné", tone: "muted" },
   failed: { label: "Échec", tone: "error" },
 };
 
@@ -30,55 +31,68 @@ export function StatusBadge({ status, queued }: { status: string; queued?: boole
   return <span className={`badge status-${s.tone}`}>{s.label}</span>;
 }
 
-export function TasksView({ slug, taskId }: { slug: string; taskId?: string }) {
+/**
+ * La page détail d'un chantier (#/p/<jeu>/tasks/<id>) : plan, demandes du Gardien, journal en direct, résultat,
+ * changements, fusion, abandon, avis. La liste des chantiers est devenue le Récap (ADR-113) : on y revient par le lien du haut,
+ * entre deux chantiers par « précédent / suivant ».
+ */
+export function TaskDetailView({ slug, taskId }: { slug: string; taskId: string }) {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(() => api.tasks(slug).then(setTasks, (e: Error) => setError(e.message)), [slug]);
+  const refresh = useCallback(() => api.tasks(slug).then(setTasks, () => {}), [slug]);
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => void refresh(), 4000);
-    return () => clearInterval(t);
   }, [refresh]);
-
+  // Du plus récent au plus ancien, comme l'ancienne liste.
+  const ids = tasks.map((t) => t.id);
+  const k = ids.indexOf(taskId);
+  const newer = k > 0 ? ids[k - 1] : undefined;
+  const older = k >= 0 && k < ids.length - 1 ? ids[k + 1] : undefined;
   return (
-    <main className="tasks-layout">
-      <aside className="threads">
-        <h2>Chantiers</h2>
-        <p className="muted small">Pour en lancer un : dites « go » au directeur dans la discussion, ou « Faire réaliser » sur un point de « Le jeu ».</p>
-        {error && <p className="error small">{error}</p>}
-        <ul>
-          {tasks.map((t) => (
-            <li key={t.id}>
-              <a className={t.id === taskId ? "active" : ""} href={`#/p/${slug}/tasks/${t.id}`}>
-                <span className="small muted">{t.id}</span> {t.title}
-                <div className="row">
-                  <StatusBadge status={t.status} queued={!!t.queued_at} />
-                  {t.pending_escalations > 0 && <span className="badge warn pulse">{t.pending_escalations} demande(s)</span>}
-                </div>
-              </a>
-            </li>
-          ))}
-        </ul>
-        {tasks.length === 0 && <p className="muted small">Aucune tâche pour l'instant.</p>}
-      </aside>
-      <section className="page wide">
-        {taskId ? (
-          <TaskPage key={taskId} slug={slug} id={taskId} onChange={refresh} />
-        ) : (
-          <div className="card empty">
-            <h1>Faire travailler le développeur</h1>
-            <ol className="steps-explained">
-              <li>Vous choisissez une décision validée à implémenter.</li>
-              <li>Le développeur (Claude Code) lit le code et propose un <strong>plan</strong> : quels fichiers, quelles commandes. Il ne modifie rien.</li>
-              <li>Vous <strong>validez le plan</strong>. Il travaille alors dans une copie séparée de votre jeu, limitée à ce plan.</li>
-              <li>S'il veut faire autre chose, il <strong>vous demande</strong>. Sans réponse, c'est non.</li>
-              <li>Le QA vérifie. Vous relisez, puis vous <strong>fusionnez</strong> dans votre jeu ou vous abandonnez.</li>
-            </ol>
-          </div>
+    <main className="task-detail">
+      <nav className="task-detail-nav" aria-label="Chantiers">
+        <a className="rail-link" href={`#/p/${slug}/recap`}>
+          ← Récap des chantiers
+        </a>
+        <span className="sp" />
+        {newer && (
+          <a className="rail-link" href={`#/p/${slug}/tasks/${newer}`} title="Chantier plus récent">
+            ‹ {newer}
+          </a>
         )}
-      </section>
+        {older && (
+          <a className="rail-link" href={`#/p/${slug}/tasks/${older}`} title="Chantier plus ancien">
+            {older} ›
+          </a>
+        )}
+      </nav>
+      <TaskPage key={taskId} slug={slug} id={taskId} onChange={refresh} />
     </main>
+  );
+}
+
+/** Comment avancent les chantiers, selon l'autonomie : l'explication de l'ancienne liste, gardée sous le Récap. */
+export function HowTasksWork({ slug }: { slug: string }) {
+  const supervised = (useStudio()?.projects.find((p) => p.slug === slug)?.autonomy ?? "supervised") === "supervised";
+  return supervised ? (
+    <>
+      <h3>Faire travailler le développeur</h3>
+      <ol className="steps-explained">
+        <li>Vous choisissez une décision validée à implémenter.</li>
+        <li>Le développeur (Claude Code) lit le code et propose un <strong>plan</strong> : quels fichiers, quelles commandes. Il ne modifie rien.</li>
+        <li>Vous <strong>validez le plan</strong>. Il travaille alors dans une copie séparée de votre jeu, limitée à ce plan.</li>
+        <li>S'il veut faire autre chose, il <strong>vous demande</strong>. Sans réponse, c'est non.</li>
+        <li>Le Testeur vérifie. Vous relisez, puis vous <strong>fusionnez</strong> dans votre jeu ou vous abandonnez.</li>
+      </ol>
+    </>
+  ) : (
+    <>
+      <h3>Comment avancent les chantiers</h3>
+      <ol className="steps-explained">
+        <li>Le directeur lance les chantiers depuis la discussion, quand vous dites <strong>« go »</strong>.</li>
+        <li>Le développeur travaille dans une copie de votre jeu, puis le Testeur vérifie.</li>
+        <li>À vous : dites <strong>« fusionne »</strong> ou <strong>« corrige… »</strong> dans la discussion, ou ici sur le chantier.</li>
+      </ol>
+    </>
   );
 }
 
@@ -149,13 +163,13 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
           <StatusBadge status={task.status} />
         </div>
         <p className="muted small">
-          {task.id} · créée le {formatDate(task.created_at)}
+          {task.id} · créé le {formatDate(task.created_at)}
           {detail.runs.some((r) => r.cost_usd) && (
             <span title="Équivalent API, pris sur votre abonnement"> · coût ≈ {money(detail.runs.reduce((n, r) => n + (r.cost_usd ?? 0), 0))}</span>
           )}
           {task.origin && (
             <>
-              {" "}· lancée depuis{" "}
+              {" "}· lancé depuis{" "}
               <a href={`#/p/${slug}/t/${task.origin.thread}`}>la discussion</a>
             </>
           )}
@@ -190,7 +204,7 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
               </button>
             )}
             {task.status !== "draft" && (
-              <button className="secondary danger" disabled={busy} onClick={() => act(() => api.abandonTask(slug, id), "Abandonner cette tâche ? Sa copie de travail sera supprimée.")}>
+              <button className="secondary danger" disabled={busy} onClick={() => act(() => api.abandonTask(slug, id), "Abandonner ce chantier ? Sa copie de travail sera supprimée.")}>
                 Abandonner
               </button>
             )}
@@ -223,7 +237,7 @@ function TaskPage({ slug, id, onChange }: { slug: string; id: string; onChange: 
         <div className="card">
           <div className="proposal-head">
             <h2 className="grow">
-              {{ plan: "Préparation du plan", execute: "Travail du développeur", verify: "Vérification par le QA" }[lastRun.kind]}
+              {{ plan: "Préparation du plan", execute: "Travail du développeur", verify: "Vérification par le Testeur" }[lastRun.kind]}
               {lastRun.status === "running" ? " — en direct" : ""}
             </h2>
             {LIVE.has(task.status) && task.status !== "approved" && (
@@ -440,7 +454,7 @@ function ReviewCard(props: {
       {v && (
         <div className={`verdict verdict-${v.verdict}`}>
           <strong>
-            Vérification du QA :{" "}
+            Vérification du Testeur :{" "}
             {{ pass: "tout est conforme", pass_with_notes: "conforme, avec remarques", fail: "problèmes trouvés" }[v.verdict]}
           </strong>
           <p className="small">{v.summary_simple}</p>

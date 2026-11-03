@@ -860,6 +860,41 @@
 .skill-body { padding: 0.65rem 0.85rem; border-radius: 12px; background: rgba(0, 0, 0, 0.25); }
 .skill-edit textarea { font: 0.85rem/1.5 var(--font-mono); }
 .skill-edit { display: flex; flex-direction: column; gap: 0.5rem; }
+/* Bibliothèque tenue seule (ADR-97) : origine, usage, annexes. */
+.skill-head h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.skill-src { --src: var(--muted); display: inline-flex; align-items: center; padding: 0.08rem 0.5rem; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; border-radius: 999px; color: var(--src); background: color-mix(in srgb, var(--src) 13%, transparent); border: 1px solid color-mix(in srgb, var(--src) 40%, transparent); }
+.skill-src-learned { --src: var(--ok); box-shadow: 0 0 12px -3px color-mix(in srgb, var(--ok) 70%, transparent); animation: skill-glow 3.2s ease-in-out infinite; }
+.skill-src-hermes { --src: #b48cff; }
+.skill-src-user { --src: var(--c-you); }
+.skill-src-project { --src: var(--ember, #ffb36b); text-transform: none; }
+@keyframes skill-glow { 50% { box-shadow: 0 0 18px -2px color-mix(in srgb, var(--ok) 85%, transparent); } }
+.skill.src-learned.on { border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: linear-gradient(160deg, color-mix(in srgb, var(--ok) 7%, transparent), transparent 60%), rgba(255, 255, 255, 0.02); }
+.skill.src-hermes.on { border-color: rgba(180, 140, 255, 0.42); background: linear-gradient(160deg, rgba(180, 140, 255, 0.07), transparent 60%), rgba(255, 255, 255, 0.02); }
+.skill-meta { margin: 0.3rem 0 0; font-size: 0.74rem; color: var(--muted); }
+.skill-files { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.7rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.skill-files summary { cursor: pointer; font: 0.8rem var(--font-mono); color: var(--text-2); }
+.skill-files pre { max-height: 320px; overflow: auto; margin: 0.4rem 0 0; padding: 0.6rem 0.75rem; border-radius: 10px; background: rgba(0, 0, 0, 0.3); font: 0.76rem/1.5 var(--font-mono); white-space: pre-wrap; }
+.skill-filters { margin-top: 0.6rem; }
+.chip-count { margin-left: 0.2rem; padding: 0 0.4rem; border-radius: 999px; font-size: 0.7rem; background: rgba(255, 255, 255, 0.07); color: var(--muted); }
+.chip.on .chip-count { background: rgba(0, 229, 255, 0.18); color: var(--text); }
+.skills-auto .feed-list { margin-top: 0.4rem; }
+/* ADR-102 : essais, quarantaine, besoins. */
+.skill-src-public { --src: #5ec8ff; }
+.skill-src-trial { --src: var(--warn, #ffcc66); animation: skill-pulse 1.8s ease-in-out infinite; }
+.skill-src-rejected { --src: var(--error, #e58a8f); }
+@keyframes skill-pulse { 50% { opacity: 0.55; } }
+.skill.src-public.on { border-color: rgba(94, 200, 255, 0.42); background: linear-gradient(160deg, rgba(94, 200, 255, 0.07), transparent 60%), rgba(255, 255, 255, 0.02); }
+.skill-trial { margin: 0.25rem 0 0; padding: 0.3rem 0.55rem; border-radius: 8px; font-size: 0.74rem; color: var(--text-2); background: rgba(255, 255, 255, 0.035); border-left: 2px solid var(--border-strong); }
+.skill-trial.verdict-pass { border-left-color: var(--ok); }
+.skill-trial.verdict-fail { border-left-color: var(--error, #e58a8f); }
+.skill-trial.verdict-inconclusive { border-left-color: var(--warn, #ffcc66); }
+.skill-needs { margin-top: 0.9rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.skill-needs h3 { margin: 0 0 0.45rem; font-size: 0.85rem; color: var(--text-2); }
+.skill-needs ul { display: flex; flex-direction: column; gap: 0.3rem; margin: 0; padding: 0; list-style: none; }
+.skill-needs li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; padding: 0.3rem 0.55rem; border-radius: 8px; background: rgba(255, 255, 255, 0.025); }
+.skill-needs .need-topic { font-size: 0.82rem; font-weight: 600; }
+.skill-needs li.need-open .need-topic::before { content: "● "; color: var(--warn, #ffcc66); }
+.skill-needs li.need-done .need-topic::before { content: "✓ "; color: var(--ok); }
 .switch { position: relative; flex: none; width: 40px; height: 23px; margin-top: 2px; cursor: pointer; }
 .switch input { position: absolute; z-index: 1; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
 .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--surface-3); transition: background 0.2s ease; }
@@ -1113,6 +1148,24 @@
 .dissect-modes p { flex-basis: 100%; margin: 0.2rem 0 0; }
 .dissect-log { max-height: 160px; overflow: auto; font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted); background: rgba(0, 0, 0, 0.3); border-radius: var(--radius-sm); padding: 0.6rem; white-space: pre-wrap; }
 .dissect-archeo { display: flex; flex-direction: column; gap: 1rem; }
+/* Le lancement vérifié (ADR-120) : un verdict, les fichiers recréés, et de quoi revérifier. */
+.dissect-launch { display: flex; flex-direction: column; gap: 0.9rem; }
+.dissect-launch .pill { font-size: 0.72rem; padding: 0.1rem 0.55rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.launch-playable { background: var(--ok-bg); color: var(--ok); }
+.pill.launch-partiel { background: var(--warn-bg); color: var(--warn); }
+.pill.launch-echec { background: var(--error-bg, rgba(255, 90, 90, 0.12)); color: var(--error); }
+.pill.launch-outil { background: var(--accent-soft); color: var(--accent); }
+.dissect-repairs { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.9rem; background: rgba(0, 0, 0, 0.18); }
+.dissect-repairs summary { cursor: pointer; color: var(--text-2); font-weight: 550; }
+.dissect-repairs ul { margin: 0.6rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.dissect-repairs code { font-family: var(--font-mono); font-size: 0.74rem; color: var(--accent); }
+.dissect-plan ul { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.85rem; }
+.dissect-plan li { display: flex; flex-direction: column; gap: 0.15rem; align-items: flex-start; }
+.dissect-plan li p { margin: 0.1rem 0 0.35rem; max-width: 62ch; }
+.dissect-plan .pill { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; text-transform: lowercase; }
+.pill.plan-must { background: var(--accent-soft); color: var(--accent); }
+.pill.plan-advice { background: rgba(255, 255, 255, 0.05); color: var(--text-2); }
+.pill.plan-last { background: var(--warn-bg); color: var(--warn); }
 .dissect-notes { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 1rem; min-height: 220px; }
 .dissect-notes nav { display: flex; flex-direction: column; gap: 0.3rem; }
 .note-tab { justify-content: flex-start; text-align: left; background: rgba(255, 255, 255, 0.03); color: var(--text-2); border: 1px solid var(--border); box-shadow: none; font-weight: 550; font-family: var(--font); }
@@ -1124,6 +1177,27 @@
 .dissect-ask textarea { flex: 1; resize: vertical; }
 .dissect-mod { padding-top: 0.8rem; border-top: 1px solid var(--border); }
 .dissect-mod h3 { display: flex; align-items: center; gap: 0.4rem; margin-top: 0; }
+/* ADR-95 : données publiques, demande « dossier de feature », ce que le dossier emporte */
+.dissect-source { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.4rem 1rem; align-items: center; padding: 0.9rem 1rem; margin-top: 0.7rem; border-radius: var(--radius); border: 1px solid var(--border); background: linear-gradient(135deg, var(--accent-soft), transparent 60%); }
+.dissect-source p { margin: 0.25rem 0 0; }
+.dissect-source > p.muted { grid-column: 1 / -1; margin: 0; }
+.dissect-patch { display: flex; flex-direction: column; gap: 0.2rem; }
+.dissect-patch input { width: 5.5rem; text-align: center; font-family: var(--font-mono); }
+.dissect-alt { margin: 0.6rem 0; padding: 0.7rem 0.9rem; border-radius: var(--radius); border: 1px dashed var(--accent); background: var(--accent-soft); }
+.dissect-alt p { margin: 0 0 0.5rem; }
+.dissect-ask { flex-wrap: wrap; }
+.dissect-ask-mode { display: flex; gap: 0.3rem; flex-basis: 100%; }
+.dissect-ask-mode button { padding: 0.3rem 0.8rem; font-size: 0.8rem; }
+.dissect-ask-mode button.on { box-shadow: 0 0 0 1px var(--accent), 0 0 18px -6px var(--accent); }
+.dissect-pack { margin-top: 1rem; padding: 0.9rem 1rem; border-radius: var(--radius); border: 1px solid rgba(0, 229, 255, 0.25); background: rgba(0, 229, 255, 0.04); }
+.dissect-pack h3 { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.6rem; }
+.dissect-pack-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 1rem; }
+.dissect-pack .eyebrow { margin: 0.4rem 0 0.2rem; }
+.dissect-scenarios { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.86rem; }
+@media (max-width: 860px) {
+  .dissect-source { grid-template-columns: minmax(0, 1fr); }
+  .dissect-pack-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 860px) {
   .dissect-notes { grid-template-columns: minmax(0, 1fr); }
   .dissect-notes nav { flex-direction: row; overflow-x: auto; }

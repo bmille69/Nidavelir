@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStudio } from "./context.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
 import { useMotion } from "./motion.tsx";
+import { restartApp } from "./TitleBar.tsx";
 
 type Command = { id: string; label: string; hint?: string; icon: IconName; group: string; run: () => void };
 
@@ -57,17 +58,24 @@ export function CommandPalette() {
     const c: Command[] = [
       { id: "home", label: "Accueil", icon: "home", group: "Aller à", run: go("#/") },
       { id: "pilot", label: "Pilotage", hint: "chantiers, visuels, galerie, son", icon: "chart", group: "Aller à", run: go("#/pilotage") },
-      { id: "live", label: "Le studio en direct", icon: "live", group: "Aller à", run: go("#/direct") },
+      { id: "forge", label: "La Forge", hint: "l'équipe à ses postes", icon: "cube", group: "Aller à", run: go("#/forge") },
       { id: "quality", label: "Qualité", icon: "chart", group: "Aller à", run: go("#/qualite") },
       { id: "skills", label: "Compétences", icon: "puzzle", group: "Aller à", run: go("#/competences") },
+      { id: "ideas", label: "Atelier d'idées", hint: "idées et inspirations, avant les projets", icon: "book", group: "Aller à", run: go("#/idees") },
+      { id: "memory", label: "Mémoire et équipe", hint: "ce que vos agents ont appris, leurs échanges", icon: "chat", group: "Aller à", run: go("#/memoire") },
       { id: "phone", label: "Téléphone", icon: "phone", group: "Aller à", run: go("#/telephone") },
     ];
     for (const p of snap?.projects ?? []) {
       c.push(
-        { id: `p-${p.slug}`, label: p.name, hint: "discussion", icon: "chat", group: "Vos jeux", run: go(`#/p/${p.slug}`) },
-        { id: `p-${p.slug}-tasks`, label: `${p.name} · Chantiers`, icon: "hammer", group: "Vos jeux", run: go(`#/p/${p.slug}/tasks`) },
+        { id: `p-${p.slug}`, label: p.name, hint: p.waiting ? `discussion · ${p.waiting} à vous` : "discussion", icon: "chat", group: "Vos jeux", run: go(`#/p/${p.slug}`) },
+        // Les onglets du projet (ADR-113) ; les anciens noms restent cherchables (« chantiers », « plans », « décisions »).
+        { id: `p-${p.slug}-recap`, label: `${p.name} · Récap`, hint: "chantiers fusionnés, en cours, en échec", icon: "chart", group: "Vos jeux", run: go(`#/p/${p.slug}/recap`) },
         { id: `p-${p.slug}-vision`, label: `${p.name} · Le jeu`, icon: "book", group: "Vos jeux", run: go(`#/p/${p.slug}/vision`) },
-        { id: `p-${p.slug}-art`, label: `${p.name} · Direction artistique`, icon: "palette", group: "Vos jeux", run: go(`#/p/${p.slug}/art`) },
+        { id: `p-${p.slug}-art`, label: `${p.name} · Art & son`, hint: "direction artistique", icon: "palette", group: "Vos jeux", run: go(`#/p/${p.slug}/art`) },
+        { id: `p-${p.slug}-forge`, label: `${p.name} · La Forge`, hint: "l'équipe à ses postes", icon: "cube", group: "Vos jeux", run: go(`#/forge/${p.slug}`) },
+        { id: `p-${p.slug}-tasks`, label: `${p.name} · Chantiers en cours`, hint: "dans le Récap, filtre « En cours »", icon: "hammer", group: "Vos jeux", run: go(`#/p/${p.slug}/tasks`) },
+        { id: `p-${p.slug}-plans`, label: `${p.name} · Plans de production`, hint: "dans le Récap", icon: "motion", group: "Vos jeux", run: go(`#/p/${p.slug}/plans`) },
+        { id: `p-${p.slug}-decisions`, label: `${p.name} · Toutes les décisions`, hint: "dans Le jeu", icon: "scale", group: "Vos jeux", run: go(`#/p/${p.slug}/decisions`) },
       );
     }
     c.push(
@@ -84,8 +92,13 @@ export function CommandPalette() {
         run: () => setMotion(motion === "reduced" ? "full" : "reduced"),
       },
     );
+    // L'application de bureau : prendre la dernière version sans chercher l'icône près de l'horloge.
+    if (window.nidavellir?.restart) {
+      const working = snap?.agents.filter((a) => a.id !== "you" && a.state !== "idle").length ?? 0;
+      c.push({ id: "restart", label: "Redémarrer et mettre à jour", hint: "prend la dernière version de Nidavellir", icon: "refresh", group: "Réglages", run: () => restartApp(working) });
+    }
     return c;
-  }, [snap?.projects, motion, setMotion]);
+  }, [snap?.projects, snap?.agents, motion, setMotion]);
 
   const shown = useMemo(() => {
     const words = fold(q).split(/\s+/).filter(Boolean);

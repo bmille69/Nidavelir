@@ -28,7 +28,7 @@ function Meter({ value }: { value: number }) {
  * Le moniteur (ADR-64), en tête des chantiers : la file (en cours, en pause et jusqu'à quand), qui travaille, la machine
  * (processeur, mémoire, carte graphique) et la consommation de la dernière heure. Interrogé toutes les 5 secondes.
  */
-export function MonitorBar({ slug }: { slug?: string }) {
+export function MonitorBar({ slug, team = true }: { slug?: string; team?: boolean }) {
   const snap = useStudio();
   const now = useNow(15_000);
   const [m, setM] = useState<Monitor | null>(null);
@@ -62,6 +62,11 @@ export function MonitorBar({ slug }: { slug?: string }) {
           ) : q.running ? (
             <>
               <b>{q.running.status === "review" ? `⏳ ${q.running.id} attend votre mot` : q.running.status === "plan_review" ? `⏳ ${q.running.id} : plan à valider` : `▶ ${q.running.id} en cours`}</b> « {q.running.title} »
+              {q.alongside?.map((a) => (
+                <span key={a.id} className="mon-alongside">
+                  {" "}· <b>⇉ {a.status === "review" ? `${a.id} attend votre mot` : `${a.id} en même temps`}</b> « {a.title} »
+                </span>
+              ))}
               {q.queued ? <span className="muted"> · {q.queued} en file derrière</span> : null}
             </>
           ) : (
@@ -74,10 +79,13 @@ export function MonitorBar({ slug }: { slug?: string }) {
         </div>
       ))}
       <div className="mon-tiles">
-        <div className="mon-tile">
-          <span className="mon-label">Au travail</span>
-          <span className="mon-value small">{working.length ? working.map((a) => AGENTS[a.id].name).join(", ") : "personne"}</span>
-        </div>
+        {/* Dans le panneau d'activité du projet (ADR-113), « qui fait quoi » est juste au-dessus. */}
+        {team && (
+          <div className="mon-tile">
+            <span className="mon-label">Au travail</span>
+            <span className="mon-value small">{working.length ? working.map((a) => AGENTS[a.id].name).join(", ") : "personne"}</span>
+          </div>
+        )}
         <div className="mon-tile">
           <span className="mon-label">Processeur · mémoire</span>
           <span className="mon-value">
@@ -116,47 +124,5 @@ export function MonitorBar({ slug }: { slug?: string }) {
         )}
       </div>
     </section>
-  );
-}
-
-/**
- * Sur téléphone, le moniteur tient dans une pastille de l'en-tête du projet (la discussion garde tout l'écran) : l'état de
- * la file en quelques mots ; un toucher ouvre le moniteur complet dans une feuille du bas.
- */
-export function MonitorPill({ slug }: { slug: string }) {
-  const [m, setM] = useState<Monitor | null>(null);
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    const load = () => api.monitor().then((x) => alive && setM(x), () => {});
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
-  const q = m?.queues.find((x) => x.project === slug);
-  const label = q?.paused ? `Pause → ${hm(q.paused.until)}` : q?.running ? q.running.id : "Au repos";
-  return (
-    <>
-      <button className={`monitor-pill ${q?.paused ? "paused" : q?.running ? "on" : ""}`} onClick={() => setOpen(true)} aria-label="Moniteur du studio">
-        <span className={`dot ${q?.paused ? "warn" : q?.running ? "live" : ""}`} />
-        {label}
-        {q && q.queued > 0 && <span className="muted">+{q.queued}</span>}
-      </button>
-      {open && (
-        <div className="sheet" role="dialog" aria-label="Moniteur du studio">
-          <div className="sheet-backdrop" onClick={() => setOpen(false)} />
-          <div className="sheet-box">
-            <span className="sheet-grip" aria-hidden="true" />
-            <MonitorBar slug={slug} />
-            <a className="secondary-link" href="#/pilotage" onClick={() => setOpen(false)}>
-              Ouvrir le pilotage
-            </a>
-          </div>
-        </div>
-      )}
-    </>
   );
 }

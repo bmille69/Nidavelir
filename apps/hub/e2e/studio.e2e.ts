@@ -109,8 +109,20 @@ afterAll(async () => {
   cleanupSandboxes();
 });
 
+/** Ouvre la Forge (d'un jeu, si donné) avec le panneau de l'équipe. */
+async function openForge(slug?: string) {
+  if (slug) {
+    await page.goto(`${BASE}/#/forge/${slug}`);
+    await page.locator(".forge-projects a.on", { hasText: slug === P ? "Destiny Survivor" : "" }).waitFor();
+  }
+  await page.locator(".forge-btn", { hasText: /L'équipe|Fermer le panneau/ }).waitFor();
+  if (!(await page.locator(".forge-drawer").count())) await page.locator(".forge-btn", { hasText: "L'équipe" }).click();
+  if (await page.locator(".forge-back").count()) await page.locator(".forge-back").click();
+  await page.locator(".forge-team").waitFor();
+}
+
 describe("vue Studio", () => {
-  it("au repos : l'accueil montre ce qui vous attend, « En direct » l'organigramme", async () => {
+  it("au repos : l'accueil montre ce qui vous attend, la Forge l'équipe et ses modèles", async () => {
     // Accueil : ce qui vous attend en premier, puis vos projets.
     await page.getByRole("heading", { name: "Vos projets" }).waitFor();
     await page.locator(".attention-card", { hasText: "1 proposition(s) à arbitrer" }).waitFor();
@@ -131,32 +143,39 @@ describe("vue Studio", () => {
     expect(await page.evaluate('localStorage.getItem("studio:motion")')).toBe("full");
     await page.goto(page.url().replace(/#.*$/, "#/"));
     await page.getByRole("heading", { name: "Vos projets" }).waitFor();
-    // Le studio en direct, dans le menu.
-    await page.locator(".side-nav a", { hasText: "En direct" }).click();
-    await page.getByRole("heading", { name: "Le studio en direct" }).waitFor();
-    for (const name of ["Vous", "Le Directeur", "L'Archiviste", "Le Développeur", "Le Testeur", "Le Gardien"]) {
-      await page.locator(".agent-card h3", { hasText: name }).first().waitFor();
+    // La Forge a remplacé « En direct » dans le menu ; les anciens liens y mènent.
+    expect(await page.locator(".side-nav a", { hasText: "En direct" }).count()).toBe(0);
+    await page.locator(".side-nav a", { hasText: "La Forge" }).click();
+    await page.waitForURL(/#\/forge$/);
+    await page.getByRole("heading", { name: "La Forge" }).waitFor();
+    await page.goto(`${BASE}/#/direct`);
+    await page.getByRole("heading", { name: "La Forge" }).waitFor();
+    await openForge(P);
+    for (const name of ["Le Directeur", "L'Archiviste", "Développeur", "Le Testeur", "Le Gardien"]) {
+      await page.locator(".forge-team b", { hasText: name }).first().waitFor();
     }
-    // Une proposition attend votre arbitrage.
-    await page.locator(".agent-card.agent-you.state-waiting").getByText("1 proposition(s) à arbitrer").waitFor();
-    expect(await page.locator(".org-links path.link-base").count()).toBe(8);
-    // Sous chaque agent : son modèle, celui que nous recommandons, et ce qu'il consomme (ADR-37).
+    // Dans la fiche de chaque agent : son modèle, celui que nous recommandons, et ce qu'il consomme (ADR-37).
     // Le développeur a deux modèles : chantiers ordinaires et chantiers « (gros) » (ADR-41).
-    const dev = page.locator(".agent-card.agent-developer .model-setting.role-developer");
-    const big = page.locator(".agent-card.agent-developer .model-setting.role-developer_big");
+    await page.locator('.forge-team button[data-actor="developer"]').first().click();
+    const dev = page.locator(".forge-model .model-setting.role-developer");
+    const big = page.locator(".forge-model .model-setting.role-developer_big");
     await expect.poll(() => dev.locator(".model-pick select").inputValue()).toBe("sonnet");
     await expect.poll(() => big.locator(".model-pick select").inputValue()).toBe("fable");
     await dev.locator(".model-reco.on", { hasText: "Recommandé" }).waitFor();
-    await page.locator(".agent-card.agent-guardian").getByText(/Aucun modèle/).waitFor();
     await dev.locator(".model-pick select").selectOption("opus");
     await dev.locator("button.model-reco", { hasText: "Conseillé : Sonnet" }).waitFor();
     expect(hub.models.get("developer")).toBe("opus");
-    await page.locator(".feed-list", { hasText: "Le Développeur passe de Sonnet à Opus" }).waitFor();
     await page.screenshot({ path: join(shots, "studio-modeles.png") });
     await dev.locator("button.model-reco").click();
     await dev.locator(".model-reco.on").waitFor();
     expect(hub.models.get("developer")).toBe("sonnet");
+    await page.locator(".forge-back").click();
+    await page.locator('.forge-team button[data-actor="guardian"]').click();
+    await page.locator(".forge-model").getByText(/Aucun modèle/).waitFor();
     await page.screenshot({ path: join(shots, "studio-1-repos.png") });
+    // Le fil de l'accueil garde la trace du changement de modèle.
+    await page.goto(`${BASE}/#/`);
+    await page.locator(".feed-list", { hasText: "Le Développeur passe de Sonnet à Opus" }).waitFor();
   });
 
   it("au travail : chaque agent montre ce qu'il fait", async () => {
@@ -171,37 +190,57 @@ describe("vue Studio", () => {
     const task = hub.tasks.create(sb.human(), P, { decisions: ["D-0001"] });
     await hub.tasks.startPlanning(P, task.id);
 
-    for (const id of ["director", "archivist", "developer", "guardian"]) {
-      await page.locator(`.agent-card.agent-${id}.state-working`).waitFor({ timeout: 8000 });
+    // Par défaut, la Forge montre le jeu qui tourne.
+    await page.goto(`${BASE}/#/forge`);
+    await page.locator(".forge-projects a.on", { hasText: "Destiny Survivor" }).waitFor({ timeout: 8000 });
+    await openForge();
+    for (const id of ["director", "archivist", "developer"]) {
+      await page.locator(`.forge-team button[data-actor="${id}"][data-mode="work"]`).first().waitFor({ timeout: 8000 });
     }
-    await page.locator(".agent-card.agent-developer").getByText("Lit src/main.ts").waitFor();
-    await page.locator(".agent-card.agent-director").getByText("Vous répond dans « Les boss »").waitFor();
-    await expect.poll(() => page.locator(".link-working").count()).toBeGreaterThanOrEqual(3);
+    await page.locator('.forge-team button[data-actor="director"]', { hasText: "Vous répond dans « Les boss »" }).waitFor();
+    await page.locator('.forge-team button[data-actor="developer"]', { hasText: "Prépare le plan" }).waitFor();
+    // Sa fiche : ses dernières actions.
+    await page.locator('.forge-team button[data-actor="developer"][data-mode="work"]').first().click();
+    await page.locator(".forge-log", { hasText: "Lit src/main.ts" }).waitFor();
     await page.waitForTimeout(700);
     await page.screenshot({ path: join(shots, "studio-2-au-travail.png") });
-    await page.locator(".org").screenshot({ path: join(shots, "studio-3-organigramme.png") });
 
-    // Filtre par projet : l'autre projet n'a personne au travail.
-    await page.getByRole("button", { name: "Ombres du Nord" }).click();
-    await expect.poll(() => page.locator(".agent-card.state-working").count()).toBe(0);
-    await page.getByRole("button", { name: "Tous les projets" }).click();
+    // L'autre jeu : personne n'y travaille.
+    await page.locator(".forge-projects a", { hasText: "Ombres du Nord" }).click();
+    await page.waitForURL(/#\/forge\/ombres$/);
+    // Le panneau se redessine au changement de jeu : on attend que la Forge ait basculé avant d'y toucher.
+    await page.locator(".forge-projects a.on", { hasText: "Ombres du Nord" }).waitFor();
+    await openForge();
+    for (const id of ["director", "archivist", "developer"]) {
+      expect(await page.locator(`.forge-team button[data-actor="${id}"][data-mode="work"]`).count()).toBe(0);
+    }
 
-    // En-tête du projet : l'équipe en action.
+    // En-tête du projet (ADR-113) : une pastille « L'équipe travaille · n » ; un clic ouvre qui fait quoi, puis la machine.
     await page.locator(".side-projects a", { hasText: "Destiny Survivor" }).click();
-    await page.locator(".team-mini").first().waitFor();
+    await page.locator(".activity-pill.busy", { hasText: /L'équipe travaille/ }).click();
+    const pop = page.locator(".activity-pop");
+    await pop.locator(".who-row", { hasText: "Le Directeur" }).waitFor();
+    await pop.locator(".monitor .mon-tile", { hasText: "Processeur" }).waitFor({ timeout: 15_000 });
+    expect(await pop.locator(".mon-tile", { hasText: "Au travail" }).count()).toBe(0);
+    await page.waitForTimeout(350);
     await page.screenshot({ path: join(shots, "studio-4-projet.png") });
+    await page.screenshot({ path: join(shots, "projet-activite.png") });
+    await page.keyboard.press("Escape");
+    await pop.waitFor({ state: "detached" });
   });
 
   it("quand tout est fini, l'équipe retourne au repos", async () => {
     release.open();
     await hub.conversations.idle();
-    await page.goto(`${BASE}/#/direct`);
-    await expect.poll(() => page.locator(".agent-card.agent-director.state-idle").count(), { timeout: 10_000 }).toBe(1);
-    await expect.poll(() => page.locator(".agent-card.agent-archivist.state-idle").count(), { timeout: 10_000 }).toBe(1);
-    // Le plan terminé attend votre validation.
-    await page.locator(".agent-card.agent-you").getByText(/Valider le plan/).waitFor({ timeout: 10_000 });
-    await page.locator(".feed-list").getByText(/Le directeur vous a répondu/).waitFor();
+    await page.goto(`${BASE}/#/forge/${P}`);
+    await openForge(P);
+    await page.locator('.forge-team button[data-actor="director"][data-mode="idle"]').waitFor({ timeout: 10_000 });
+    await page.locator('.forge-team button[data-actor="archivist"][data-mode="idle"]').waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(shots, "studio-5-fin.png") });
+    // Le plan terminé attend votre validation ; le fil de l'accueil raconte la réponse du directeur.
+    await page.goto(`${BASE}/#/`);
+    await page.locator(".attention-card", { hasText: /Valider le plan/ }).waitFor({ timeout: 10_000 });
+    await page.locator(".feed-list").getByText(/Le directeur vous a répondu/).waitFor();
     expect(pageErrors).toEqual([]);
   });
 
@@ -268,12 +307,15 @@ describe("vue Studio", () => {
     });
     const thread = hub.conversations.createThread(P, "Tirs");
     await page.goto(`${BASE}/#/p/${P}/t/${thread.id}`);
-    await page.getByRole("link", { name: /Discussion/ }).getByText("1 question(s)").waitFor();
-    const choice = page.locator(".choice", { hasText: "Tirs des ennemis" });
+    // La question du directeur est une carte de la boîte « À vous » (ADR-113), annoncée sur l'onglet Discussion.
+    await page.locator(".project-tabs a", { hasText: "Discussion" }).locator(".tab-count").waitFor();
+    const card = page.locator('.inbox-rail .dcard[data-inbox="proposal"]', { hasText: "Tirs des ennemis" });
+    const choice = card.locator(".choice");
     await choice.getByText("★ conseillé").waitFor();
+    await page.waitForTimeout(350);
     await page.screenshot({ path: join(shots, "studio-8-choix.png") });
     await choice.getByRole("button", { name: /Orbes rouges à halo/ }).click();
-    await page.locator(".director-panel h2", { hasText: "Rien à trancher" }).waitFor();
+    await card.waitFor({ state: "detached" });
     const decided = hub.vision.list(P, { type: "decision", status: "validated" }).find((d) => d.title === "Tirs des ennemis")!;
     expect(decided.statement).toMatch(/orbes rouge-orangé/);
     expect(decided.validated_by?.kind).toBe("human");
@@ -281,8 +323,11 @@ describe("vue Studio", () => {
     await page.getByRole("link", { name: "Le jeu", exact: true }).click();
     await page.locator(".theme-title", { hasText: "Ennemis" }).waitFor();
     await page.screenshot({ path: join(shots, "studio-9-bible.png") });
-    // Pas d'onglet « Décisions » en autonomie.
+    // Plus d'onglet « Décisions » : toutes les décisions sont une page de « Le jeu ».
     expect(await page.locator(".project-tabs a", { hasText: "Décisions" }).count()).toBe(0);
+    await page.locator(".project-subtabs a", { hasText: "Toutes les décisions" }).click();
+    await page.waitForURL(/#\/p\/destiny\/decisions$/);
+    await expect(page.locator(".project-tabs a.active").textContent()).resolves.toBe("Le jeu");
     expect(pageErrors).toEqual([]);
   });
 });

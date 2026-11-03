@@ -4,6 +4,11 @@ import { App } from "./App.tsx";
 import "./styles.css";
 import "./studio/studio.css";
 import "./studio/refonte.css";
+import "./studio/team.css";
+import "./studio/forge/forge.css";
+import "./studio/plans.css";
+// La vue projet refondue (ADR-113) : en dernier, elle a le dernier mot.
+import "./studio/projet.css";
 import { registerServiceWorker } from "./studio/push.ts";
 import { initMotion, installAutoGliders, installSpotlight } from "./studio/motion.tsx";
 

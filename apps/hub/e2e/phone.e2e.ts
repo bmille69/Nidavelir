@@ -112,12 +112,16 @@ describe("téléphone", () => {
     // Pas de défilement horizontal de la page.
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "telephone-5-projet.png") });
-    // Un seul panneau à la fois : la discussion, ou le panneau de droite d'un geste.
-    await phone.locator(".pane-switch button").nth(1).click();
-    await phone.locator(".project.pane-side").waitFor();
+    // Un seul panneau à la fois (ADR-113) : « À vous », la conversation ou les fils, d'un geste.
+    await phone.locator(".pane-switch button", { hasText: "À vous" }).click();
+    await phone.locator(".project.pane-side .inbox-rail").waitFor();
     expect(await phone.locator(".conversation").isVisible()).toBe(false);
+    await phone.waitForTimeout(350);
     await phone.screenshot({ path: join(shots, "telephone-5b-panneau.png") });
-    await phone.locator(".pane-switch button").nth(0).click();
+    await phone.locator(".pane-switch button", { hasText: "Fils" }).click();
+    await phone.locator(".project.pane-threads .threads").waitFor();
+    expect(await phone.locator(".inbox-rail").isVisible()).toBe(false);
+    await phone.locator(".pane-switch button", { hasText: "Conversation" }).click();
     await phone.locator(".project.pane-chat .composer").waitFor();
     await phone.goto(`${BASE}/#/telephone`);
     await phone.locator(".step", { hasText: "Notifications sur cet appareil" }).waitFor();

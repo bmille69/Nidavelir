@@ -1,57 +1,59 @@
-import { useEffect, useRef, useState } from "react";
-import { api } from "../api.ts";
-import { AgentAvatar } from "../studio/AgentAvatar.tsx";
+import { useRef } from "react";
+import type { ProjectView as View } from "../App.tsx";
 import { ArtDirection } from "../studio/ArtDirection.tsx";
-import { AGENTS } from "../studio/agents.ts";
 import { AutonomyPicker } from "../studio/Autonomy.tsx";
 import { useStudio } from "../studio/context.tsx";
 import { Icon, type IconName } from "../studio/Icon.tsx";
 import { KeyImage, useKeyImages } from "../studio/KeyImage.tsx";
-import { MonitorBar, MonitorPill } from "../studio/Monitor.tsx";
 import { useGlider } from "../studio/motion.tsx";
+import { PlansView } from "../studio/Plans.tsx";
+import { TryButton } from "../studio/Preview.tsx";
+import { ActivityPill } from "../studio/projet/Activity.tsx";
+import { Recap } from "../studio/projet/Recap.tsx";
 import { DecisionsView } from "./DecisionsView.tsx";
 import { ProjectView } from "./ProjectView.tsx";
-import { TasksView } from "./TasksView.tsx";
+import { TaskDetailView } from "./TasksView.tsx";
 import { VisionView } from "./VisionView.tsx";
 
-type View = "discussion" | "decisions" | "vision" | "tasks" | "art";
+type Tab = "discussion" | "recap" | "vision" | "art";
 
-/** Trois onglets ; « Décisions » n'existe qu'en mode « Je valide tout » (ADR-23). */
-const TABS: { view: View; label: string; icon: IconName; supervisedOnly?: boolean }[] = [
-  { view: "discussion", label: "Discussion", icon: "chat" },
-  { view: "decisions", label: "Décisions", icon: "scale", supervisedOnly: true },
-  { view: "vision", label: "Le jeu", icon: "book" },
-  { view: "tasks", label: "Chantiers", icon: "hammer" },
-  { view: "art", label: "Direction artistique", icon: "palette" },
+/**
+ * Quatre onglets (ADR-113) : Discussion · Récap · Le jeu · Art & son. Les anciennes adresses restent valides et
+ * s'ouvrent sous l'onglet qui les contient : les chantiers et les plans de production sous Récap, toutes les décisions
+ * sous Le jeu, la direction artistique sous Art & son.
+ */
+const TABS: { tab: Tab; label: string; icon: IconName; href: (slug: string) => string }[] = [
+  { tab: "discussion", label: "Discussion", icon: "chat", href: (s) => `#/p/${s}` },
+  { tab: "recap", label: "Récap", icon: "chart", href: (s) => `#/p/${s}/recap` },
+  { tab: "vision", label: "Le jeu", icon: "book", href: (s) => `#/p/${s}/vision` },
+  { tab: "art", label: "Art & son", icon: "palette", href: (s) => `#/p/${s}/art` },
 ];
+const TAB_OF: Record<View, Tab> = { discussion: "discussion", recap: "recap", tasks: "recap", plans: "recap", vision: "vision", decisions: "vision", art: "art" };
+
+/** Les pages d'un onglet qui en a plusieurs : une petite barre de liens sous les onglets. */
+const SUBS: Partial<Record<Tab, { views: View[]; label: string; href: (slug: string) => string }[]>> = {
+  recap: [
+    { views: ["recap", "tasks"], label: "Chantiers", href: (s) => `#/p/${s}/recap` },
+    { views: ["plans"], label: "Plans de production", href: (s) => `#/p/${s}/plans` },
+  ],
+  vision: [
+    { views: ["vision"], label: "La bible du jeu", href: (s) => `#/p/${s}/vision` },
+    { views: ["decisions"], label: "Toutes les décisions", href: (s) => `#/p/${s}/decisions` },
+  ],
+};
 
 export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: string; view: View; threadId?: string; taskId?: string; fresh?: boolean }) {
-  // Les demandes d'autorisation doivent se voir depuis n'importe quel onglet.
-  const [pending, setPending] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    const tick = () => api.pendingEscalations(slug).then((e) => alive && setPending(e.length), () => {});
-    tick();
-    const t = setInterval(tick, 4000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [slug]);
-
   const snap = useStudio();
   const project = snap?.projects.find((p) => p.slug === slug);
-  const team = (snap?.agents ?? [])
-    .filter((a) => a.id !== "you")
-    .map((a) => {
-      const acts = a.activities.filter((x) => x.project === slug);
-      return { ...a, acts, state: acts.length ? a.state : ("idle" as const) };
-    })
-    .filter((a) => a.state !== "idle");
+  const tab = TAB_OF[view];
+  // Ce qui vous attend sur ce jeu : la boîte « À vous » de la Discussion (même compte que « À vous de jouer »).
+  const waiting = project?.waiting ?? 0;
+  const guardian = !!snap?.agents.find((a) => a.id === "guardian")?.activities.some((a) => a.project === slug && a.detail === "En attente de votre autorisation");
   const keyImages = useKeyImages(slug, view);
   // Le soulignement de l'onglet actif glisse d'un onglet à l'autre (ADR-94).
   const tabs = useRef<HTMLElement>(null);
-  useGlider(tabs, "a.active", [view, project?.autonomy]);
+  useGlider(tabs, "a.active", [tab, waiting > 0]);
+  const subs = SUBS[tab];
 
   return (
     <div className="shell">
@@ -70,56 +72,64 @@ export function ProjectShell({ slug, view, threadId, taskId, fresh }: { slug: st
           />
           <div className="project-name">
             <a href="#/" className="crumb">
-              Studio
+              Vos jeux
             </a>
             <h1>{project?.name ?? slug}</h1>
           </div>
         </div>
-        <div className="team-strip" aria-label="Agents au travail sur ce projet">
-          {team.length === 0 ? (
-            <span className="muted small">Équipe au repos</span>
-          ) : (
-            team.map((a) => (
-              <a key={a.id} href={a.acts[0]?.href ?? "#/"} className={`team-mini state-${a.state}`} title={`${AGENTS[a.id].name} : ${a.acts[0]?.text ?? ""}`}>
-                <AgentAvatar agent={a.id} state={a.state} size={38} />
-                <span>
-                  <b>{AGENTS[a.id].name}</b>
-                  <small>{a.acts[0]?.text}</small>
-                </span>
-              </a>
-            ))
-          )}
-        </div>
+        {/* Une seule pastille : l'équipe et la machine, dans un panneau qui s'ouvre au clic (ADR-113). */}
+        <ActivityPill slug={slug} />
+        <span className="head-space" />
         {/* À droite de l'en-tête (ADR-94) : les réglages du projet, toujours au même endroit. */}
         <div className="project-actions">
-          <MonitorPill slug={slug} />
+          <button className="cmdk-hint" onClick={() => window.dispatchEvent(new Event("studio:palette"))} title="Chercher un chantier, un fil, un visuel, ou aller à…">
+            <Icon name="search" size={14} />
+            <span className="cmdk-label">Chercher, aller à…</span>
+            <kbd>Ctrl</kbd>
+            <kbd>K</kbd>
+          </button>
           {project && <AutonomyPicker slug={slug} level={project.autonomy} />}
+          <span className="head-launch">
+            <TryButton slug={slug} label="▶ Lancer le jeu" />
+          </span>
           <a className="concevoir-btn" href={`#/p/${slug}/concevoir${view === "discussion" && threadId ? `/${threadId}` : ""}`} title="Une grosse fonctionnalité ? Le Concepteur pose les bonnes questions et prépare les chantiers.">
-            <Icon name="sparkle" size={15} /> Concevoir
+            <Icon name="sparkle" size={15} /> <span className="concevoir-label">Concevoir</span>
           </a>
         </div>
       </header>
-      <div className="project-monitor">
-        <MonitorBar slug={slug} />
-      </div>
       <nav className="project-tabs" ref={tabs}>
         <span className="glider" aria-hidden="true" />
-        {TABS.filter((t) => !t.supervisedOnly || project?.autonomy === "supervised" || view === t.view).map((t) => (
-          <a key={t.view} className={t.view === view ? "active" : ""} href={t.view === "discussion" ? `#/p/${slug}` : `#/p/${slug}/${t.view}`}>
+        {TABS.map((t) => (
+          <a key={t.tab} className={t.tab === tab ? "active" : ""} href={t.href(slug)} aria-current={t.tab === tab ? "page" : undefined}>
             <Icon name={t.icon} size={17} />
-            {t.label}
-            {t.view === "discussion" && project && project.autonomy !== "supervised" && project.proposals > 0 && (
-              <span className="badge warn">{project.proposals} question(s)</span>
+            <span className="tab-label">{t.label}</span>
+            {t.tab === "discussion" && waiting > 0 && (
+              <span className={`tab-count${guardian ? " pulse" : ""}`} title={`${waiting} décision(s) vous attendent dans « À vous »`}>
+                {waiting}
+              </span>
             )}
-            {t.view === "tasks" && pending > 0 && <span className="badge warn pulse"> {pending} demande(s)</span>}
           </a>
         ))}
       </nav>
+      {subs && (
+        <nav className="project-subtabs" aria-label="Pages de l'onglet">
+          {subs.map((s) => (
+            <a key={s.label} className={s.views.includes(view) ? "on" : ""} href={s.href(slug)}>
+              {s.label}
+            </a>
+          ))}
+        </nav>
+      )}
       {view === "discussion" && <ProjectView slug={slug} threadId={threadId} fresh={fresh} />}
       {view === "decisions" && <DecisionsView slug={slug} />}
       {view === "vision" && <VisionView slug={slug} />}
-      {view === "tasks" && <TasksView slug={slug} taskId={taskId} />}
+      {/* Le Récap des chantiers (ADR-113). L'ancienne liste (#/p/<jeu>/tasks) y mène, filtrée sur « En cours » ;
+          la page détail d'un chantier garde son adresse. */}
+      {view === "recap" && <Recap key="recap" slug={slug} />}
+      {view === "tasks" && !taskId && <Recap key="tasks" slug={slug} initialFilter="running" />}
+      {view === "tasks" && taskId && <TaskDetailView slug={slug} taskId={taskId} />}
       {view === "art" && <ArtDirection slug={slug} />}
+      {view === "plans" && <PlansView slug={slug} />}
     </div>
   );
 }

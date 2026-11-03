@@ -5,6 +5,20 @@ import { api, type Conception, type ConceptionMessage, type ConceptQuestion } fr
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { useStudio, useStudioRefresh } from "./context.tsx";
 import { money } from "./Workshop.tsx";
+import { splitTeam, TeamCards } from "./TeamCards.tsx";
+
+/** Message du Concepteur : son texte, puis les encarts de l'équipe (consultations, souvenirs proposés, ADR-98). */
+function ConceptText({ text: raw }: { text: string }) {
+  const { text, consults, memories } = splitTeam(raw);
+  return (
+    <>
+      <div className="text">
+        <Linkify text={text} />
+      </div>
+      <TeamCards consults={consults} memories={memories} />
+    </>
+  );
+}
 
 const EXAMPLES = [
   "Un roguelike court avec des chats, un peu comme Hades, jouable dans le navigateur",
@@ -152,9 +166,7 @@ export function ConceptionView({ id }: { id: string }) {
           {messages.map((m) => (
             <div key={m.id} className={`msg ${m.role === "human" ? "human" : "director"}`}>
               <div className="who">{m.role === "human" ? "Vous" : "Concepteur"}</div>
-              <div className="text">
-                <Linkify text={m.text} />
-              </div>
+              <ConceptText text={m.text} />
             </div>
           ))}
           {thinking && (
@@ -274,7 +286,7 @@ export function ConceptionView({ id }: { id: string }) {
 }
 
 /** Les questions du tour, en boutons ; « Choisis pour moi » prend la recommandation. */
-function Answers({ questions, onSend }: { questions: ConceptQuestion[]; onSend: (text: string) => Promise<void> }) {
+export function Answers({ questions, onSend }: { questions: ConceptQuestion[]; onSend: (text: string) => Promise<void> }) {
   const [picked, setPicked] = useState<Record<number, string>>({});
   const [free, setFree] = useState("");
   const [sending, setSending] = useState(false);

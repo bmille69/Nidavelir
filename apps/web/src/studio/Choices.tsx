@@ -1,22 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Item, type Job, type ProposalCard } from "../api.ts";
+import { api, type Item, type ProposalCard } from "../api.ts";
 import { ago } from "./agents.ts";
-import { useNow, useStudioRefresh } from "./context.tsx";
+import { useNow } from "./context.tsx";
 
 /**
- * Panneau de droite de la discussion en autonomie (ADR-23) : ce sur quoi le directeur a
- * besoin de vous, en boutons, puis ce qui vient d'entrer dans la bible du jeu.
+ * « Ajouté récemment à la bible » (ADR-23) : ce que le directeur ou vous venez de décider, sous la boîte « À vous » de
+ * la discussion en autonomie (ADR-113). Ses questions, elles, sont des cartes de la boîte (ChoiceCard).
  */
-export function DirectorPanel({ slug, job }: { slug: string; job?: Job }) {
-  const [cards, setCards] = useState<ProposalCard[]>([]);
+export function RecentBible({ slug }: { slug: string }) {
   const [recent, setRecent] = useState<Item[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const refreshStudio = useStudioRefresh();
   const now = useNow(30_000);
 
   const load = useCallback(async () => {
-    const [c, canon] = await Promise.all([api.proposals(slug), api.items(slug, "canon")]);
-    setCards(c.filter((x) => x.proposal.nature !== "technical"));
+    const canon = await api.items(slug, "canon");
     setRecent(
       canon.items
         .filter((i) => i.type === "decision" && i.nature !== "technical")
@@ -25,50 +21,29 @@ export function DirectorPanel({ slug, job }: { slug: string; job?: Job }) {
     );
   }, [slug]);
   useEffect(() => {
-    load().catch((e: Error) => setError(e.message));
+    load().catch(() => {});
     const t = setInterval(() => load().catch(() => {}), 4000);
     return () => clearInterval(t);
   }, [load]);
 
-  const done = async () => {
-    await load();
-    refreshStudio();
-  };
-
+  if (!recent.length) return null;
   return (
-    <aside className="panel director-panel">
-      {job && (
-        <div className="notice small">
-          Lecture de vos documents : {job.documents.filter((d) => d.status !== "pending" && d.status !== "running").length}/{job.documents.length}
-        </div>
-      )}
-      <h2>{cards.length ? "Le directeur a besoin de vous" : "Rien à trancher"}</h2>
-      {cards.length === 0 && <p className="muted small">Le directeur avance seul. Il vous demandera ici s'il y a un conflit ou un vrai choix à faire.</p>}
-      {error && <p className="error small">{error}</p>}
-      <div className="choices">
-        {cards.map((c) => (
-          <ChoiceCard key={c.proposal.id} slug={slug} card={c} onDone={done} onError={setError} />
+    <section className="recent-bible">
+      <h3>Ajouté récemment à la bible</h3>
+      <ul>
+        {recent.map((d) => (
+          <li key={d.id}>
+            <a href={`#/p/${slug}/vision`}>{d.title}</a>
+            <span className="muted small">
+              {d.validated_by?.kind === "delegated" ? "par le directeur" : "par vous"} · {d.validated_by ? ago(d.validated_by.at, now) : ""}
+            </span>
+          </li>
         ))}
-      </div>
-      {recent.length > 0 && (
-        <section className="recent-bible">
-          <h3>Ajouté récemment à la bible</h3>
-          <ul>
-            {recent.map((d) => (
-              <li key={d.id}>
-                <a href={`#/p/${slug}/vision`}>{d.title}</a>
-                <span className="muted small">
-                  {d.validated_by?.kind === "delegated" ? "par le directeur" : "par vous"} · {d.validated_by ? ago(d.validated_by.at, now) : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <a className="small" href={`#/p/${slug}/vision`}>
-            Ouvrir « Le jeu » →
-          </a>
-        </section>
-      )}
-    </aside>
+      </ul>
+      <a className="small" href={`#/p/${slug}/vision`}>
+        Ouvrir « Le jeu » →
+      </a>
+    </section>
   );
 }
 

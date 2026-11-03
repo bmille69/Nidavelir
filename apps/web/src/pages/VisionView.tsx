@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, type Item, type Lineage, type TaskRow } from "../api.ts";
+import { Icon } from "../studio/Icon.tsx";
+import { KeyImage, useKeyImages } from "../studio/KeyImage.tsx";
 import { formatDate, STATUS_LABEL, TYPE_LABEL } from "./labels.ts";
 import { ImplementButton } from "./TasksView.tsx";
+import { DelegatedDigest } from "../studio/Autonomy.tsx";
+import { useStudio } from "../studio/context.tsx";
 
 export function VisionView({ slug }: { slug: string }) {
   const [canon, setCanon] = useState<Item[]>([]);
@@ -11,7 +15,12 @@ export function VisionView({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [built, setBuilt] = useState<TaskRow[]>([]);
-  const [state, setState] = useState<{ text: string | null; updated_at: string | null } | null>(null);
+  const [state, setState] = useState<{ text: string | null; updated_at: string | null; task?: string | null } | null>(null);
+  const [done, setDone] = useState<{ id: string; title: string; summary: string | null; at: string }[]>([]);
+  const [jargon, setJargon] = useState(false);
+  const project = useStudio()?.projects.find((p) => p.slug === slug);
+  const auto = (project?.autonomy ?? "supervised") !== "supervised";
+  const keyImages = useKeyImages(slug, "vision");
 
   const refresh = useCallback(async () => {
     const [c, all] = await Promise.all([api.items(slug, "canon"), api.items(slug, "all")]);
@@ -21,6 +30,16 @@ export function VisionView({ slug }: { slug: string }) {
     // Un hub plus ancien ne connaît pas encore le carnet : on ne l'affiche pas, sans erreur.
     setState(await api.gameState(slug).catch(() => null));
     setPast(all.items.filter((i) => i.type === "decision" && (i.status === "superseded" || i.status === "abandoned")));
+    // Les comptes rendus en clair des chantiers fusionnés, par le Récap (ADR-113) ; un hub plus ancien : les titres suffisent.
+    const recap = await api.recap(slug).catch(() => null);
+    if (recap)
+      setDone(
+        recap.weeks
+          .flatMap((w) => w.tasks)
+          .filter((c) => c.status === "merged")
+          .sort((x, y) => (y.merged_at ?? y.at).localeCompare(x.merged_at ?? x.at))
+          .map((c) => ({ id: c.id, title: c.title, summary: c.summary, at: c.merged_at ?? c.at })),
+      );
   }, [slug]);
 
   useEffect(() => {
@@ -52,45 +71,141 @@ export function VisionView({ slug }: { slug: string }) {
   const q = query.trim().toLowerCase();
   const shown = q ? decisions.filter((d) => `${d.title} ${d.statement} ${d.decision?.summary ?? ""}`.toLowerCase().includes(q)) : decisions;
   const themes = groupByTheme(shown);
+  // Le pitch : la vision notée dans la bible, sinon le premier point de « L'essentiel ».
+  const vision = canon.find((i) => i.type === "vision");
+  const essential = groupByTheme(decisions).find(([t]) => t === "L'essentiel")?.[1][0];
+  const pitch = vision?.statement ?? essential?.decision?.summary ?? essential?.statement ?? null;
+  const sections = state?.text ? parseGameState(state.text) : [];
+  // Réalisé récemment (ADR-113) : ce que le Développeur a dit en clair à la fin de chaque chantier fusionné, pas sa consigne.
+  const recent = done.length ? done.slice(0, 8) : built.slice(0, 8).map((t) => ({ id: t.id, title: t.title, summary: null, at: t.updated_at }));
 
   return (
     <main className="vision-layout">
-      <section className="page wide bible">
-        <div className="page-head">
+      <section className="page wide bible jeu-page">
+        <h1 className="sr-only">Le jeu</h1>
+        <header className="jeu-hero">
+          <KeyImage urls={keyImages} className="jeu-hero-shot" fallback={<span className="jeu-hero-shot ph" />} />
+          <div className="jeu-hero-b">
+            <span className="eyebrow">La bible, en clair</span>
+            <h2>{project?.name ?? slug}</h2>
+            <p>{pitch ?? "Ce qui existe dans le jeu, ce qui est décidé et ce qui a été réalisé, tenu à jour par le directeur après chaque chantier."}</p>
+            <div className="facts-chips">
+              {decisions.length > 0 && (
+                <span className="fact">
+                  <b>{decisions.length}</b> point{decisions.length > 1 ? "s" : ""} dans la bible
+                </span>
+              )}
+              <span className="fact">
+                <b>{built.length}</b> chantier{built.length > 1 ? "s" : ""} fusionné{built.length > 1 ? "s" : ""}
+              </span>
+              {technical.length > 0 && (
+                <span className="fact">
+                  <b>{technical.length}</b> règle{technical.length > 1 ? "s" : ""} du code
+                </span>
+              )}
+            </div>
+          </div>
+        </header>
+        {error && <p className="error">{error}</p>}
+        {/* Hors « Je valide tout », c'est ici, en tête, qu'on revient sur ce que le directeur a tranché seul (ADR-113). */}
+        {auto && <DelegatedDigest slug={slug} onChange={() => refresh().catch((e: Error) => setError(e.message))} />}
+
+        {(sections.length > 0 || recent.length > 0) && (
+          <div className={`jeu-two${sections.length && recent.length ? "" : " solo"}`}>
+            <div className="jeu-state">
+              {sections.length > 0 && (
+                <>
+                  <div className="sec-h">
+                    <h3>État du jeu</h3>
+                    {state?.updated_at && (
+                      <small>
+                        mis à jour le {formatDate(state.updated_at)}
+                        {state.task ? ` après ${state.task}` : ""}
+                      </small>
+                    )}
+                    <span className="sp" />
+                    <button className={`recap-chip${jargon ? " on" : ""}`} aria-pressed={jargon} onClick={() => setJargon(!jargon)} title="Noms de fichiers, réglages et coordonnées">
+                      Termes techniques : {jargon ? "visibles" : "atténués"}
+                    </button>
+                  </div>
+                  <p className="muted small jeu-state-why">Ce que le directeur et le développeur savent du jeu avant chaque discussion et chaque chantier. Réécrit tout seul après chaque chantier fusionné.</p>
+                  <div className={`game-state${jargon ? " jargon-on" : ""}`}>
+                    {sections.map((s, si) => (
+                      <div key={s.head} className="gs-block">
+                        <h4>
+                          {PLAIN_HEAD[s.head] ?? s.head}
+                          <span className="rc-pill grey nodot">{s.items.length}</span>
+                        </h4>
+                        <div className="gs-list">
+                          {s.items.map((it, i) =>
+                            it.title ? (
+                              <details key={i} className="gs" open={si === 0 && i === 0}>
+                                <summary>
+                                  <b>{rich(it.title)}</b>
+                                  <span>{plain(it.body || it.sub[0] || "")}</span>
+                                </summary>
+                                <div className="gs-body">
+                                  {it.body && <p>{rich(it.body)}</p>}
+                                  {it.sub.length > 0 && (
+                                    <ul>
+                                      {it.sub.map((x, k) => (
+                                        <li key={k}>{rich(x)}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              </details>
+                            ) : (
+                              <p key={i} className="gs-line">
+                                {rich(it.body)}
+                              </p>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            {recent.length > 0 && (
+              <aside className="jeu-recent">
+                <div className="sec-h">
+                  <h3>Réalisé récemment</h3>
+                  <span className="sp" />
+                  <a className="rail-link accent" href={`#/p/${slug}/recap`}>
+                    Récap <Icon name="arrow" size={13} />
+                  </a>
+                </div>
+                <ol className="tl">
+                  {recent.map((t) => (
+                    <li key={t.id}>
+                      <a href={`#/p/${slug}/tasks/${t.id}`}>
+                        <small>
+                          {formatDate(t.at)} · {t.id}
+                        </small>
+                        <b>{t.title}</b>
+                        {t.summary && <p>{t.summary}</p>}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </aside>
+            )}
+          </div>
+        )}
+
+        <div className="page-head jeu-bible-h">
           <div>
-            <h1>Le jeu</h1>
+            <h2>Ce qui est décidé</h2>
             <p className="muted small">
-              La bible du jeu : tout ce qui est décidé, par vous ou par le directeur. C'est la seule référence que l'équipe suit. Pour changer un
-              point, dites-le simplement au directeur.
+              Tout ce qui est décidé, par vous ou par le directeur : c'est la seule référence que l'équipe suit. Pour changer un point, dites-le simplement au
+              directeur.{" "}
+              <a href={`#/p/${slug}/decisions`}>Toutes les décisions →</a>
             </p>
           </div>
           {decisions.length > 6 && <input className="bible-search" placeholder="Chercher dans la bible…" value={query} onChange={(e) => setQuery(e.target.value)} />}
         </div>
-        {error && <p className="error">{error}</p>}
-        {state?.text && (
-          <section className="theme">
-            <h2 className="theme-title">État du jeu</h2>
-            <p className="muted small">
-              Ce que le directeur et le développeur savent du jeu avant chaque discussion et chaque chantier. Réécrit tout seul après chaque chantier fusionné
-              {state.updated_at ? ` (dernière mise à jour le ${formatDate(state.updated_at)})` : ""}.
-            </p>
-            <article className="entry game-state">{renderNotes(state.text)}</article>
-          </section>
-        )}
-        {built.length > 0 && (
-          <section className="theme">
-            <h2 className="theme-title">Réalisé dans le jeu</h2>
-            {built.slice(0, 10).map((t) => (
-              <article key={t.id} className="entry">
-                <h3>
-                  <a href={`#/p/${slug}/tasks/${t.id}`}>{t.title}</a>
-                </h3>
-                <p className="entry-text small">{t.goal.split("\n")[0]}</p>
-                <span className="muted small">fusionné le {formatDate(t.updated_at)}</span>
-              </article>
-            ))}
-          </section>
-        )}
         {allDecisions.length === 0 && built.length === 0 && <p className="muted">Rien pour l'instant : parlez de votre jeu au directeur, puis dites « go ».</p>}
         {themes.length > 1 && (
           <nav className="toc">
@@ -291,13 +406,53 @@ function groupByTheme(list: Item[]): [string, Item[]][] {
 
 const slugTheme = (t: string) => t.normalize("NFD").replace(/[^a-zA-Z]+/g, "-").toLowerCase();
 
-/** Le carnet est du Markdown simple : titres « ## » et listes « - », rendus sans bibliothèque. */
-function renderNotes(text: string) {
-  return text.split("\n").map((line, k) => {
-    const t = line.trim();
-    if (!t) return null;
-    if (/^#{1,4} /.test(t)) return <h3 key={k}>{t.replace(/^#+ /, "")}</h3>;
-    if (/^[-*] /.test(t)) return <p key={k} className="entry-text small game-state-item">• {t.slice(2).replace(/\*\*/g, "")}</p>;
-    return <p key={k} className="entry-text small">{t.replace(/\*\*/g, "")}</p>;
+/** Les rubriques du carnet « État du jeu », en clair (ADR-113). */
+const PLAIN_HEAD: Record<string, string> = {
+  "Ce qui existe": "Ce qui existe dans le jeu",
+  "Choix déjà faits": "Règles déjà actées",
+  "Limites connues et reste à faire": "Ce qui reste à faire ou à vérifier",
+};
+
+type GsItem = { title: string | null; body: string; sub: string[] };
+
+/**
+ * Le carnet est du Markdown simple (titres « ## », lignes « **Sujet** : … », listes « - ») : découpé en rubriques et en
+ * sujets repliables, sans bibliothèque. Un sujet sans texte sur sa ligne regroupe les lignes « - » qui le suivent.
+ */
+export function parseGameState(text: string): { head: string; items: GsItem[] }[] {
+  return text
+    .split(/^#{1,4} /m)
+    .filter((sec) => sec.trim())
+    .map((sec) => {
+      const [first, ...lines] = sec.split("\n");
+      // Un carnet sans titre de rubrique : tout va dans « État du jeu ».
+      const titled = /^#{1,4} /m.test(text);
+      const head = titled ? first!.trim() : "État du jeu";
+      const items: (GsItem & { group: boolean })[] = [];
+      for (const raw of titled ? lines : [first!, ...lines]) {
+        const l = raw.trim();
+        if (!l) continue;
+        const sub = /^[-*] /.test(l);
+        const body = sub ? l.slice(2) : l;
+        const m = /^\*\*(.+?)\*\*\s*:?\s*(.*)$/.exec(body);
+        const last = items.at(-1);
+        if (sub && last?.group) last.sub.push(body);
+        else if (m) items.push({ title: m[1]!.replace(/\s*\(`[^`]+`\)/, ""), body: m[2]!, sub: [], group: !m[2] });
+        else items.push({ title: null, body, sub: [], group: false });
+      }
+      return { head, items };
+    });
+}
+
+/** Le jargon (noms de fichiers, réglages, coordonnées) en petit et atténué ; le gras du carnet en gras. */
+function rich(text: string): ReactNode[] {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|\(\d+\s?,\s?\d+\))/).map((part, k) => {
+    if (/^`[^`]+`$/.test(part)) return <code key={k} className="j">{part.slice(1, -1)}</code>;
+    if (/^\*\*[^*]+\*\*$/.test(part)) return <b key={k}>{part.slice(2, -2)}</b>;
+    if (/^\(\d+\s?,\s?\d+\)$/.test(part)) return <code key={k} className="j">{part}</code>;
+    return part;
   });
 }
+
+/** L'aperçu d'un sujet replié : sans le jargon. */
+const plain = (text: string) => text.replace(/`[^`]+`/g, "…").replace(/\*\*/g, "").replace(/\(\d+\s?,\s?\d+\)/g, "");

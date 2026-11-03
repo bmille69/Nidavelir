@@ -39,9 +39,14 @@ export function useSeen(slug: string, threads: Thread[], loaded: boolean) {
   return { markSeen, unread };
 }
 
+const day = (iso: string) => new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+const ORIGIN_LABEL: Record<string, string> = { conception: "Concepteur", art: "Directeur artistique", sound: "Directeur sonore", feel: "Game feel", balance: "Équilibrage" };
+
 /**
  * Discussions du projet, la plus récemment active en haut, avec une pastille quand le studio
  * y a écrit depuis votre dernier passage. Les discussions vides n'apparaissent pas.
+ * Rangées en deux groupes (ADR-113) : « Vos discussions », puis « Automatiques » (les fils que le hub ouvre seul pour
+ * intégrer un visuel, le retoucher, brancher des sons…), repliés sauf si vous y êtes. Une recherche filtre les deux.
  */
 export function ThreadList(props: {
   slug: string;
@@ -75,71 +80,111 @@ export function ThreadList(props: {
     }
   }
 
-  const shown = threads.filter((t) => (t.messages ?? 0) > 0 || t.id === current);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = threads.filter((t) => ((t.messages ?? 0) > 0 || t.id === current) && (!q || t.title.toLowerCase().includes(q)));
+  const human = shown.filter((t) => !t.automatic);
+  const auto = shown.filter((t) => t.automatic);
+  const inAuto = auto.some((t) => t.id === current);
+  // Replié par défaut ; ouvert quand vous êtes sur un fil automatique ou que la recherche y trouve quelque chose.
+  const [autoOpen, setAutoOpen] = useState(false);
+  useEffect(() => {
+    if (inAuto) setAutoOpen(true);
+  }, [inAuto]);
+  const openAuto = autoOpen || (!!q && auto.length > 0);
+  // Un fil automatique où le studio a écrit depuis votre passage : le groupe replié le dit.
+  const autoNews = auto.reduce((n, t) => n + props.unread(t), 0);
+
+  const item = (t: Thread) => {
+    const n = props.unread(t);
+    const active = t.id === current;
+    const at = t.last_at ?? t.created_at;
+    const recent = now - Date.parse(at) < 86_400_000;
+    const who = t.origin && ORIGIN_LABEL[t.origin];
+    return (
+      <li key={t.id} className={n ? "has-news" : ""}>
+        {editing === t.id ? (
+          <input
+            ref={input}
+            className="thread-rename"
+            value={draft}
+            maxLength={120}
+            aria-label="Nouveau titre de la discussion"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void save(t.id);
+              if (e.key === "Escape") setEditing(null);
+            }}
+            onBlur={() => void save(t.id)}
+          />
+        ) : (
+          <a
+            className={active ? "active" : ""}
+            href={`#/p/${slug}/t/${t.id}`}
+            title={t.title}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              setDraft(t.title);
+              setEditing(t.id);
+            }}
+          >
+            <span className="thread-title">{t.title}</span>
+            <span className="thread-meta">
+              {t.last_at ? (recent ? ago(at, now) : day(at)) : ""}
+              {who && !t.automatic ? ` · ${who}` : ""}
+            </span>
+            {n > 0 && (
+              <span className="count warn" title={`${n} nouveau(x) message(s)`}>
+                {n}
+              </span>
+            )}
+          </a>
+        )}
+        {active && editing !== t.id && (
+          <button
+            className="icon-btn thread-edit"
+            aria-label="Renommer cette discussion"
+            title="Renommer"
+            onClick={() => {
+              setDraft(t.title);
+              setEditing(t.id);
+            }}
+          >
+            ✎
+          </button>
+        )}
+      </li>
+    );
+  };
+
   return (
     <aside className="threads">
-      <h2>Discussions</h2>
+      <label className="t-search">
+        <Icon name="search" size={14} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Chercher un fil…" aria-label="Chercher un fil" />
+      </label>
       <button className={`new-thread ${props.fresh ? "on" : ""}`} onClick={props.onNew} title="Une page blanche : la discussion n'est créée qu'à votre premier message">
         <Icon name="plus" size={16} /> <span className="new-thread-label">Nouvelle discussion</span>
       </button>
       {error && <p className="error small">{error}</p>}
-      <ul>
-        {shown.map((t) => {
-          const n = props.unread(t);
-          const active = t.id === current;
-          return (
-            <li key={t.id} className={n ? "has-news" : ""}>
-              {editing === t.id ? (
-                <input
-                  ref={input}
-                  className="thread-rename"
-                  value={draft}
-                  maxLength={120}
-                  aria-label="Nouveau titre de la discussion"
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void save(t.id);
-                    if (e.key === "Escape") setEditing(null);
-                  }}
-                  onBlur={() => void save(t.id)}
-                />
-              ) : (
-                <a
-                  className={active ? "active" : ""}
-                  href={`#/p/${slug}/t/${t.id}`}
-                  title={t.title}
-                  onDoubleClick={(e) => {
-                    e.preventDefault();
-                    setDraft(t.title);
-                    setEditing(t.id);
-                  }}
-                >
-                  <span className="thread-title">{t.title}</span>
-                  <span className="thread-meta">{t.last_at ? ago(t.last_at, now) : ""}</span>
-                  {n > 0 && (
-                    <span className="count warn" title={`${n} nouveau(x) message(s)`}>
-                      {n}
-                    </span>
-                  )}
-                </a>
-              )}
-              {active && editing !== t.id && (
-                <button
-                  className="icon-btn thread-edit"
-                  aria-label="Renommer cette discussion"
-                  title="Renommer"
-                  onClick={() => {
-                    setDraft(t.title);
-                    setEditing(t.id);
-                  }}
-                >
-                  ✎
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <div className="t-group">
+        Vos discussions<span className="n">{human.length}</span>
+      </div>
+      <ul className="t-list">{human.map(item)}</ul>
+      {q && !shown.length && <p className="t-none">Aucun fil ne contient « {query.trim()} ».</p>}
+      {auto.length > 0 && (
+        <>
+          <button className={`t-group t-toggle${openAuto ? "" : " closed"}`} aria-expanded={openAuto} onClick={() => setAutoOpen(!openAuto)} title="Les fils que le hub ouvre seul : intégrer un visuel, le retoucher, brancher des sons…">
+            <Icon name="down" size={13} className="chev" />
+            Automatiques
+            {!openAuto && autoNews > 0 && <span className="count warn">{autoNews}</span>}
+            <span className="n">{auto.length}</span>
+          </button>
+          <div className={`t-coll${openAuto ? "" : " closed"}`}>
+            <ul className="t-list auto">{openAuto ? auto.map(item) : null}</ul>
+          </div>
+        </>
+      )}
     </aside>
   );
 }

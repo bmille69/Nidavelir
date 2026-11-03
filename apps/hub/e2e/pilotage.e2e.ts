@@ -246,27 +246,43 @@ describe("poste de pilotage", () => {
     expect(await page.locator(".sound-card").count()).toBe(3);
     expect(await page.locator(".sound-key input[type=password]").count()).toBe(1);
     await page.screenshot({ path: join(shots, "pilot-15-son.png"), fullPage: true });
+    // Les mêmes sons dans Art & son (ADR-113), sous la galerie ; l'ancienne adresse « /son » y mène.
+    await page.goto(`${BASE}/#/p/${P}/son`);
+    await page.locator(".project-tabs a.active", { hasText: "Art & son" }).waitFor();
+    await page.locator(".art-sound .sound-card").first().waitFor();
+    expect(await page.locator(".art-sound .sound-card").count()).toBe(3);
+    await page.locator(".art-sound .sound-card.a_choisir", { hasText: "Tir de tourelle" }).waitFor();
+    await page.locator(".art-sound .sound-card", { hasText: "Tir de tourelle" }).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "art-son.png") });
+    await page.goto(`${BASE}/#/pilotage`);
 
     // L'accueil et le projet avec le nouveau style.
     await page.goto(`${BASE}/#/`);
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(shots, "pilot-4-accueil.png") });
     await page.goto(`${BASE}/#/p/${P}`);
-    await page.locator(".project-monitor .monitor").waitFor();
+    // Le moniteur (ADR-64) est dans le panneau de la pastille d'activité de l'en-tête (ADR-113).
+    await page.locator(".activity-pill").click();
+    await page.locator(".activity-pop .monitor .mon-tile").first().waitFor();
+    await page.waitForTimeout(350);
     await page.screenshot({ path: join(shots, "pilot-5-projet.png") });
+    await page.keyboard.press("Escape");
 
-    // Téléphone : la discussion garde l'écran, le moniteur tient dans une pastille qui ouvre une feuille.
+    // Téléphone : la discussion garde l'écran, le moniteur tient dans la pastille d'activité, qui ouvre un panneau.
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR", isMobile: true, hasTouch: true });
     phone.on("pageerror", (e) => errors.push(e.message));
     await phone.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
     await phone.goto(`${BASE}/#/p/${P}`);
-    const pill = phone.locator(".monitor-pill");
+    const pill = phone.locator(".activity-pill");
     await pill.waitFor();
-    expect(await phone.locator(".project-monitor").isVisible()).toBe(false);
+    expect(await phone.locator(".activity-pop").count()).toBe(0);
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "pilot-6-telephone-discussion.png") });
     await pill.tap();
-    await phone.locator(".sheet .monitor").waitFor();
+    await phone.locator(".activity-pop .monitor").waitFor();
+    expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.waitForTimeout(350);
     await phone.screenshot({ path: join(shots, "pilot-7-telephone-moniteur.png") });
     await phone.goto(`${BASE}/#/pilotage`);
     await phone.locator(".pilot-card.big").first().waitFor();

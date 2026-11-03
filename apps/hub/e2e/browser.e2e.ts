@@ -32,7 +32,7 @@ beforeAll(async () => {
   sb = sandbox(fake);
   root = sb.makeGameRepo("games/destiny", { "README.md": "# Destiny Survivor\n", "package.json": "{}" });
   await sb.hub.projects.register(sb.human(), { path: root, slug: "destiny", name: "Destiny Survivor" });
-  // Ce parcours vérifie le mode « Je valide tout » (onglet Décisions, validation à la main).
+  // Ce parcours vérifie le mode « Je valide tout » (page « Toutes les décisions », validation à la main).
   sb.hub.projects.setAutonomy(sb.human(), "destiny", "supervised");
   const notes = [
     ["Le boss surgit à l'approche de son arène", "boss"],
@@ -79,14 +79,15 @@ describe("parcours navigateur", () => {
   it("connexion et liste des projets", async () => {
     await page.goto(`${BASE}/login?token=${sb.hub.sessions.createLoginToken()}`);
     await expect.poll(() => page.getByRole("heading", { name: "Vos projets" }).isVisible()).toBe(true);
-    await page.locator("main").getByRole("link", { name: /Destiny Survivor/ }).waitFor();
+    // Nom exact : la vignette de la Forge (ADR-106) est aussi un lien qui parle du jeu.
+    await page.locator("main").getByRole("link", { name: "Destiny Survivor", exact: true }).waitFor();
     await shot("1-projets");
   });
 
   it("discussion : le directeur répond et note ce qui compte", async () => {
     fake.replies.push("Si je comprends bien, tu veux un moment de calme avant chaque boss. Il dure combien de temps, à ton avis ?");
     fake.extractions.push([extracted({ title: "Respiration avant les boss", quote: "un moment de calme avant chaque boss" })]);
-    await page.locator("main").getByRole("link", { name: /Destiny Survivor/ }).click();
+    await page.locator("main").getByRole("link", { name: "Destiny Survivor", exact: true }).click();
     await page.getByPlaceholder(/Écrivez librement/).fill("J'aimerais un moment de calme avant chaque boss");
     await page.getByRole("button", { name: "Envoyer" }).click();
     await page.getByText("Il dure combien de temps", { exact: false }).waitFor({ timeout: 8_000 });
@@ -129,7 +130,9 @@ describe("parcours navigateur", () => {
       ],
       left_out: [],
     }) as never);
-    await page.getByRole("link", { name: "Décisions", exact: true }).click();
+    // Plus d'onglet « Décisions » (ADR-113) : la page vit sous « Le jeu », lien « Toutes les décisions ».
+    await page.getByRole("link", { name: "Le jeu", exact: true }).click();
+    await page.getByRole("link", { name: "Toutes les décisions", exact: true }).click();
     await page.getByRole("button", { name: "Préparer des propositions" }).click();
     await page.getByRole("heading", { name: "Apparition des boss" }).waitFor({ timeout: 15_000 });
     await shot("3-propositions");

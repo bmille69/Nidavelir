@@ -35,7 +35,7 @@ export const AGENTS: Record<AgentId, { name: string; role: string; tagline: stri
     name: "Le Développeur",
     role: "Code · Claude Code",
     tagline: "Propose un plan, puis code dans une copie de votre jeu.",
-    idle: "En attente d'une tâche.",
+    idle: "En attente d'un chantier.",
   },
   qa: {
     name: "Le Testeur",
@@ -115,7 +115,7 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
     case "decision.abandoned":
       return { agent: "you", text: `Décision abandonnée : ${e.subject ?? ""}` };
     case "task.created":
-      return { agent: "you", text: `Nouvelle tâche ${e.subject ?? ""}` };
+      return { agent: "you", text: `Nouveau chantier ${e.subject ?? ""}` };
     case "plan.submitted":
       return { agent: "developer", text: `Le développeur propose un plan (${e.subject ?? ""})`, tone: "warn" };
     case "plan.approved":
@@ -152,7 +152,7 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
     case "task.changes_requested":
       return { agent: "you", text: `Corrections demandées (${e.subject ?? ""})` };
     case "task.abandoned":
-      return { agent: "you", text: `Tâche abandonnée (${e.subject ?? ""})` };
+      return { agent: "you", text: `Chantier abandonné (${e.subject ?? ""})` };
     case "task.cancelled":
       return { agent: "you", text: `Travail arrêté par vous (${e.subject ?? ""})` };
     case "model.changed": {
@@ -181,6 +181,19 @@ export function describeEvent(e: HubEvent): { agent: AgentId; text: string; tone
       return { agent: "art_director", text: `Visuel ${e.subject ?? ""} intégré dans le jeu`, tone: "ok" };
     case "approval.recorded":
       return null;
+    // Bibliothèque tenue seule (ADR-97).
+    case "skill.learned":
+      return { agent: "archivist", text: p.action === "update" ? `Compétence « ${e.subject ?? ""} » améliorée après ${String(p.task ?? "un chantier")}` : `Nouvelle compétence apprise : « ${e.subject ?? ""} »`, tone: "ok" };
+    case "skill.hermes_imported":
+      return { agent: "archivist", text: `Compétence « ${e.subject ?? ""} » reprise d'Hermes`, tone: "ok" };
+    case "skill.dormant":
+      return { agent: "archivist", text: `Compétence « ${e.subject ?? ""} » mise en sommeil (jamais ouverte)` };
+    case "skill.public_imported":
+      return { agent: "archivist", text: `Compétence « ${e.subject ?? ""} » trouvée dans un dépôt public : en essai` };
+    case "skill.trial_passed":
+      return p.status === "active" ? { agent: "qa", text: `Compétence « ${e.subject ?? ""} » essayée et adoptée`, tone: "ok" } : null;
+    case "skill.trial_failed":
+      return { agent: "qa", text: `Compétence « ${e.subject ?? ""} » écartée après son essai`, tone: "warn" };
     default:
       return null;
   }

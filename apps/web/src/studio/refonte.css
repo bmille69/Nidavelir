@@ -648,7 +648,25 @@ input:focus, textarea:focus, select:focus { border-color: rgba(0, 229, 255, 0.6)
   color: var(--text-2);
   box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.05);
 }
-.titlebar-status { display: flex; justify-content: flex-end; }
+.titlebar-status { display: flex; justify-content: flex-end; align-items: center; gap: 0.35rem; }
+.titlebar-restart {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 24px;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.74rem;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.titlebar-restart:hover { background: rgba(0, 229, 255, 0.08); color: var(--accent); }
+.titlebar-restart:hover .icon { transform: rotate(-60deg); }
+.titlebar-restart .icon { transition: transform 0.3s var(--ease); }
 .titlebar-live {
   display: inline-flex;
   align-items: center;
@@ -682,3 +700,28 @@ input:focus, textarea:focus, select:focus { border-color: rgba(0, 229, 255, 0.6)
 }
 .has-material .sidebar { background: linear-gradient(180deg, rgba(0, 229, 255, 0.035), transparent 220px), rgba(8, 9, 13, 0.55); }
 .has-material .centered { background: var(--bg); }
+
+/* ── Corrections vue projet, lot 8 ─────────────────────────────────────────── */
+/* Concevoir et « Lancer le jeu » de l'Atelier : de la glace (guidage), pas de braise. */
+.concevoir-btn { background: rgba(0, 229, 255, 0.06); border: 1px solid rgba(0, 229, 255, 0.28); color: var(--accent); }
+.concevoir-btn:hover { background: rgba(0, 229, 255, 0.12); border-color: rgba(0, 229, 255, 0.5); color: var(--text); box-shadow: none; }
+.workshop-panel .proposal-head .try-btn { background: rgba(0, 229, 255, 0.08); color: var(--accent); border: 1px solid rgba(0, 229, 255, 0.35); box-shadow: none; }
+.workshop-panel .proposal-head .try-btn:hover:not(:disabled) { background: rgba(0, 229, 255, 0.16); color: var(--text); box-shadow: none; }
+/* Les questions du directeur en tête du panneau Atelier : elles vous attendent (braise). */
+.director-asks { display: flex; flex-direction: column; gap: 0.75rem; }
+.workshop-panel .director-asks.has-asks { padding: 0.85rem; border-radius: var(--radius); border: 1px solid rgba(255, 90, 0, 0.3); background: rgba(255, 90, 0, 0.05); }
+.workshop-panel .director-asks.has-asks h2 { color: #ff9a66; }
+/* Liste des chantiers : id discret, titre sur deux lignes au plus, puis statut, date et coût. */
+.tasks-layout .threads li a.task-item { display: flex; flex-direction: column; align-items: stretch; gap: 0.2rem; white-space: normal; max-width: none; }
+.task-item-id { font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.task-item-title { color: var(--text); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.task-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+/* Les trois compteurs de l'onglet Chantiers. */
+.task-counters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.task-counter { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.75rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--hairline-strong); background: var(--surface); }
+.task-counter b { font-size: 1.5rem; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+.task-counter span { font-size: 0.8rem; color: var(--text-2); }
+.task-counter.tc-active b { color: var(--accent); }
+.task-counter.tc-yours.waiting { border-color: rgba(255, 90, 0, 0.35); }
+.task-counter.tc-yours.waiting b { color: var(--ember); }
+.task-counter.tc-merged b { color: var(--ok); }

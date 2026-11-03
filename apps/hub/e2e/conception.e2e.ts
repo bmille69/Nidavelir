@@ -125,7 +125,8 @@ describe("Concepteur", () => {
     expect(existsSync(join(sb.dir, "games", "chats-du-neant", "CLAUDE.md"))).toBe(true);
     // La discussion « Conception » et les chantiers prêts à lancer.
     await page.locator(".threads a", { hasText: "Conception : Chats du Néant" }).click();
-    await page.locator(".workshop-list", { hasText: "Base technique" }).getByRole("button", { name: /Lancer ce chantier/ }).first().waitFor();
+    // Les chantiers prêts à lancer, dans « En cours » sous la boîte « À vous » (ADR-113).
+    await page.locator(".inbox-rail .rail-runs .run", { hasText: "Base technique" }).getByRole("button", { name: /Lancer ce chantier/ }).first().waitFor();
     await page.locator(".msg", { hasText: "Chantiers de toutes les étapes, prêts à lancer" }).waitFor();
     await page.screenshot({ path: join(shots, "concept-4-projet.png") });
     expect(pageErrors).toEqual([]);

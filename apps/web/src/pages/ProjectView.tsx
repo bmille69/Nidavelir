@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useStudio } from "../studio/context.tsx";
 import { AUTONOMY } from "../studio/Autonomy.tsx";
-import { DirectorPanel } from "../studio/Choices.tsx";
-import { WorkshopPanel } from "../studio/Workshop.tsx";
-import { Capture } from "../studio/Capture.tsx";
+import { InboxRail, RailFold, useInboxCount } from "../studio/projet/Inbox.tsx";
+import { RecentBible } from "../studio/Choices.tsx";
+import { Replays } from "../studio/Replays.tsx";
 import { Annotator, withImage } from "../studio/Annotator.tsx";
-import { Linkify } from "../studio/Linkify.tsx";
 import { href, navigate } from "../App.tsx";
 import { ThreadList, useSeen } from "../studio/ThreadList.tsx";
 import { Icon } from "../studio/Icon.tsx";
+import { IMAGES, isEventOnly, MessageText } from "../studio/projet/Messages.tsx";
 import { api, type Item, type Job, type Message, type Thread } from "../api.ts";
 
 /** Même seuil que l'affichage téléphone de studio.css. */
@@ -50,9 +50,24 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
   const [onlyHint, setOnlyHint] = useState(false);
   const [onlyNewChoice, setOnlyNew] = useState(true);
   const [shown, setShown] = useState(PAGE);
-  // Sur téléphone, un seul panneau à la fois : la discussion ou le panneau de droite.
-  const [pane, setPane] = useState<"chat" | "side">("chat");
-  const waiting = useStudio()?.projects.find((p) => p.slug === slug)?.waiting ?? 0;
+  // Sur téléphone, un seul panneau à la fois (ADR-113) : « À vous » d'abord quand une décision attend, la conversation, ou les fils.
+  const waiting = useInboxCount(slug);
+  const studioReady = useStudio() !== null;
+  const [pane, setPane] = useState<"chat" | "side" | "threads">(() => (waiting > 0 && !fresh ? "side" : "chat"));
+  // L'état du studio arrive après le premier affichage : « À vous » s'ouvre alors, sauf si vous avez déjà choisi.
+  const paneChosen = useRef(false);
+  const choosePane = (p: "chat" | "side" | "threads") => {
+    paneChosen.current = true;
+    setPane(p);
+  };
+  useEffect(() => {
+    if (studioReady && !paneChosen.current && !fresh && waiting > 0) setPane("side");
+    if (studioReady) paneChosen.current = true;
+  }, [studioReady]);
+  // Un fil choisi dans « Fils » s'ouvre dans la conversation.
+  useEffect(() => {
+    setPane((p) => (p === "threads" ? "chat" : p));
+  }, [threadId, fresh]);
   // En autonomie, rien n'est « à trier » : on montre tout ce qui est noté.
   const onlyNew = onlyNewChoice && !auto;
 
@@ -74,10 +89,11 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
   }, [loadThreads]);
   const { markSeen, unread } = useSeen(slug, threads, threadsLoaded);
 
-  // En ouvrant le projet, on vous place sur la discussion en vigueur : la plus récemment active.
+  // En ouvrant le projet, on vous place sur la discussion en vigueur : la vôtre la plus récemment active (ADR-113),
+  // pas un fil que le hub a ouvert seul pour intégrer un visuel ; à défaut, la plus récente tout court.
   useEffect(() => {
     if (threadId || fresh || !threadsLoaded) return;
-    const latest = threads.find((t) => (t.messages ?? 0) > 0);
+    const latest = threads.find((t) => (t.messages ?? 0) > 0 && !t.automatic) ?? threads.find((t) => (t.messages ?? 0) > 0);
     if (latest) window.location.replace(href({ page: "project", slug, thread: latest.id }));
   }, [threadId, fresh, threadsLoaded, threads, slug]);
 
@@ -127,7 +143,9 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
     navigate({ page: "project", slug, fresh: true });
   }
 
-  const news = threads.filter((t) => t.id !== threadId && unread(t) > 0);
+  // Le bandeau « Du nouveau » ne parle que de vos fils : un fil automatique le dit sur son groupe replié (ADR-113).
+  const news = threads.filter((t) => t.id !== threadId && !t.automatic && unread(t) > 0);
+  const current = threads.find((t) => t.id === threadId);
 
   /** `override` : un message tout prêt (capture annotée, ADR-72), envoyé sans toucher au brouillon. */
   async function send(override?: string) {
@@ -207,33 +225,33 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
   }
 
   const runningJob = jobs.find((j) => j.status === "running");
+  const toTriage = items.filter((i) => i.status === "captured").length;
 
   return (
     <main className={`project pane-${pane}`}>
-      <div className="pane-switch" role="tablist">
-        <button role="tab" aria-selected={pane === "chat"} className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>
+      <div className="pane-switch segmented" role="tablist">
+        <button role="tab" aria-selected={pane === "side"} className={pane === "side" ? "on" : ""} onClick={() => choosePane("side")}>
+          À vous{waiting > 0 && <span className="count warn">{waiting}</span>}
+        </button>
+        <button role="tab" aria-selected={pane === "chat"} className={pane === "chat" ? "on" : ""} onClick={() => choosePane("chat")}>
           Conversation
         </button>
-        <button role="tab" aria-selected={pane === "side"} className={pane === "side" ? "on" : ""} onClick={() => setPane("side")}>
-          {workshop ? "Chantiers" : auto ? "Questions" : "Fiches"}
-          {waiting > 0 && <span className="count warn">{waiting}</span>}
+        <button role="tab" aria-selected={pane === "threads"} className={pane === "threads" ? "on" : ""} onClick={() => choosePane("threads")}>
+          Fils
         </button>
       </div>
       <ThreadList slug={slug} threads={threads} current={threadId} fresh={fresh && !threadId} unread={unread} onNew={newThread} onRenamed={() => void loadThreads()} />
 
       <section className="conversation">
-        <div className="mode-bar">
-          <span className="badge mode">{auto ? AUTONOMY[autonomy].label : "Exploration"}</span>
-          <span className="muted small">
-            {workshop
-              ? "Dites ce que vous voulez ; le directeur propose, puis « go » lance le chantier."
-              : auto
-                ? "Le directeur propose et décide ce qui ne fait pas débat. Il vous consulte en cas de conflit ou de vrai choix."
-                : "Pensez à voix haute : rien n'est validé sans vous."}
-          </span>
+        {/* L'en-tête du fil (ADR-113) : son titre, son origine, sa date ; le mode de travail se lit dans l'en-tête du projet. */}
+        <div className="convo-h">
+          {current?.automatic && <span className="rc-pill grey nodot">Automatique</span>}
+          <h2 title={current?.title}>{current ? current.title : threadId ? "…" : "Nouvelle discussion"}</h2>
+          <span className="sp" />
+          {current && <small>commencée le {dayOf(current.created_at)}</small>}
           {!auto && (
-            <a className="small" href={`#/p/${slug}/decisions`}>
-              Passer aux décisions →
+            <a className="rail-link" href={`#/p/${slug}/decisions`} title="Le directeur propose, vous décidez : les propositions à trancher sont aussi dans « À vous »">
+              Toutes les décisions <Icon name="arrow" size={13} />
             </a>
           )}
         </div>
@@ -257,37 +275,63 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
                   : "Parlez de votre jeu librement : intentions, envies, doutes, références. Le directeur reformule, relève les tensions et pose quelques questions."}
               </p>
               <p className="muted small">
-                {workshop ? "Quand la proposition vous va, dites « go » : il rédige la consigne et le Développeur se met au travail. Vous suivez l'avancement dans le panneau « Chantiers »." : auto ? "Ce qu'il retient entre dans la bible du jeu (onglet « Le jeu ») ; s'il a besoin de vous, il vous le demande à droite." : "Ce qu'il retient apparaît à droite, à trier quand vous voulez."}
+                {workshop ? "Quand la proposition vous va, dites « go » : il rédige la consigne et le Développeur se met au travail. Vous suivez l'avancement à droite, dans « En cours »." : auto ? "Ce qu'il retient entre dans la bible du jeu (onglet « Le jeu ») ; s'il a besoin de vous, il vous le demande à droite, dans « À vous »." : "Ce qu'il retient apparaît à droite, sous « Ce que le directeur a noté », à trier quand vous voulez."}
+              </p>
+              <p className="muted small mode-hint">
+                <span className="badge mode">{auto ? AUTONOMY[autonomy].label : "Exploration"}</span>{" "}
+                {workshop
+                  ? "Dites ce que vous voulez ; le directeur propose, puis « go » lance le chantier."
+                  : auto
+                    ? "Le directeur propose et décide ce qui ne fait pas débat. Il vous consulte en cas de conflit ou de vrai choix."
+                    : "Pensez à voix haute : rien n'est validé sans vous."}
               </p>
             </div>
           )}
-          {messages.map((m) => (
-            <div key={m.id} className={`msg ${m.role}`}>
-              <div className="who">{m.role === "human" ? "Vous" : "Directeur (IA)"}</div>
-              <MessageText text={m.text} slug={slug} annotate={annotate} />
-              {m.role === "human" && m.extraction === "pending" && <div className="muted small">analyse en cours…</div>}
-              {m.role === "human" && m.extraction === "failed" && <div className="error small">l'analyse de ce message a échoué</div>}
+          {messages.map((m, k) => {
+            const sep = m.at && (k === 0 || dayOf(messages[k - 1]!.at || m.at) !== dayOf(m.at)) ? dayOf(m.at) : null;
+            const quiet = m.role === "director" && isEventOnly(m.text);
+            return (
+              <Fragment key={m.id}>
+                {sep && <div className="day-sep">{sep}</div>}
+                <div className={`msg ${m.role}${quiet ? " event-only" : ""}`}>
+                  {m.role === "director" && !quiet && (
+                    <span className="msg-av" aria-hidden="true">
+                      D
+                    </span>
+                  )}
+                  <div className="msg-main">
+                    {m.role === "director" && !quiet && (
+                      <div className="msg-h">
+                        <b className="who">Directeur</b>
+                        {m.at && <time>{hm(m.at)}</time>}
+                      </div>
+                    )}
+                    <MessageText text={m.text} slug={slug} annotate={annotate} />
+                    {m.role === "human" && m.extraction === "pending" && <div className="muted small">analyse en cours…</div>}
+                    {m.role === "human" && m.extraction === "failed" && <div className="error small">l'analyse de ce message a échoué</div>}
+                  </div>
+                  {m.role === "human" && m.at && <time className="msg-time">{hm(m.at)}</time>}
+                </div>
+              </Fragment>
+            );
+          })}
+          {sending && (
+            <div className="msg director thinking">
+              <span className="msg-av" aria-hidden="true">
+                D
+              </span>
+              <div className="msg-main">
+                <div className="msg-h">
+                  <b className="who">Directeur</b>
+                </div>
+                <div className="typing">Le directeur réfléchit…</div>
+              </div>
             </div>
-          ))}
-          {sending && <div className="msg director muted">Le directeur réfléchit…</div>}
+          )}
           <div ref={endRef} />
         </div>
         {error && <p className="error">{error}</p>}
         <div className="composer">
-          <button className="secondary attach" onClick={() => fileRef.current?.click()} disabled={sending} aria-label="Joindre une capture à annoter" title="Joindre une capture (ou collez-la) pour y entourer ce qui ne va pas">
-            <Icon name="image" size={18} />
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) setToAnnotate(f);
-              e.target.value = "";
-            }}
-          />
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -304,39 +348,47 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
                 void send();
               }
             }}
-            placeholder={PHONE ? "Écrivez au directeur…" : "Écrivez librement… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"}
-            rows={PHONE ? 1 : 3}
+            placeholder={PHONE ? "Écrivez au directeur…" : workshop ? "Écrivez librement au directeur… (« go » lance sa proposition ; Maj+Entrée pour aller à la ligne)" :"Écrivez librement… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"}
+            rows={PHONE ? 1 : 2}
             enterKeyHint="send"
             disabled={sending}
           />
-          <button onClick={() => void send()} disabled={!draft.trim() || sending} aria-label="Envoyer">
-            <Icon name="arrow" size={18} className="send-icon" />
-            <span className="send-label">Envoyer</span>
-          </button>
+          <div className="composer-row">
+            <button className="secondary attach" onClick={() => fileRef.current?.click()} disabled={sending} aria-label="Joindre une capture à annoter" title="Joindre une capture (ou collez-la) pour y entourer ce qui ne va pas">
+              <Icon name="image" size={16} />
+              <span className="attach-label">Joindre une capture</span>
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) setToAnnotate(f);
+                e.target.value = "";
+              }}
+            />
+            <span className="sp" />
+            {/* Les mots qui reviennent le plus en Atelier (ADR-113), posés dans le brouillon : rien ne part sans « Envoyer ». */}
+            {workshop &&
+              threadId &&
+              QUICK.map(([label, words]) => (
+                <button key={label} className="qr" disabled={sending} onClick={() => setDraft((d) => (d.trim() ? `${d.trim()} ${words}` : words))}>
+                  {label}
+                </button>
+              ))}
+            <button className="send" onClick={() => void send()} disabled={!draft.trim() || sending} aria-label="Envoyer">
+              <Icon name="arrow" size={16} className="send-icon" />
+              <span className="send-label">Envoyer</span>
+            </button>
+          </div>
         </div>
         {toAnnotate && <Annotator source={toAnnotate} title="Votre capture" onClose={() => setToAnnotate(null)} onSend={annotate} />}
       </section>
 
-      {workshop ? (
-        <WorkshopPanel slug={slug} />
-      ) : auto ? (
-        <DirectorPanel slug={slug} job={runningJob} />
-      ) : (
-      <aside className="panel">
-        <div className="tabs">
-          {threadId && (
-            <button className={panel === "noted" ? "tab active" : "tab"} onClick={() => setPanel("noted")}>
-              Ce que j'ai noté
-            </button>
-          )}
-          <button className={panel === "inbox" ? "tab active" : "tab"} onClick={() => setPanel("inbox")}>
-            {auto ? "Noté" : "À trier"}
-          </button>
-          <button className={panel === "canon" ? "tab active" : "tab"} onClick={() => setPanel("canon")}>
-            Validé
-          </button>
-        </div>
-
+      {/* La boîte « À vous » (ADR-113), la même dans tous les modes ; ce que montraient les anciens panneaux, en replis. */}
+      <InboxRail slug={slug}>
         {runningJob && (
           <div className="notice small">
             Lecture des documents :{" "}
@@ -344,154 +396,149 @@ export function ProjectView({ slug, threadId, fresh }: { slug: string; threadId?
             {runningJob.documents.length} · {runningJob.created} élément(s) noté(s)
           </div>
         )}
-        {jobs
-          .filter((j) => j.status !== "running")
-          .flatMap((j) => j.documents.filter((d) => d.note))
-          .map((d) => (
-            <p key={d.path} className="muted small">
-              {d.path} : {d.note}
-            </p>
-          ))}
-
-        {filtering && items.length > 0 && (
-          <div className="filters">
-            <select value={source} onChange={(e) => { setSource(e.target.value); setShown(PAGE); }}>
-              <option value="all">Toutes les sources</option>
-              {sources.map((s) => (
-                <option key={s} value={s}>
-                  {s === "conversations" ? "Conversations" : s}
-                </option>
-              ))}
-            </select>
-            <select value={type} onChange={(e) => { setType(e.target.value); setShown(PAGE); }}>
-              <option value="all">Tous les types</option>
-              {types.map((t) => (
-                <option key={t} value={t}>
-                  {TYPE_LABEL[t] ?? t}
-                </option>
-              ))}
-            </select>
-            {!auto && (
-              <label className="check small">
-                <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
-                Non triés seulement
-              </label>
+        <Replays slug={slug} />
+        {auto && <RecentBible slug={slug} />}
+        <RailFold
+          className="notes-more"
+          open={!auto && toTriage > 0}
+          summary={
+            <>
+              Ce que le directeur a noté
+              {!auto && toTriage > 0 && <span className="count warn">{toTriage} à trier</span>}
+            </>
+          }
+        >
+          <div className="tabs">
+            {threadId && (
+              <button className={panel === "noted" ? "tab active" : "tab"} onClick={() => setPanel("noted")}>
+                Ce que j'ai noté
+              </button>
             )}
-            <label className="check small">
-              <input type="checkbox" checked={onlyHint} onChange={(e) => setOnlyHint(e.target.checked)} />
-              « Décision existante ? » seulement
-            </label>
-            <div className="row">
-              <span className="muted small grow">{visible.length} affiché(s) sur {items.length}</span>
-              {!auto && (
-                <>
-                  <button className="small" disabled={!visible.some((i) => i.status === "captured")} onClick={() => triageAll("keep")}>
-                    Retenir tout
-                  </button>
-                  <button className="small secondary" disabled={!batchable.length} onClick={() => triageAll("discard")}>
-                    Écarter tout
-                  </button>
-                </>
-              )}
-            </div>
+            <button className={panel === "inbox" ? "tab active" : "tab"} onClick={() => setPanel("inbox")}>
+              {auto ? "Noté" : "À trier"}
+            </button>
+            <button className={panel === "canon" ? "tab active" : "tab"} onClick={() => setPanel("canon")}>
+              Validé
+            </button>
           </div>
-        )}
 
-        {items.length === 0 && (
-          <p className="muted small">
-            {panel === "canon" ? "Rien n'est encore validé : voir l'onglet « Décisions »." : "Rien à trier pour l'instant."}
-          </p>
-        )}
-        <ul className="items">
-          {visible.slice(0, shown).map((i) => (
-            <li key={i.id} className={`item ${i.status}`}>
-              <div className="item-head">
-                <span className={`badge type-${i.type}`}>{TYPE_LABEL[i.type] ?? i.type}</span>
-                <span className="muted small">
-                  {i.id} · {STATUS_LABEL[i.status] ?? i.status}
-                </span>
-                {i.hint === "existing_decision" && <span className="badge warn">décision existante ?</span>}
+          {jobs
+            .filter((j) => j.status !== "running")
+            .flatMap((j) => j.documents.filter((d) => d.note))
+            .map((d) => (
+              <p key={d.path} className="muted small">
+                {d.path} : {d.note}
+              </p>
+            ))}
+
+          {filtering && items.length > 0 && (
+            <div className="filters">
+              <select value={source} onChange={(e) => { setSource(e.target.value); setShown(PAGE); }}>
+                <option value="all">Toutes les sources</option>
+                {sources.map((s) => (
+                  <option key={s} value={s}>
+                    {s === "conversations" ? "Conversations" : s}
+                  </option>
+                ))}
+              </select>
+              <select value={type} onChange={(e) => { setType(e.target.value); setShown(PAGE); }}>
+                <option value="all">Tous les types</option>
+                {types.map((t) => (
+                  <option key={t} value={t}>
+                    {TYPE_LABEL[t] ?? t}
+                  </option>
+                ))}
+              </select>
+              {!auto && (
+                <label className="check small">
+                  <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
+                  Non triés seulement
+                </label>
+              )}
+              <label className="check small">
+                <input type="checkbox" checked={onlyHint} onChange={(e) => setOnlyHint(e.target.checked)} />
+                « Décision existante ? » seulement
+              </label>
+              <div className="row">
+                <span className="muted small grow">{visible.length} affiché(s) sur {items.length}</span>
+                {!auto && (
+                  <>
+                    <button className="small" disabled={!visible.some((i) => i.status === "captured")} onClick={() => triageAll("keep")}>
+                      Retenir tout
+                    </button>
+                    <button className="small secondary" disabled={!batchable.length} onClick={() => triageAll("discard")}>
+                      Écarter tout
+                    </button>
+                  </>
+                )}
               </div>
-              <strong>{i.title}</strong>
-              <p>{i.statement}</p>
-              {i.source.quote && (
-                <blockquote>
-                  « {i.source.quote} »<cite>{i.source.kind === "file" ? i.source.ref : "vous"}</cite>
-                </blockquote>
-              )}
-              {panel !== "canon" && i.status === "captured" && auto && (
-                <div className="row">
-                  <button className="link small" onClick={() => triage(i.id, "discard")} title="Le directeur ne s'en servira pas">
-                    Écarter cette idée
-                  </button>
+            </div>
+          )}
+
+          {items.length === 0 && (
+            <p className="muted small">
+              {panel === "canon" ? "Rien n'est encore validé : voir l'onglet « Décisions »." : "Rien à trier pour l'instant."}
+            </p>
+          )}
+          <ul className="items">
+            {visible.slice(0, shown).map((i) => (
+              <li key={i.id} className={`item ${i.status}`}>
+                <div className="item-head">
+                  <span className={`badge type-${i.type}`}>{TYPE_LABEL[i.type] ?? i.type}</span>
+                  <span className="muted small">
+                    {i.id} · {STATUS_LABEL[i.status] ?? i.status}
+                  </span>
+                  {i.hint === "existing_decision" && <span className="badge warn">décision existante ?</span>}
                 </div>
-              )}
-              {panel !== "canon" && i.status === "captured" && !auto && (
-                <div className="row">
-                  <button className="small" onClick={() => triage(i.id, "keep")}>
-                    Retenir
-                  </button>
-                  <button className="small secondary" onClick={() => triage(i.id, "discard")}>
-                    Écarter
-                  </button>
-                </div>
-              )}
-              {panel !== "canon" && i.status === "triaged" && (
-                <div className="row">
-                  <button className="small secondary" onClick={() => triage(i.id, "discard")}>
-                    Écarter
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-        {visible.length > shown && (
-          <button className="secondary small" onClick={() => setShown((n) => n + PAGE)}>
-            Afficher {Math.min(PAGE, visible.length - shown)} de plus ({visible.length - shown} restants)
-          </button>
-        )}
-      </aside>
-      )}
+                <strong>{i.title}</strong>
+                <p>{i.statement}</p>
+                {i.source.quote && (
+                  <blockquote>
+                    « {i.source.quote} »<cite>{i.source.kind === "file" ? i.source.ref : "vous"}</cite>
+                  </blockquote>
+                )}
+                {panel !== "canon" && i.status === "captured" && auto && (
+                  <div className="row">
+                    <button className="link small" onClick={() => triage(i.id, "discard")} title="Le directeur ne s'en servira pas">
+                      Écarter cette idée
+                    </button>
+                  </div>
+                )}
+                {panel !== "canon" && i.status === "captured" && !auto && (
+                  <div className="row">
+                    <button className="small" onClick={() => triage(i.id, "keep")}>
+                      Retenir
+                    </button>
+                    <button className="small secondary" onClick={() => triage(i.id, "discard")}>
+                      Écarter
+                    </button>
+                  </div>
+                )}
+                {panel !== "canon" && i.status === "triaged" && (
+                  <div className="row">
+                    <button className="small secondary" onClick={() => triage(i.id, "discard")}>
+                      Écarter
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {visible.length > shown && (
+            <button className="secondary small" onClick={() => setShown((n) => n + PAGE)}>
+              Afficher {Math.min(PAGE, visible.length - shown)} de plus ({visible.length - shown} restants)
+            </button>
+          )}
+        </RailFold>
+      </InboxRail>
     </main>
   );
 }
 
-const BRIEF_MARK = "§CONSIGNE§ ";
-
-const CAPTURE = /^§CAPTURE§ (T-\d+) (\S+)$/m;
-/** Les captures annotées jointes (ADR-72), une par ligne. */
-const IMAGES = /^§IMAGE§ (studio\/captures\/\S+)$/gm;
-
-/** Texte d'un message ; chaque consigne envoyée au développeur est repliée sous la réponse, la capture du jeu est affichée. */
-function MessageText({ text, slug, annotate }: { text: string; slug: string; annotate: (text: string, image: Blob) => Promise<void> }) {
-  const shot = CAPTURE.exec(text);
-  const images = [...text.matchAll(IMAGES)].map((m) => m[1]!);
-  const [intro, ...briefs] = text.replace(CAPTURE, "").replace(IMAGES, "").split(BRIEF_MARK);
-  return (
-    <>
-      {intro!.trim() && (
-        <div className="text">
-          <Linkify text={intro!.trim()} />
-        </div>
-      )}
-      {images.map((f) => (
-        <a key={f} className="msg-image" href={api.captureUrl(slug, f)} target="_blank" rel="noreferrer">
-          <img src={api.captureUrl(slug, f)} alt="Capture annotée" loading="lazy" />
-        </a>
-      ))}
-      {shot && <Capture slug={slug} task={shot[1]!} version={shot[2]!} annotate={annotate} />}
-      {briefs.map((b, k) => {
-        const [title, ...rest] = b.split("\n");
-        return (
-          <details className="brief" key={k}>
-            <summary>
-              <span className="brief-label">Consigne envoyée au Développeur</span> {title}
-            </summary>
-            <div className="text small">{rest.join("\n").trim()}</div>
-          </details>
-        );
-      })}
-    </>
-  );
-}
+const QUICK: [string, string][] = [
+  ["go", "go"],
+  ["fusionne", "fusionne"],
+  ["plus simple ?", "Explique-le plus simplement ?"],
+];
+const dayOf = (iso: string) => new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });

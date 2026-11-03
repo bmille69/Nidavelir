@@ -5,6 +5,7 @@ import { AgentAvatar } from "./AgentAvatar.tsx";
 import { AGENTS, ago, describeEvent } from "./agents.ts";
 import { AUTONOMY } from "./Autonomy.tsx";
 import { useNow, useStudio } from "./context.tsx";
+import { ForgeMini } from "./forge/ForgeMini.tsx";
 import { Icon } from "./Icon.tsx";
 import { KeyImage, latestShot, useStyleImage } from "./KeyImage.tsx";
 import banner from "../assets/banner.jpg";
@@ -18,7 +19,7 @@ function greeting(now: number): string {
 
 /**
  * Accueil : d'abord ce qui vous attend, puis vos jeux (avec la dernière image de chacun),
- * créer, et ce qui vient de se passer. Le studio en direct a sa propre page.
+ * créer, et ce qui vient de se passer. La Forge (l'équipe en voxels) a sa propre page.
  */
 export function Home() {
   const snap = useStudio();
@@ -27,6 +28,8 @@ export function Home() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Le journal complet (autrefois sur « En direct ») se déplie ici.
+  const [allEvents, setAllEvents] = useState(false);
   const [tasks, setTasks] = useState<Record<string, TaskRow[]>>({});
 
   const slugs = snap?.projects.map((p) => p.slug).join(",") ?? "";
@@ -65,7 +68,7 @@ export function Home() {
   const events = snap.events
     .map((e) => ({ e, d: describeEvent(e) }))
     .filter((x) => x.d)
-    .slice(0, 7);
+    .slice(0, allEvents ? undefined : 7);
 
   const createBox = creating && (
     <div className="create-box">
@@ -103,7 +106,7 @@ export function Home() {
             {team.length > 0 ? `${team.length} agent${team.length > 1 ? "s" : ""} au travail.` : "L'équipe est au repos."}
           </p>
         </div>
-        <a className={`team-live ${team.length ? "on" : ""}`} href="#/direct" title="Voir le studio en direct">
+        <a className={`team-live ${team.length ? "on" : ""}`} href="#/forge" title="Voir l'équipe dans la Forge">
           <span className="team-faces">
             {(team.length ? team : snap.agents.filter((a) => a.id !== "you").slice(0, 4)).slice(0, 5).map((a) => (
               <AgentAvatar key={a.id} agent={a.id} state={a.state} size={32} />
@@ -112,7 +115,7 @@ export function Home() {
           <span className="team-live-text">
             <b>{team.length ? team.map((a) => AGENTS[a.id].name).join(" · ") : "Studio au repos"}</b>
             <small>
-              {team.length ? <span className="live-dot" /> : null} Voir le studio en direct <Icon name="arrow" size={14} />
+              {team.length ? <span className="live-dot" /> : null} Voir la Forge <Icon name="arrow" size={14} />
             </small>
           </span>
         </a>
@@ -227,15 +230,15 @@ export function Home() {
                           </span>
                         )}
                         <span>
-                          <b>{p.tasks}</b> tâches
+                          <b>{p.tasks}</b> chantiers
                         </span>
                       </div>
                       <div className="tile-actions">
                         <a href={`#/p/${p.slug}`}>
                           <Icon name="chat" size={15} /> Discuter
                         </a>
-                        <a href={`#/p/${p.slug}/tasks`}>
-                          <Icon name="hammer" size={15} /> Chantiers
+                        <a href={`#/p/${p.slug}/recap`}>
+                          <Icon name="chart" size={15} /> Récap
                         </a>
                         <a href={`#/p/${p.slug}/vision`}>
                           <Icon name="book" size={15} /> Le jeu
@@ -250,12 +253,16 @@ export function Home() {
         </div>
 
         <aside className="home-side">
+          {/* L'aperçu de la Forge (ADR-106) : l'équipe en voxels, du jeu le plus occupé. */}
+          {snap.projects.length > 0 && <ForgeMini />}
           <section className="panel-card feed">
             <div className="section-head">
               <h2>Ce qui vient de se passer</h2>
-              <a href="#/direct" className="small">
-                Tout voir <Icon name="arrow" size={14} />
-              </a>
+              {snap.events.length > 7 && (
+                <button className="link small" onClick={() => setAllEvents(!allEvents)} aria-expanded={allEvents}>
+                  {allEvents ? "Moins" : "Tout voir"} <Icon name="arrow" size={14} />
+                </button>
+              )}
             </div>
             {events.length === 0 && <p className="muted small">Rien pour l'instant. Les actions de l'équipe apparaîtront ici.</p>}
             <ol className="feed-list">

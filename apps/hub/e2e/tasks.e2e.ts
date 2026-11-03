@@ -104,7 +104,9 @@ describe("phase 2 dans le navigateur", () => {
     fake.scripts.verify.push(() => VERIFIED);
     await page.getByRole("button", { name: "Valider le plan et lancer le travail" }).click();
     await page.getByText("Le développeur vous demande l'autorisation").waitFor({ timeout: 10_000 });
-    await expect.poll(() => page.locator(".project-tabs").getByText(/1 demande/).isVisible(), { timeout: 8000 }).toBe(true);
+    // La demande se voit depuis tous les onglets : le compteur braise de la Discussion, où « À vous » la montre (ADR-113).
+    await expect.poll(() => page.locator(".project-tabs a", { hasText: "Discussion" }).locator(".tab-count.pulse").isVisible(), { timeout: 8000 }).toBe(true);
+    await expect(page.locator(".project-tabs a.active").textContent()).resolves.toBe("Récap");
     await shot("p2-2-autorisation");
     await page.getByRole("button", { name: "Refuser" }).first().click();
     await page.getByRole("heading", { name: "Le résultat, à relire" }).waitFor({ timeout: 10_000 });

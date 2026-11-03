@@ -11,7 +11,7 @@ const ORCHESTRATOR: Record<string, string> = { "direct-claude": "Claude (direct)
 
 /**
  * Menu principal, dans l'ordre de l'usage : ce qui vous attend, vos jeux, créer ;
- * puis, plus bas, le studio en direct et les réglages.
+ * puis, plus bas, la Forge et les réglages.
  */
 export function Sidebar({ route, session, onClose }: { route: Route; session: SessionInfo; onClose?: () => void }) {
   const snap = useStudio();
@@ -64,10 +64,10 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
         {item("#/", "home", "Accueil", route.page === "dashboard", forYou > 0 ? <span className="count warn">{forYou}</span> : null)}
         {item("#/pilotage", "chart", "Pilotage", route.page === "pilot")}
         {item(
-          "#/direct",
-          "live",
-          "En direct",
-          route.page === "live",
+          "#/forge",
+          "cube",
+          "La Forge",
+          route.page === "forge",
           working > 0 ? (
             <span className="live-chip">
               <span className="live-dot" /> {working}
@@ -113,6 +113,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
 
       <p className="side-title">Créer</p>
       <nav className="side-nav side-create">
+        {item("#/idees", "book", "Atelier d'idées", route.page === "ideas" || route.page === "idea")}
         {item("#/express", "bolt", "Jeu express", route.page === "express" || route.page === "expressGame")}
         {item("#/concevoir", "sparkle", "Nouveau projet", route.page === "conceive" && !route.project)}
         {item("#/import", "download", "Importer un jeu", route.page === "import")}
@@ -125,6 +126,7 @@ export function Sidebar({ route, session, onClose }: { route: Route; session: Se
       <p className="side-title">Studio</p>
       <nav className="side-nav">
         {item("#/qualite", "chart", "Qualité", route.page === "quality")}
+        {item("#/memoire", "chat", "Mémoire et équipe", route.page === "memory")}
         {item("#/competences", "puzzle", "Compétences", route.page === "skills")}
         {item("#/telephone", "phone", "Téléphone", route.page === "phone")}
       </nav>
