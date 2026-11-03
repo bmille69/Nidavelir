@@ -2,7 +2,7 @@
 // Electron lance le hub tel quel, avec le Node du PC, et l'affiche dans sa propre fenêtre : barre de titre maison,
 // Mica sous le menu, icône près de l'horloge, notifications Windows, raccourci global.
 // Le hub reste un vrai serveur local : le navigateur et le téléphone (Tailscale) fonctionnent comme avant.
-import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -18,6 +18,8 @@ const cliPort = process.argv.find((a) => a.startsWith("--port="))?.slice(7);
 const port = Number(cliPort ?? process.env.STUDIO_PORT ?? 4317);
 const base = `http://127.0.0.1:${port}`;
 const hidden = process.argv.includes("--hidden"); // lancement avec Windows : directement près de l'horloge.
+const RESTARTED = "--restarted"; // relancé par « Redémarrer et mettre à jour » : l'ancienne copie finit peut-être de s'arrêter.
+const restarted = process.argv.includes(RESTARTED);
 const BG = "#08090d"; // --bg de l'interface : pas d'éclair blanc.
 const TITLEBAR_H = 40;
 const SHORTCUT = "CommandOrControl+Alt+N";
@@ -39,7 +41,9 @@ let quitting = false;
 const logTail = [];
 const notices = new Map();
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// Une seule copie à la fois. Après un redémarrage, l'ancienne peut encore tenir le verrou un instant : on l'attend (whenReady).
+let ownsLock = app.requestSingleInstanceLock();
+if (!ownsLock && !restarted) app.quit();
 app.on("second-instance", () => reveal());
 
 // ── État conservé entre deux lancements : place de la fenêtre, conseil de l'icône déjà donné ──
@@ -149,27 +153,64 @@ function newest(dir) {
   }
   return max;
 }
+/** Date de modification d'un fichier ou d'un dossier (tout son contenu), 0 s'il n'existe pas. */
+function mtime(p) {
+  try {
+    return statSync(p).isDirectory() ? newest(p) : statSync(p).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
 function uiStale() {
   const web = join(root, "apps", "web");
-  try {
-    const built = statSync(join(web, "dist", "index.html")).mtimeMs;
-    return Math.max(newest(join(web, "src")), newest(join(web, "public")), statSync(join(web, "index.html")).mtimeMs) > built;
-  } catch {
-    return true;
+  const built = mtime(join(web, "dist", "index.html"));
+  if (!built) return true;
+  const sources = ["src", "public", "index.html", "package.json", "vite.config.ts", "tsconfig.json"].map((f) => join(web, f));
+  sources.push(join(root, "packages", "contracts", "src")); // types partagés avec le hub, importés par l'interface
+  return Math.max(...sources.map(mtime)) > built;
+}
+/** Bibliothèques à installer : le registre des dépendances (package-lock.json) ou un package.json du dépôt a changé
+ *  depuis le dernier « npm install » (qui réécrit node_modules/.package-lock.json). */
+function depsStale() {
+  const marker = mtime(join(root, "node_modules", ".package-lock.json"));
+  if (!marker) return true;
+  // npm ne réécrit pas son marqueur quand il n'y a rien à changer : on retient aussi notre dernier passage réussi.
+  const installed = Math.max(marker, loadState().depsInstalledAt ?? 0);
+  const manifests = [join(root, "package.json"), join(root, "package-lock.json")];
+  for (const group of ["apps", "packages"]) {
+    try {
+      for (const d of readdirSync(join(root, group), { withFileTypes: true })) if (d.isDirectory()) manifests.push(join(root, group, d.name, "package.json"));
+    } catch {
+      /* dossier absent */
+    }
   }
+  return Math.max(...manifests.map(mtime)) > installed;
 }
 function splashStatus(text) {
   if (win && win.webContents.getURL().startsWith("file:")) void win.webContents.executeJavaScript(`document.querySelector("p").textContent = ${JSON.stringify(text)}`).catch(() => {});
 }
-function buildUi() {
-  splashStatus("Mise à jour de l'interface…");
+/** Lance une commande npm dans le dépôt ; vrai si elle réussit. Sa sortie va dans la console et le journal. */
+function npm(args) {
   return new Promise((done) => {
-    const child = spawn("npm run build", { cwd: root, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(`npm ${args}`, { cwd: root, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (d) => process.stdout.write(d));
     child.stderr.on("data", (d) => process.stdout.write(d));
     child.on("error", () => done(false));
     child.on("exit", (code) => done(code === 0));
-  }).then((ok) => {
+  });
+}
+function installDeps() {
+  splashStatus("Installation des nouvelles bibliothèques…");
+  return npm("install --no-audit --no-fund").then((ok) => {
+    // Échec (hors ligne…) : on continue avec celles déjà installées ; la compilation dira s'il en manque.
+    if (ok) saveState({ depsInstalledAt: Date.now() }); // après coup : npm a pu réécrire lui-même package-lock.json
+    else console.error("npm install en échec : les bibliothèques déjà installées sont utilisées.");
+    return ok;
+  });
+}
+function buildUi() {
+  splashStatus("Mise à jour de l'interface…");
+  return npm("run build").then((ok) => {
     // Échec : on ouvre l'interface déjà compilée s'il y en a une ; sinon le hub le dira.
     if (!ok) console.error("Compilation de l'interface en échec : la version précédente est utilisée.");
     splashStatus("Le studio s'éveille…");
@@ -177,6 +218,14 @@ function buildUi() {
 }
 
 app.whenReady().then(async () => {
+  if (!ownsLock) {
+    if (!restarted) return;
+    for (let i = 0; i < 60 && !ownsLock; i++) {
+      await sleep(250);
+      ownsLock = app.requestSingleInstanceLock();
+    }
+    if (!ownsLock) return app.quit(); // une autre copie est bel et bien ouverte : elle vient d'être mise au premier plan
+  }
   Menu.setApplicationMenu(null);
   const { ico, trayImage } = icons();
   startMenuShortcut(ico);
@@ -198,6 +247,8 @@ app.whenReady().then(async () => {
 
 /** Adresse à ouvrir : lien de connexion du hub qu'on vient de lancer, ou hub déjà présent. */
 async function obtainEntry() {
+  // Redémarrage : le hub précédent libère son port en finissant de s'arrêter (15 s au plus avant l'arrêt forcé).
+  if (restarted) for (let i = 0; i < 80 && (await portBusy(port)); i++) await sleep(250);
   while (await portBusy(port)) {
     const { response } = await dialog.showMessageBox(win, {
       type: "warning",
@@ -219,9 +270,12 @@ async function obtainEntry() {
 async function startHub() {
   const entry = join(root, "apps", "hub", "src", "main.ts");
   if (!existsSync(entry)) throw new Error(`Le hub est introuvable dans ${root}.\nLe dépôt a-t-il été déplacé ? Lancez Nidavellir avec STUDIO_HUB_ROOT, ou refaites l'installateur depuis le dépôt.`);
-  if (uiStale()) {
+  const deps = depsStale();
+  if (deps || uiStale()) {
     if (win?.webContents.isLoading()) await new Promise((r) => win.webContents.once("did-finish-load", r));
-    await buildUi();
+    // De nouvelles bibliothèques changent l'interface compilée : on recompile après les avoir installées.
+    if (deps && (await installDeps())) await buildUi();
+    else if (uiStale()) await buildUi();
   }
   const logDir = join(app.getPath("userData"), "logs");
   mkdirSync(logDir, { recursive: true });
@@ -398,18 +452,19 @@ function createTray(image) {
       { label: "Ouvrir Nidavellir", click: () => reveal() },
       { label: "Rechercher…", click: () => palette() },
       { type: "separator" },
-      { label: "Le studio en direct", click: () => go("#/direct") },
+      { label: "La Forge", click: () => go("#/forge") },
       { label: "Pilotage", click: () => go("#/pilotage") },
       { type: "separator" },
       { label: "Lancer avec Windows", type: "checkbox", checked: autostart(), click: (item) => setAutostart(item.checked) },
       { type: "separator" },
+      { label: "Redémarrer et mettre à jour", click: () => restart() },
       { label: "Quitter Nidavellir", click: () => quit() },
     ]),
   );
 }
 
 function reveal() {
-  if (!win) return;
+  if (!win || quitting) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -430,6 +485,14 @@ function quit() {
   app.quit();
 }
 
+/** Redémarrer et mettre à jour : arrêt complet (le hub s'arrête proprement, comme en quittant), puis nouveau lancement,
+ *  qui reprend la dernière version du hub et installe ou recompile ce qui a changé. La fenêtre réapparaît. */
+function restart() {
+  const args = process.argv.slice(1).filter((a) => a !== "--hidden" && a !== RESTARTED);
+  app.relaunch({ args: [...args, RESTARTED] });
+  quit();
+}
+
 /** Notification Windows pour un avis du hub, quand la fenêtre n'est pas sous vos yeux. Un clic mène au bon endroit. */
 function showNotice(n) {
   const watching = Boolean(win?.isVisible() && win.isFocused() && !win.isMinimized());
@@ -442,6 +505,11 @@ function showNotice(n) {
   note.show();
   if (!watching) win?.flashFrame(true);
 }
+
+// Le bouton « Redémarrer et mettre à jour » de la barre de titre et de Ctrl K (seule la page de la fenêtre peut l'envoyer).
+ipcMain.on("nid:restart", (e) => {
+  if (win && e.sender === win.webContents) restart();
+});
 
 app.on("browser-window-focus", () => win?.flashFrame(false));
 app.on("before-quit", () => (quitting = true));
@@ -479,6 +547,10 @@ function killTree(pid) {
 
 function intersects(a, b) {
   return b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function portBusy(p) {

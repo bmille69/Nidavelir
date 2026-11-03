@@ -14,8 +14,9 @@ L'application installée ne contient que la fenêtre. Le hub reste dans le dép�
 
 ## Au quotidien
 
-- Au lancement, si les sources de l'interface ont changé depuis la dernière compilation, l'application la recompile d'abord (« Mise à jour de l'interface… »). Il n'est donc plus nécessaire de relancer `npm start` après une modification.
+- À chaque lancement, l'application se met à jour depuis le dépôt : le hub repart de ses sources, les nouvelles bibliothèques sont installées si un `package.json` ou `package-lock.json` a changé (« Installation des nouvelles bibliothèques… », `npm install`), et l'interface est recompilée si ses sources, sa configuration ou les types partagés (`packages/contracts`) ont changé (« Mise à jour de l'interface… »). Sans changement, rien n'est refait. Il n'est donc plus nécessaire de relancer `npm start` après une modification.
 - Fermer la fenêtre range Nidavellir près de l'horloge : le studio et ses chantiers continuent. Pour l'arrêter : clic droit sur l'icône, puis « Quitter Nidavellir ».
+- Pour prendre les dernières modifications : le bouton « Mettre à jour » en haut à droite de la fenêtre (ou Ctrl K, « Redémarrer et mettre à jour », ou clic droit sur l'icône près de l'horloge). Le hub s'arrête proprement, l'application se relance, met à jour ce qui a changé et rouvre la fenêtre.
 - `Ctrl+Alt+N`, depuis n'importe où, affiche ou cache la fenêtre.
 - « Lancer avec Windows » (clic droit sur l'icône) démarre Nidavellir à l'ouverture de session, directement rangé près de l'horloge.
 - Les notifications Windows signalent un chantier prêt ou en échec, un plan ou une autorisation qui attend, ou le Concepteur qui a besoin de vous. Elles s'affichent quand la fenêtre n'est pas au premier plan.
