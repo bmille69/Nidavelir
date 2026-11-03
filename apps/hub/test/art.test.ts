@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { Task } from "@studio/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { safeRel } from "../src/art/art-service.ts";
+import { FACETTES_SUR_SCENE_GARDEE, safeRel } from "../src/art/art-service.ts";
 import { PENDING_VISUALS } from "../src/art/manifest.ts";
 import { fluxWorkflow, kontextWorkflow, type GenRequest, type GenState, type ImageGenPort } from "../src/art/imagegen.ts";
 import { VIEWS, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewsReview } from "../src/art/model3d.ts";
@@ -71,7 +71,11 @@ class FakeModel3D implements Model3DPort {
   key = false;
   rigType: string | undefined = undefined;
   rigModel: string | undefined = undefined;
-  tripoCalls: { spec: Model3DSpec; bytes: number }[] = [];
+  tripoCalls: { spec: Model3DSpec; bytes: number; views?: boolean; reference?: string }[] = [];
+  /** Les copies et restaurations de la scène (ADR-116), dans l'ordre. */
+  scenes: string[] = [];
+  /** Ce que rendent les prochains codes de l'artisan (santé comprise, ADR-116) ; sinon « fait ». */
+  codeResults: { ok: boolean; sortie: string; erreur: string | null; sante?: { avant: unknown; apres: unknown } }[] = [];
   prepares: { dir: string; input: string | null; palette: string[] }[] = [];
   codes: string[] = [];
   exports: { output: string; prefix: string }[] = [];
@@ -93,17 +97,23 @@ class FakeModel3D implements Model3DPort {
     this.key = true;
   }
   viewEdits: ViewEdit[] = [];
-  async tripo(req: { image: Buffer; spec: Model3DSpec; step: (s: string) => void; views?: ViewsReview }) {
+  async tripo(req: { image: Buffer; spec: Model3DSpec; step: (s: string) => void; views?: ViewsReview; reference?: string }) {
     req.step("Tripo fabrique le modèle");
-    this.tripoCalls.push({ spec: req.spec, bytes: req.image.length });
+    this.tripoCalls.push({ spec: req.spec, bytes: req.image.length, ...(req.reference ? { views: Boolean(req.views), reference: req.reference } : {}) });
     // La planche : jugée, retouchée une fois si le validateur le demande, puis rejugée.
     const sheet = VIEWS.map((view) => ({ view, image: PNG }));
+    // Une planche écartée par le validateur (ADR-109) : comme le vrai client, le modèle vient alors de l'image seule.
+    let kept = Boolean(req.views);
     if (req.views) {
-      const edits = await req.views(sheet, 1);
-      this.viewEdits.push(...edits);
-      if (edits.length) await req.views(sheet, 2);
+      try {
+        const edits = await req.views(sheet, 1);
+        this.viewEdits.push(...edits);
+        if (edits.length) await req.views(sheet, 2);
+      } catch {
+        kept = false;
+      }
     }
-    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(this.rigType ? { rigTask: "rig-1" } : {}), ...(this.rigModel ? { rigModel: this.rigModel } : {}), ...(req.views ? { views: sheet } : {}) };
+    return { glb: Buffer.from("glTF"), credits: 30, animations: req.spec.animations.filter((a) => a !== "slash"), rigType: this.rigType, ...(this.rigType ? { rigTask: "rig-1" } : {}), ...(this.rigModel ? { rigModel: this.rigModel } : {}), ...(kept ? { views: sheet } : {}) };
   }
   /** Les bandes d'animation ne sont rendues que si un test le demande (ADR-56). */
   bandes = false;
@@ -118,9 +128,12 @@ class FakeModel3D implements Model3DPort {
     this.added.push({ extras: req.extras.map((f) => (existsSync(f) ? readFileSync(f, "utf8") : "?")), animations: req.animations, keep: req.keep });
     return {};
   }
-  async prepare(req: { dir: string; input: string | null; palette: string[] }) {
+  /** Le style à facettes demandé à chaque préparation et export (ADR-114), dans l'ordre. */
+  facettes: { step: string; on: boolean }[] = [];
+  async prepare(req: { dir: string; input: string | null; palette: string[]; spec?: Model3DSpec }) {
     mkdirSync(req.dir, { recursive: true });
     writeFileSync(join(req.dir, "scene.blend"), "blend");
+    this.facettes.push({ step: "prepare", on: !!req.spec?.facettes });
     this.prepares.push({ dir: req.dir, input: req.input && existsSync(req.input) ? readFileSync(req.input, "utf8") : null, palette: req.palette });
     return {};
   }
@@ -129,7 +142,13 @@ class FakeModel3D implements Model3DPort {
   async runCode(req: { dir: string; code: string }) {
     this.codes.push(req.code);
     this.onCode?.();
-    return { ok: true, sortie: "fait", erreur: null };
+    return this.codeResults.shift() ?? { ok: true, sortie: "fait", erreur: null };
+  }
+  async snapshot(req: { dir: string; name: string }) {
+    this.scenes.push(`copie ${req.name}`);
+  }
+  async restore(req: { dir: string; name: string }) {
+    this.scenes.push(`restaure ${req.name}`);
   }
   async photos(req: { dir: string; prefix: string }) {
     const photos = ["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((a) => join(req.dir, `${req.prefix}-${a}.png`));
@@ -140,6 +159,7 @@ class FakeModel3D implements Model3DPort {
   geometry: Geometry[] = [];
   async export(req: { dir: string; output: string; rendersDir: string; prefix: string; spec: Model3DSpec }) {
     this.exports.push({ output: req.output, prefix: req.prefix });
+    this.facettes.push({ step: "export", on: !!req.spec.facettes });
     writeFileSync(req.output, "glTF");
     const renders = ["face", "trois-quarts", "profil", "dos", "vue-jeu"].map((a) => join(req.rendersDir, `${req.prefix}-${a}.png`));
     for (const r of renders) writeFileSync(r, PNG);
@@ -222,13 +242,17 @@ describe("Directeur artistique (ADR-43)", () => {
     expect(state.busy.replying).toBe(false);
   }, 30_000);
 
-  it("les compétences données au DA arrivent dans ses consignes", async () => {
+  it("les compétences données au DA arrivent dans ses consignes (index, lues à la demande)", async () => {
     const { sb, fake, art } = await setup();
     sb.hub.skills.save(sb.human(), { name: "da-methode", description: "Méthode de production", body: "Valider une cible avant la série.", agents: ["art_director"], enabled: true });
     fake.replies.push("Entendu.");
     art.send(sb.human(), "bordee", "On commence ?");
     await art.idle();
-    expect(fake.calls[0]!.systemPrompt).toMatch(/<competence nom="da-methode"[\s\S]*Valider une cible avant la série/);
+    // ADR-97 : le DA reçoit l'index (nom, quand, fichier) et ouvre le SKILL.md avec Read ; le dossier lui est rendu lisible.
+    const call = fake.calls[0]!;
+    expect(call.systemPrompt).toMatch(/- da-methode : Méthode de production\n\s+fichier : .*da-methode[\\/]SKILL\.md/);
+    expect(call.skillsDir).toBeTruthy();
+    expect(readFileSync(join(call.skillsDir!, "da-methode", "SKILL.md"), "utf8")).toMatch(/Valider une cible avant la série/);
   }, 30_000);
 
   it("le moodboard : images vérifiées, rangées et commentées", async () => {
@@ -294,6 +318,8 @@ describe("Directeur artistique (ADR-43)", () => {
     const { thread } = await art.integrate(sb.human(), "bordee", "A-0001");
     await sb.hub.conversations.idle();
     expect(sb.hub.conversations.getThread("bordee", thread).title).toBe("Intégrer A-0001 : Icône de poudre");
+    // Un fil ouvert par le hub : rangé sous « Automatiques » d'après son origine (ADR-113).
+    expect(sb.hub.conversations.listThreads("bordee").find((t) => t.id === thread)).toMatchObject({ origin: "art", automatic: true });
     expect(sb.hub.conversations.messages("bordee", thread)[0]!.text).toMatch(/studio\/art\/production\/a-0001-essai-2.png[\s\S]*titre commence par « A-0001 »/);
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
     // Le directeur voit les visuels prêts à brancher.
@@ -665,6 +691,31 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model: { file: "models/a-0001-3d.glb" } });
   }, 30_000);
 
+  it("une planche infidèle à l'image, même retouchée, est écartée : la 3D vient de l'image seule (ADR-109)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    fake.replies.push('[[ASSET]] {"name": "Héron", "type": "personnage 3D", "usage": "joueur"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0001]] A heron soldier with a long tube cannon. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push({ ok: false, summary: "Le canon est devenu un pistolet.", points: ["Canon tube perdu"], edits: [{ view: "front", prompt: "Long tube cannon, like the reference." }] } as never);
+    fake.extractions.push({ ok: false, summary: "Toujours un pistolet vert.", points: ["Canon tube perdu"], edits: [] } as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le Héron en 3D");
+    await art.idle();
+    expect(m3d.viewEdits).toEqual([{ view: "front", prompt: "Long tube cannon, like the reference." }]);
+    const texts = art.state("bordee").messages.map((m) => m.text);
+    expect(texts.find((t) => t.includes("retouchée : écartée"))).toMatch(/trahit l'image de référence : la 3D sera tirée de l'image seule/);
+    // Le validateur a été prévenu qu'une planche refusée est écartée, et que les couleurs comptent (ADR-54).
+    const review = fake.calls.find((c) => /PLANCHE/.test(c.systemPrompt))!;
+    expect(review.systemPrompt).toMatch(/FIDÉLITÉ[\s\S]*long canon devenu pistolet[\s\S]*écartée/);
+    // Ni la planche écartée ni ses vues ne suivent le modèle.
+    const a = art.state("bordee").assets[0]!;
+    expect(a).toMatchObject({ status: "integration", model: { file: "models/a-0001-3d.glb" } });
+    expect(a.model!.views).toBeUndefined();
+  }, 30_000);
+
   it("3D : Tripo une seule fois, l'artisan retouche dans Blender pas à pas, une seconde passe sans repayer Tripo, puis le jeu", async () => {
     const { sb, fake, gen, m3d, repo, art } = await setupLocal();
     gen.installed = true;
@@ -831,6 +882,82 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(threads).toHaveLength(2);
     const texts = threads.map((t) => sb.hub.conversations.messages("bordee", t.id)[0]!.text);
     expect(texts.filter((t) => /version retouchée d'un modèle déjà branché/.test(t))).toHaveLength(1);
+  }, 60_000);
+
+  it("style low-poly : facettes nettes d'office à la préparation et à l'export, et sur une scène gardée (ADR-114)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    fake.replies.push('[[ASSET]] {"name": "Chien", "type": "personnage", "usage": "ennemi, low-poly à facettes"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,2 | triangles 4000]]\n[[GENERER: A-0001]] A desert dog. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le chien");
+    await art.idle();
+    expect(m3d.facettes).toEqual([{ step: "prepare", on: true }, { step: "export", on: true }]);
+    expect(m3d.codes).not.toContain(FACETTES_SUR_SCENE_GARDEE);
+    // « Reprendre la finition » sur une scène gardée : pas de préparation, les facettes sont posées si l'artisan n'a rien choisi.
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.retouchModel(sb.human(), "bordee", "A-0001");
+    await art.idle();
+    expect(m3d.codes).toContain(FACETTES_SUR_SCENE_GARDEE);
+    expect(m3d.facettes.at(-1)).toEqual({ step: "export", on: true });
+    // La fiche que lit l'artisan le dit, pour qu'il sache revenir au lissé s'il le faut.
+    expect(parseModel3D("taille 2 | facettes")).toMatchObject({ facettes: true });
+    expect(parseModel3D("taille 2")).not.toHaveProperty("facettes");
+  }, 60_000);
+
+  it("pas de facettes pour une fiche qui ne dit pas low-poly (ADR-114)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    fake.replies.push('[[ASSET]] {"name": "Caisse", "type": "decor", "usage": "décor"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1 | triangles 2000]]\n[[GENERER: A-0001]] A crate. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Une caisse");
+    await art.idle();
+    expect(m3d.facettes).toEqual([{ step: "prepare", on: false }, { step: "export", on: false }]);
+  }, 60_000);
+
+  it("refaire la 3D d'un asset déjà dans le jeu : Tripo repart de zéro, le nouveau modèle remplace l'ancien (ADR-112)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    m3d.rigType = "biped";
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage", "usage": "joueur"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 20000 | animations idle, run]]\n[[GENERER: A-0001]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, edit: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le Titan");
+    await art.idle();
+    // Pendant son intégration, on ne le refait pas : le développeur le branche.
+    expect(art.state("bordee").assets[0]!.status).toBe("integration");
+    expect(() => art.generateModel(sb.human(), "bordee", "A-0001")).toThrow(/en cours d'intégration/);
+    art.onTaskStatus({ id: "T-0001", project: "bordee", title: "A-0001 : brancher le Titan", goal: "…", status: "merged" } as Task);
+    await art.idle();
+    expect(art.state("bordee").assets[0]!.status).toBe("integre");
+
+    // Dans le jeu : « Refaire la 3D » rappelle Tripo, même si le squelette pouvait être gardé.
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.generateModel(sb.human(), "bordee", "A-0001");
+    await art.idle();
+    expect(m3d.tripoCalls).toHaveLength(2);
+    expect(art.state("bordee").assets[0]).toMatchObject({ status: "integration", model: { verdict: { ok: true } } });
+    const threads = sb.hub.conversations.listThreads("bordee").filter((t) => t.title === "Intégrer A-0001 : Titan");
+    expect(threads).toHaveLength(2);
+    const texts = threads.map((t) => sb.hub.conversations.messages("bordee", t.id)[0]!.text);
+    expect(texts.filter((t) => /modèle refait de zéro \(ADR-112\)[\s\S]*remplace l'ancien fichier/.test(t))).toHaveLength(1);
+    expect(texts.some((t) => /version retouchée/.test(t))).toBe(false);
   }, 60_000);
 
   it("animations : jugées sur leurs bandes, coupées par l'artisan, et une animation remplacée sans refaire le modèle (ADR-56)", async () => {
@@ -1033,6 +1160,106 @@ describe("générateur d'images local (ADR-46, ADR-49)", () => {
     expect(texts.some((t) => /passe 2 sur 3\)[\s\S]*l'artisan reprend la scène pour une dernière passe/.test(t))).toBe(true);
     expect(texts.some((t) => /conforme\*\* \(passe 3\)[\s\S]*px × /.test(t))).toBe(true);
     expect(art.state("bordee").assets[0]!.status).toBe("integration");
+  }, 30_000);
+
+  it("référence de profil sans Google : pas de planche Tripo, la 3D vient de l'image seule ; de face, rien ne change (ADR-115)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    // Le Chien (A-0001 ici) : un profil strict, tête vers la droite de l'image.
+    fake.replies.push('[[ASSET]] {"name": "Chien", "type": "créature 3D", "usage": "compagnon"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 0,8 | triangles 6000]]\n[[GENERER: A-0001]] A dog, side view. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null, orientation: "profil_droite" } as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le chien en 3D");
+    await art.idle();
+    const dog = art.state("bordee").assets[0]!;
+    expect(dog.verdict).toMatchObject({ ok: true, orientation: "profil_droite" });
+    // Aucune planche commandée, aucun jugement de planche ; la référence est dite à Tripo et à l'artisan.
+    expect(m3d.tripoCalls).toEqual([expect.objectContaining({ views: false, reference: "right" })]);
+    expect(fake.calls.some((c) => /PLANCHE/.test(c.systemPrompt))).toBe(false);
+    expect(art.state("bordee").messages.map((m) => m.text)).toContain(
+      "A-0001 : l'image de référence montre le sujet de profil, tourné vers la droite de l'image ; sans Google, pas de planche (celle de Tripo suppose une vue de face) : la 3D est tirée de l'image seule.",
+    );
+    expect(fake.calls.find((c) => /ARTISAN 3D/.test(c.systemPrompt))!.prompt).toMatch(/Image de référence : reference\.png \(le sujet y est vu de profil, tourné vers la droite de l'image ; son devant doit quand même regarder -Y\)/);
+    // Le validateur qui choisit l'essai dit l'angle (champ facultatif du schéma).
+    const pick = fake.calls.find((c) => /Choisis le meilleur \(best\) comme modèle pour la 3D/.test(c.prompt))!;
+    expect(pick.prompt).toMatch(/dis sous quel angle il montre le sujet \(orientation\)/);
+
+    // De face (réponse sans le champ, comme avant) : la planche part comme aujourd'hui, mêmes arguments.
+    fake.replies.push('[[ASSET]] {"name": "Titan", "type": "personnage 3D", "usage": "joueur"} [[/ASSET]]\n[[MODELE3D: A-0002 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0002]] A knight. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le Titan en 3D");
+    await art.idle();
+    expect(art.state("bordee").assets[1]!.verdict).not.toHaveProperty("orientation");
+    expect(Object.keys(m3d.tripoCalls[1]!)).toEqual(["spec", "bytes"]);
+    const review = fake.calls.find((c) => /PLANCHE/.test(c.systemPrompt))!;
+    expect(review.prompt).not.toMatch(/Elle montre le sujet/);
+  }, 30_000);
+
+  it("garde au pas : un code qui délie la texture est annulé et l'artisan le lit ; une scène saine ne change rien (ADR-116)", async () => {
+    const { sb, fake, gen, m3d, art } = await setupLocal();
+    gen.installed = true;
+    art.installBlender(sb.human());
+    await art.setTripoKey(sb.human(), "tsk_0123456789abcdef");
+    const sain = { textures: 1, textures_manquantes: 0, part_texturee: 100, part_emissive: 0.4, materiaux: 1, triangles: 6000 };
+    m3d.codeResults.push({ ok: true, sortie: "fait", erreur: null, sante: { avant: sain, apres: { ...sain, textures: 0, textures_manquantes: 1 } } });
+    fake.replies.push('[[ASSET]] {"name": "Brute", "type": "ennemi 3D", "usage": "ennemi"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0001]] A brute. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps('teinter("#C83CA0", "#8A5A44")') as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "La brute en 3D");
+    await art.idle();
+    expect(m3d.scenes).toEqual(["copie scene-passe-1.blend", "restaure scene-avant-pas.blend"]);
+    const steps = fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt));
+    expect(steps[1]!.prompt).toMatch(/→ ANNULÉ : ton code a délié une texture \(image manquante : le modèle serait rendu magenta\) ; la scène est revenue avant ce pas\./);
+    expect(art.state("bordee").assets[0]!.model!.workshop).toMatch(/\(1 code annulé par le garde-fou de l'atelier\)$/);
+
+    // Scène saine (la santé ne bouge pas, ou n'est pas rendue) : aucune restauration, le résumé de l'artisan tel quel.
+    m3d.scenes.length = 0;
+    m3d.codeResults.push({ ok: true, sortie: "fait", erreur: null, sante: { avant: sain, apres: { ...sain, part_emissive: 1.2 } } });
+    fake.replies.push('[[ASSET]] {"name": "Garde", "type": "ennemi 3D", "usage": "ennemi"} [[/ASSET]]\n[[MODELE3D: A-0002 | taille 1,8 | triangles 6000]]\n[[GENERER: A-0002]] A guard. [[/GENERER]]');
+    fake.extractions.push({ best: 1, ok: true, usable: true, summary: "Bien.", points: [], prompt: null } as never);
+    fake.extractions.push(sheetOk as never);
+    fake.extractions.push(...(artisanSteps() as never[]));
+    fake.extractions.push({ ok: true, forme_ok: true, summary: "Fidèle.", points: [] } as never);
+    art.send(sb.human(), "bordee", "Le garde en 3D");
+    await art.idle();
+    expect(m3d.scenes).toEqual(["copie scene-passe-1.blend"]);
+    expect(art.state("bordee").assets[1]!.model!.workshop).toBe("Tourné face à -Y, rendu mat.");
+  }, 30_000);
+
+  it("garde à la passe : une passe pire que la précédente rend la meilleure scène, ré-exportée, sans passe ni validateur de plus (ADR-116)", async () => {
+    const { sb, fake, m3d, repo, art } = await setupLocal();
+    art.installBlender(sb.human());
+    art.workshopModel = () => "opus";
+    const jouable = { ok: false, forme_ok: true, mineur: true, summary: "Jouable, béton un peu clair.", points: ["Baisser la teinte"] };
+    const pire = { ok: false, forme_ok: true, mineur: false, summary: "Tout le muret brille.", points: ["Lueur sur tout le corps"] };
+    fake.extractions.push(...(artisanSteps() as never[]), jouable as never, ...(artisanSteps() as never[]), pire as never);
+    fake.replies.push('[[ASSET]] {"name": "Muret", "type": "décor", "usage": "bord de rampe"} [[/ASSET]]\n[[MODELE3D: A-0001 | taille 1,2 | triangles 500 | simple]]');
+    art.send(sb.human(), "bordee", "Un muret");
+    await art.idle();
+    // La scène de la passe 1 est la copie prise au début de la passe 2.
+    expect(m3d.scenes).toEqual(["copie scene-passe-1.blend", "copie scene-passe-2.blend", "restaure scene-passe-2.blend"]);
+    const models = join(repo, "studio", "art", "models");
+    expect(m3d.exports).toEqual([
+      { output: join(models, "a-0001-3d.glb"), prefix: "a-0001-3d" },
+      { output: join(models, "a-0001-3d-2.glb"), prefix: "a-0001-3d-2" },
+      { output: join(models, "a-0001-3d.glb"), prefix: "a-0001-3d" },
+    ]);
+    // Deux jugements seulement, deux passes de l'artisan : ni troisième passe, ni nouveau regard du validateur.
+    expect(fake.calls.filter((c) => /VALIDATEUR ARTISTIQUE/.test(c.systemPrompt) && /MODÈLE 3D/.test(c.systemPrompt))).toHaveLength(2);
+    expect(fake.calls.filter((c) => /ARTISAN 3D/.test(c.systemPrompt))).toHaveLength(4);
+    const a = art.state("bordee").assets[0]!;
+    expect(a.model).toMatchObject({ file: "models/a-0001-3d.glb", verdict: { ok: true, summary: "Jouable, béton un peu clair.", file: "models/a-0001-3d.glb" } });
+    expect(a.status).toBe("integration");
+    const texts = art.state("bordee").messages.map((m) => m.text);
+    expect(texts.some((t) => /la passe 2 a régressé\*\* \(forme bonne, finition à reprendre, contre jouable à la passe 1\) : je garde la passe 1, ré-exportée telle qu'elle avait été jugée, et je m'arrête là\. Je la fais intégrer dans le jeu\./.test(t))).toBe(true);
   }, 30_000);
 
   it("dans le jeu : le hub photographie la scène vitrine de l'asset", async () => {

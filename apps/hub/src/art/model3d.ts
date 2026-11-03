@@ -1,8 +1,9 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SheetPort } from "./google-images.ts";
 import { download, killTree } from "./imagegen.ts";
 import { orderFingerprint, TripoJournal } from "./tripo-journal.ts";
 
@@ -23,7 +24,8 @@ export type Model3DState = {
  * Ce que la fiche demande pour la 3D. `simple` : formes simples, modélisées directement dans Blender, sans image ni
  * Tripo. (La figurine de l'ADR-53 est abandonnée, ADR-54 : une ancienne fiche qui la porte est traitée comme les autres.)
  */
-export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean };
+/** `facettes` (ADR-114) : style low-poly à facettes, chaque face plate et son arête franche (au lieu du lissage de Tripo). */
+export type Model3DSpec = { size: number; tris: number; rig: boolean; animations: string[]; simple?: boolean; facettes?: boolean };
 
 /** `extras` : une animation de plus par fichier (même squelette), que Blender fusionne dans le modèle. */
 /** `rigType` : la forme que Tripo a reconnue (biped, quadruped, octopod…), quand un squelette est posé. */
@@ -33,16 +35,38 @@ export type TripoResult = { glb: Buffer; credits: number; extras?: Buffer[]; ani
 export const VIEWS = ["front", "left", "back", "right"] as const;
 export type View = (typeof VIEWS)[number];
 export type ViewImage = { view: View; image: Buffer };
+/**
+ * L'angle sous lequel l'image de référence montre le sujet (ADR-115), dit par le validateur qui la retient. Le sens d'un
+ * profil est le côté de l'IMAGE vers lequel regarde le sujet.
+ */
+export type Orientation = "face" | "profil_droite" | "profil_gauche" | "trois_quarts" | "dos";
+export const ORIENTATIONS: Orientation[] = ["face", "profil_droite", "profil_gauche", "trois_quarts", "dos"];
+/**
+ * La case de la planche que l'image de référence montre déjà. Convention des cases de Tripo : l'ordre [front, left, back,
+ * right] vient du SDK officiel (tripo3d `multiview_to_model` : « images: [front, left, back, right] ») ; le sens de left
+ * et right n'y est pas écrit. Celui du studio, tenu depuis l'ADR-50 et confirmé par les planches de Tripo et de Google
+ * acceptées en essai réel (le Héron, ADR-110) : la gauche et la droite DU SUJET. Un sujet tourné vers la droite de
+ * l'image montre au spectateur son flanc DROIT (de face, sa main droite est à gauche de l'image ; tourné d'un quart vers
+ * la droite de l'image, son flanc droit vient vers la caméra) : case « right ». Vers la gauche de l'image : « left ».
+ * Trois-quarts : la face reste la meilleure case (comportement d'avant).
+ */
+export function referenceView(o: Orientation | undefined): View {
+  return o === "profil_droite" ? "right" : o === "profil_gauche" ? "left" : o === "dos" ? "back" : "front";
+}
 /** Une retouche d'une vue de la planche, en anglais (« move the big pauldron to the left shoulder »). */
 export type ViewEdit = { view: View; prompt: string };
-/** Le jugement de la planche : les retouches à faire (aucune si elle est cohérente). `round` 2 : après retouche, pour information. */
-export type ViewsReview = (views: ViewImage[], round: number) => Promise<ViewEdit[]>;
+/**
+ * Le jugement de la planche : les retouches à faire (aucune si elle est cohérente). `round` 2 : après retouche, pour
+ * information. `by` : qui l'a dessinée, et donc qui la retouche (ADR-110).
+ */
+export type ViewsReview = (views: ViewImage[], round: number, by?: "tripo" | "google") => Promise<ViewEdit[]>;
 /** `bandes` : une bande d'images par animation (ADR-56), pour juger le mouvement ; `durees` en secondes. */
 /** Les défauts invisibles sur une photo, mesurés par Blender (ADR-63). */
 export type Geometry = { faces_retournees: number; petits_morceaux: number; faces_nulles: number; aretes_ouvertes: number; objets: { nom: string }[] };
 export type FinishResult = { renders: string[]; bandes: string[]; tris: number; dims: number[]; animations: string[]; durees: { nom: string; duree_s: number }[]; controle?: Geometry | null };
 /** Un pas de l'artisan dans Blender : ce que son code a affiché, ou son erreur. */
-export type CodeResult = { ok: boolean; sortie: string; erreur: string | null };
+/** `sante` (ADR-116) : la santé de la scène avant et après ce code, mesurée par Blender ; la scène d'avant est gardée. */
+export type CodeResult = { ok: boolean; sortie: string; erreur: string | null; sante?: { avant: unknown; apres: unknown } | null };
 /** Les photos de travail (chemins absolus, dans le dossier de l'atelier) et les mesures de la scène. */
 export type Photos = { photos: string[]; mesures: unknown };
 
@@ -56,9 +80,12 @@ export interface Model3DPort {
   /**
    * Image → modèle .glb, avec squelette et animations si demandé. `step` raconte où on en est. Avec `views` (ADR-50),
    * Tripo dessine d'abord la planche (face, gauche, dos, droite), `views` la juge et peut la faire retoucher une fois,
-   * puis le modèle est construit à partir des quatre vues ; si la planche échoue, le modèle vient de l'image seule.
+   * puis le modèle est construit à partir des quatre vues ; si la planche échoue, le modèle vient de l'image seule. Avec
+   * `sheet` (ADR-110), Google dessine la planche à la place de Tripo ; si Google échoue, c'est la planche de Tripo.
+   * `reference` (ADR-115) : la case que l'image montre ; hors face, la planche de Tripo n'est jamais commandée (elle
+   * suppose une image de face et échouerait, crédits perdus).
    */
-  tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview }): Promise<TripoResult>;
+  tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview; sheet?: SheetPort; reference?: View }): Promise<TripoResult>;
   /**
    * Blender prépare la scène de l'atelier dans `dir` : le modèle brut de Tripo (avec ses animations) mis aux mesures,
    * ou une scène vide pour un objet simple que l'artisan modélise lui-même. `palette` : les couleurs de la fiche.
@@ -66,6 +93,13 @@ export interface Model3DPort {
   prepare(req: { dir: string; input: string | null; extras?: string[]; animations?: string[]; spec: Model3DSpec; palette: string[] }): Promise<unknown>;
   /** Le code Python de l'artisan, dans la scène (gardé par une liste blanche) ; la scène est enregistrée s'il réussit. */
   runCode(req: { dir: string; code: string }): Promise<CodeResult>;
+  /** Une copie de la scène de l'atelier sous ce nom, dans son dossier (ADR-116) : rien si la scène n'existe pas encore. */
+  snapshot(req: { dir: string; name: string }): Promise<void>;
+  /**
+   * La scène revient à une copie (ADR-116) : `name` est « scene-avant-pas.blend » (gardée par workshop.py avant chaque
+   * code de l'artisan) ou une copie faite par `snapshot`.
+   */
+  restore(req: { dir: string; name: string }): Promise<void>;
   /** Cinq photos de travail (face, trois-quarts, profil, dos, vue de jeu) et les mesures, sans rien changer. */
   photos(req: { dir: string; prefix: string }): Promise<Photos>;
   /** Blender exporte la scène de l'atelier : mesures du jeu, budget, .glb (Y en haut, 1 u = 1 m), cinq photos et les bandes d'animation. */
@@ -125,6 +159,12 @@ class TripoHttpError extends Error {
     this.status = status;
   }
 }
+
+/**
+ * Une planche jugée : ses quatre vues, ce qui l'identifie dans le carnet (tâches Tripo ou empreintes des images), et les
+ * entrées de `multiview-to-model` (adresses de Tripo, ou jetons des vues téléversées).
+ */
+type Planche = { images: ViewImage[]; from: string[]; inputs: () => Promise<Record<string, string>[]> };
 
 /** Tripo a fait échouer la tâche ou ne la connaît pas (plus) : rien à reprendre. */
 class TripoGone extends Error {}
@@ -209,13 +249,22 @@ export class RealModel3D implements Model3DPort {
       size: req.spec.size,
       max_tris: req.spec.tris,
       max_texture: maxTexture(req.spec),
+      facettes: !!req.spec.facettes,
     });
   }
 
   async runCode(req: { dir: string; code: string }): Promise<CodeResult> {
     const { palette } = JSON.parse(readFileSync(join(req.dir, "atelier.json"), "utf8")) as { palette: string[] };
     const r = (await this.#run(join(req.dir, "scene.blend"), req.dir, "pas", { mode: "python", blend: join(req.dir, "scene.blend"), code: req.code, palette }).catch((err: Error) => ({ ok: false, sortie: "", erreur: err.message }))) as CodeResult;
-    return { ok: !!r.ok, sortie: String(r.sortie ?? ""), erreur: r.erreur ?? null };
+    return { ok: !!r.ok, sortie: String(r.sortie ?? ""), erreur: r.erreur ?? null, sante: r.sante ?? null };
+  }
+
+  async snapshot(req: { dir: string; name: string }): Promise<void> {
+    if (existsSync(join(req.dir, "scene.blend"))) copyFileSync(join(req.dir, "scene.blend"), join(req.dir, basename(req.name)));
+  }
+
+  async restore(req: { dir: string; name: string }): Promise<void> {
+    await this.#run(null, req.dir, "restaurer", { mode: "restaurer", source: join(req.dir, basename(req.name)), blend: join(req.dir, "scene.blend") });
   }
 
   async photos(req: { dir: string; prefix: string }): Promise<Photos> {
@@ -232,6 +281,7 @@ export class RealModel3D implements Model3DPort {
       size: req.spec.size,
       max_tris: req.spec.tris,
       max_texture: maxTexture(req.spec),
+      facettes: !!req.spec.facettes,
     })) as { renders: string[]; bandes?: string[]; tris_after: number; dims: number[]; animations: string[]; durees?: { nom: string; duree_s: number }[]; controle?: Geometry };
     return { renders: s.renders, bandes: s.bandes ?? [], tris: s.tris_after, dims: s.dims.map((d) => Math.round(d * 100) / 100), animations: s.animations, durees: s.durees ?? [], controle: s.controle ?? null };
   }
@@ -311,7 +361,7 @@ export class RealModel3D implements Model3DPort {
     writeFileSync(join(this.#dir, "tripo", "key.json"), JSON.stringify({ key: k }), "utf8");
   }
 
-  async tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview }): Promise<TripoResult> {
+  async tripo(req: { image: Buffer; ext: string; spec: Model3DSpec; seed: number; step: (s: string) => void; views?: ViewsReview; sheet?: SheetPort; reference?: View }): Promise<TripoResult> {
     const key = this.#key();
     if (!key) throw new Error("Ajoutez d'abord votre clé Tripo");
     const u = this.#usage();
@@ -330,24 +380,31 @@ export class RealModel3D implements Model3DPort {
     const shape = { ...quality, model_seed: req.seed, texture_seed: req.seed };
     let model: TripoTask | null = null;
     let views: ViewImage[] | undefined;
-    // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo.
+    // La texture v3.5 retire l'éclairage peint dans les images (des couleurs propres, sans ombres cuites) et colle à leurs
+    // couleurs : sur les deux voies, la planche comme l'image seule (ADR-109).
+    const texture = { texture_version: "v3.5-20260815", delight: true, texture_alignment: "original_image" };
+    // La planche d'abord : le dos et les côtés viennent de vues dessinées, pas devinés par Tripo. Une planche que le
+    // validateur juge infidèle à l'image, même retouchée, est abandonnée : l'image seule, fidèle de face, vaut mieux.
     if (req.views) {
       try {
-        const planche = await this.#planche(order, token, image, req.views, req.step);
+        // Google d'abord s'il est là (ADR-110) ; s'il se dérobe avant le jugement, la planche de Tripo, comme avant.
+        // Une référence de profil ou de dos (ADR-115) : seul Google sait placer l'image dans sa case.
+        const google = req.sheet ? await this.#googlePlanche(key, req.sheet, req.views, req.step) : null;
+        if (!google && (req.reference ?? "front") !== "front") throw new Error("référence hors face, que la planche de Tripo ne sait pas tourner");
+        const planche = google ?? (await this.#planche(order, token, image, req.views, req.step));
         model = await order(
           "Tripo fabrique le modèle à partir des quatre vues",
           "/v3/generation/multiview-to-model",
-          { from: planche.tasks, model: TRIPO_MULTIVIEW_MODEL, ...quality },
-          () => ({ inputs: VIEWS.map((v) => ({ [v]: planche.urls[v] })), model: TRIPO_MULTIVIEW_MODEL, ...shape }),
+          { from: planche.from, model: TRIPO_MULTIVIEW_MODEL, ...texture, ...quality },
+          async () => ({ inputs: await planche.inputs(), model: TRIPO_MULTIVIEW_MODEL, ...texture, ...shape }),
         );
         views = planche.images;
       } catch (err) {
-        req.step(`Planche impossible (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
+        req.step(`Planche écartée (${(err as Error).message.slice(0, 160)}) : modèle tiré de l'image seule`);
       }
     }
-    // Depuis une seule image : la texture v3.5 retire l'éclairage peint dans l'image (des couleurs propres, sans ombres
-    // cuites), et le modèle regarde comme l'image, de face.
-    const single = { model: TRIPO_MODEL, texture_version: "v3.5-20260815", delight: true, orientation: "align_image" };
+    // Depuis une seule image : le modèle regarde comme l'image (la référence : de face, ou de profil, que l'artisan tourne).
+    const single = { model: TRIPO_MODEL, ...texture, orientation: "align_image" };
     model ??= await order("Tripo fabrique le modèle", "/v3/generation/image-to-model", { image, ...single, ...quality }, async () => ({ input: await token(), ...single, ...shape }));
     let last = model;
     const extras: Buffer[] = [];
@@ -518,12 +575,12 @@ export class RealModel3D implements Model3DPort {
     image: string,
     review: ViewsReview,
     step: (s: string) => void,
-  ): Promise<{ urls: Record<View, string>; images: ViewImage[]; tasks: string[] }> {
+  ): Promise<Planche> {
     const task = await order("Tripo dessine la planche (face, gauche, dos, droite)", "/v3/generation/image-to-multiview", { image }, async () => ({ input: await token() }));
     let urls = viewUrls(task, null);
     let images = await this.#viewImages(urls, step);
     const tasks = [task.task_id];
-    const edits = await review(images, 1);
+    const edits = await review(images, 1, "tripo");
     if (edits.length) {
       const body = { input: task.task_id, prompts: edits.map((e) => ({ view: e.view, prompt: e.prompt.slice(0, 1024) })) };
       const edited = await order(`Tripo retouche la planche (${edits.map((e) => e.view).join(", ")})`, "/v3/generation/edit-multiview", body, () => body);
@@ -531,9 +588,47 @@ export class RealModel3D implements Model3DPort {
       urls = viewUrls(edited, urls);
       images = await this.#viewImages(urls, step);
       tasks.push(edited.task_id);
-      await review(images, 2);
+      await review(images, 2, "tripo");
     }
-    return { urls, images, tasks };
+    const final = urls;
+    return { images, from: tasks, inputs: async () => VIEWS.map((v) => ({ [v]: final[v] })) };
+  }
+
+  /**
+   * La planche de Google (ADR-110) : la face est l'image de référence, Nano Banana dessine les trois autres vues. Elle
+   * passe par le même validateur ; une vue à retoucher est refaite par Nano Banana Pro, seule. Les quatre vues sont
+   * ensuite téléversées chez Tripo. null si Google n'a pas pu dessiner : la planche de Tripo prend le relais.
+   */
+  async #googlePlanche(key: string, sheet: SheetPort, review: ViewsReview, step: (s: string) => void): Promise<Planche | null> {
+    step("Google dessine la planche (gauche, dos, droite)");
+    let images: ViewImage[];
+    try {
+      images = await sheet.draw();
+    } catch (err) {
+      step(`Google indisponible (${(err as Error).message.slice(0, 160)}) : planche dessinée par Tripo`);
+      return null;
+    }
+    const edits = await review(images, 1, "google");
+    if (edits.length) {
+      for (const e of edits) {
+        step(`Google retouche la vue ${e.view} (Nano Banana Pro)`);
+        // Une retouche manquée garde la vue d'avant : le second jugement dira si la planche tient.
+        const image = await sheet.retouch(images, e).catch((err: Error) => (step(`Retouche de la vue ${e.view} impossible (${err.message.slice(0, 120)})`), null));
+        if (image) images = images.map((v) => (v.view === e.view ? { view: v.view, image } : v));
+      }
+      await review(images, 2, "google");
+    }
+    const final = images;
+    return {
+      images: final,
+      // L'empreinte de la commande : le contenu des quatre vues, pour reprendre sans repayer la même planche.
+      from: final.map((v) => createHash("sha256").update(v.image).digest("hex")),
+      inputs: async () => {
+        step("Envoi de la planche à Tripo");
+        const tokens = await Promise.all(final.map((v) => this.#upload(key, v.image, extOf(v.image))));
+        return VIEWS.map((v, k) => ({ [v]: tokens[k]! }));
+      },
+    };
   }
 
   async #viewImages(urls: Record<View, string>, step: (s: string) => void): Promise<ViewImage[]> {
@@ -665,6 +760,11 @@ function viewUrls(task: TripoTask, before: Record<View, string> | null): Record<
     else throw new Error("Tripo n'a pas rendu les quatre vues");
   }
   return urls;
+}
+
+/** L'extension d'une image d'après son contenu (les vues de Google arrivent sans nom de fichier). */
+function extOf(b: Buffer): string {
+  return b[0] === 0xff && b[1] === 0xd8 ? "jpg" : b.subarray(0, 4).toString("latin1") === "RIFF" ? "webp" : "png";
 }
 
 function findExe(dir: string, name: string): string | null {

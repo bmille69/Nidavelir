@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { createPortal } from "react-dom";
 import { navigate } from "../App.tsx";
-import { api, type Art3D, type ArtAsset, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtSpend, type ArtState, type AssetStatus } from "../api.ts";
+import { api, type Art3D, type ArtAsset, type ArtGoogle, type ArtGenerating, type ArtGenerator, type ArtStage, type ArtSpend, type ArtState, type AssetStatus } from "../api.ts";
 import { Markdown } from "./Conception.tsx";
 import { Choices, DirectionView, Moodboard, ReferenceBoard } from "./ArtVision.tsx";
 import { Icon } from "./Icon.tsx";
+import { SoundDirection } from "./SoundDirection.tsx";
+import { splitTeam, TeamCards } from "./TeamCards.tsx";
 
 const PHONE = typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 860px)").matches;
 const IMAGE_MARK = "§IMAGE§ ";
@@ -23,12 +26,40 @@ export const STATUS: Record<AssetStatus, string> = {
 };
 const ORDER: AssetStatus[] = ["a_valider", "production", "propose", "valide", "integration", "integre", "ecarte"];
 
-type Tab = "direction" | "assets" | "moodboard";
+type Filter = "all" | "integre" | "todo" | "running" | "ecarte";
+const FILTERS: [Filter, string][] = [
+  ["all", "Tous"],
+  ["integre", "Intégrés"],
+  ["todo", "À valider"],
+  ["running", "En cours"],
+  ["ecarte", "Écartés"],
+];
+type DaTab = "chat" | "direction" | "moodboard";
+
+/** Un visuel qui attend votre décision : un rendu à valider, un croquis à choisir, une image ou une 3D refusée. */
+function waitsForYou(a: ArtAsset): boolean {
+  if (a.status === "a_valider" || a.status === "valide") return true;
+  if (a.sketches?.length && !a.direction && a.sketches.every((s) => s.file)) return true;
+  return a.status === "production" && !!(a.model ? a.model.verdict && !a.model.verdict.ok : a.verdict && !a.verdict.ok);
+}
+
+/** Le groupe d'un visuel pour les filtres de la galerie. */
+function groupOf(a: ArtAsset): Exclude<Filter, "all"> {
+  if (a.status === "integre") return "integre";
+  if (a.status === "ecarte") return "ecarte";
+  return waitsForYou(a) ? "todo" : "running";
+}
+
+/** L'image d'une vignette : la 3D photographiée, le rendu validé, le dernier rendu, ou le premier croquis. */
+function thumbOf(a: ArtAsset): string | null {
+  return a.model?.renders[0] ?? a.verdict?.file ?? a.renders.at(-1) ?? a.sketches?.find((s) => s.file)?.file ?? null;
+}
 
 /**
- * L'espace du Directeur artistique (ADR-43) : vous lui parlez et lui confiez vos images d'inspiration ; il tient la
- * bible visuelle, propose les visuels à produire, les fait fabriquer par le générateur local (ADR-46) ou vous donne des
- * prompts Midjourney, et son validateur juge les rendus.
+ * Art & son (ADR-113), d'après la maquette : la galerie des visuels d'abord (filtres par statut), puis le son. Le
+ * Directeur artistique (ADR-43) se parle dans un panneau latéral qui garde aussi sa direction et le moodboard ; les
+ * réglages techniques (générateur local, clé Google, Blender, Tripo, installations) sont derrière la roue crantée.
+ * Le détail complet d'un visuel (étapes, rendus, 3D, verdicts, prompts, toutes ses actions) s'ouvre au clic.
  */
 export function ArtDirection({ slug }: { slug: string }) {
   const [state, setState] = useState<ArtState | null>(null);
@@ -36,8 +67,11 @@ export function ArtDirection({ slug }: { slug: string }) {
   const [draft, setDraft] = useState("");
   const [attached, setAttached] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [tab, setTab] = useState<Tab | null>(null);
-  const [pane, setPane] = useState<"chat" | "side">("chat");
+  const [filter, setFilter] = useState<Filter>("all");
+  // `#/p/<jeu>/art/da` ouvre directement la discussion avec le DA (lien « Répondre au Directeur artistique » d'« À vous »).
+  const [da, setDa] = useState<DaTab | null>(() => (/\/art\/da\b/.test(window.location.hash) ? "chat" : null));
+  const [settings, setSettings] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -45,7 +79,6 @@ export function ArtDirection({ slug }: { slug: string }) {
   const load = useCallback(() => api.art(slug).then(setState, (e: Error) => setError(e.message)), [slug]);
   useEffect(() => {
     setState(null);
-    setTab(null);
     void load();
   }, [load]);
   // Pendant qu'il répond ou que le validateur juge : on suit de près ; sinon, de temps en temps.
@@ -59,8 +92,31 @@ export function ArtDirection({ slug }: { slug: string }) {
   }, [busy, load]);
   const count = state?.messages.length ?? 0;
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [count, state?.busy.replying]);
+    if (da === "chat") endRef.current?.scrollIntoView({ block: "end" });
+  }, [count, state?.busy.replying, da]);
+  useEffect(() => {
+    const onHash = () => {
+      if (/\/art\/da\b/.test(window.location.hash)) setDa("chat");
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  // Le panneau refermé, l'adresse redevient celle de la galerie (un rechargement ne le rouvre pas).
+  useEffect(() => {
+    if (!da && /\/art\/da\b/.test(window.location.hash)) window.history.replaceState(null, "", `#/p/${slug}/art`);
+  }, [da, slug]);
+  // Échap ferme le panneau ouvert.
+  useEffect(() => {
+    if (!da && !settings && !open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setDa(null);
+      setSettings(false);
+      setOpen(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [da, settings, open]);
 
   async function send(text = draft) {
     const lines = [text.trim() || (attached.length ? "Voici des images d'inspiration." : ""), ...attached.map((f) => `${IMAGE_MARK}${f}`)].filter(Boolean);
@@ -108,14 +164,11 @@ export function ArtDirection({ slug }: { slug: string }) {
     if (e.dataTransfer.files.length) void upload(e.dataTransfer.files, target);
   };
 
-  if (!state) return <main className="project art-project muted">{error ?? "Chargement…"}</main>;
+  if (!state) return <main className="art-page muted">{error ?? "Chargement…"}</main>;
   const lastArt = [...state.messages].reverse().find((m) => m.role === "art");
   const lastIsArt = state.messages.at(-1)?.role === "art";
-  const toValidate = state.assets.filter((a) => a.status === "a_valider" || a.status === "valide").length;
-  // Tant que la direction n'est pas posée (pas de bible ni de visuel), on ouvre sur elle ; ensuite sur les visuels.
-  // Choisi une fois, à l'ouverture : l'onglet ne change plus tout seul pendant que vous travaillez.
-  const shown: Tab = tab ?? (state.bible || state.assets.length ? "assets" : "direction");
-  if (!tab) setTab(shown);
+  // Sa dernière question attend votre réponse : seul cas où le bouton du DA passe en braise (il vous attend).
+  const asking = !!lastArt && lastIsArt && lastArt.text.includes(CHOICE_MARK) && !state.busy.replying;
   // Vos réponses, message par message : l'option choisie reste marquée sous chaque question.
   const answers = new Map<string, Record<string, string>>();
   state.messages.forEach((m, i) => {
@@ -124,164 +177,445 @@ export function ArtDirection({ slug }: { slug: string }) {
     const pairs = (next?.text ?? "").split("\n").map((l) => /^(.+?\?)\s*→\s*(.+)$/.exec(l.trim())).filter((x): x is RegExpExecArray => !!x);
     answers.set(m.id, Object.fromEntries(pairs.map((p) => [p[1]!.trim(), p[2]!.trim()])));
   });
+  const ordered = ORDER.flatMap((s) => state.assets.filter((a) => a.status === s).sort((x, y) => queueRank(state.queue, x) - queueRank(state.queue, y)));
+  // Ce qui vous attend en tête de la galerie, comme dans « À vous ».
+  const sorted = [...ordered.filter(waitsForYou), ...ordered.filter((a) => !waitsForYou(a))];
+  const n = (f: Filter) => (f === "all" ? sorted.length : sorted.filter((a) => groupOf(a) === f).length);
+  const shown = filter === "all" ? sorted : sorted.filter((a) => groupOf(a) === filter);
+  const current = open ? (state.assets.find((a) => a.id === open) ?? null) : null;
+  const posed = !!state.bible || state.assets.length > 0;
+  // Ce qui manque à l'outillage : dit en une ligne, réglé dans « Réglages ».
+  const missing = [!state.generator.installed && "le générateur d'images local", state.assets.some((a) => a.model3d) && !state.workshop3d.blender.installed && "Blender", state.assets.some((a) => a.model3d) && !state.workshop3d.tripo.configured && "la clé Tripo"].filter(Boolean) as string[];
+  const start = () => {
+    setDa("chat");
+    void send("Construisons ensemble la direction artistique du jeu. Je n'ai pas d'idée précise : guide-moi.");
+  };
 
   return (
-    <main className={`project art-project pane-${pane}`}>
-      <div className="pane-switch" role="tablist">
-        <button role="tab" aria-selected={pane === "chat"} className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>
-          Discussion
-        </button>
-        <button role="tab" aria-selected={pane === "side"} className={pane === "side" ? "on" : ""} onClick={() => setPane("side")}>
-          Visuels
-          {toValidate > 0 && <span className="count warn">{toValidate}</span>}
-        </button>
+    <main className="art-page">
+      <div className="art-inner">
+        <header className="page-h">
+          <div>
+            <h2>Art &amp; son</h2>
+            <p>Les visuels et les sons du jeu, tels qu'on les voit en jeu.</p>
+          </div>
+          <span className="sp" />
+          <button className={`da-open${asking ? " asking" : ""}`} onClick={() => setDa("chat")} title={asking ? "Il attend votre réponse à sa question" : "Sa discussion, la direction visuelle et le moodboard"}>
+            <span className="da-av" aria-hidden="true">
+              DA
+            </span>
+            Parler au Directeur artistique
+            {asking && <span className="count warn">1</span>}
+            {state.busy.replying && <span className="live-dot" />}
+          </button>
+          <button className="rc-icon art-gear" onClick={() => setSettings(true)} aria-label="Réglages techniques" title="Réglages techniques : générateur local, clé Google, Blender, Tripo">
+            <Icon name="gear" size={17} />
+          </button>
+        </header>
+        {error && !da && !settings && !open && <p className="error small">{error}</p>}
+        {missing.length > 0 && (
+          <p className="art-missing small">
+            Il manque {missing.join(", ")} : le Directeur artistique fait sans (prompts Midjourney, visuels à déposer).{" "}
+            <button className="rail-link accent" onClick={() => setSettings(true)}>
+              Réglages
+            </button>
+          </p>
+        )}
+
+        {posed ? (
+          <>
+            <div className="recap-filters" role="group" aria-label="Filtrer les visuels">
+              {FILTERS.filter(([f]) => f === "all" || n(f) > 0 || f === "integre" || f === "todo").map(([f, label]) => (
+                <button key={f} className={`recap-chip${filter === f ? " on" : ""}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                  {label}
+                  <span className="n">{n(f)}</span>
+                </button>
+              ))}
+              <span className="sp" />
+              <small className="recap-hint">Cliquez un visuel pour tout son détail</small>
+            </div>
+            <div className="agrid">
+              {shown.map((a, i) => (
+                <AssetTile
+                  key={a.id}
+                  slug={slug}
+                  asset={a}
+                  index={i}
+                  generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
+                  validating={state.busy.validating.includes(a.id)}
+                  queued={state.queue?.findIndex((q) => q.id === a.id) ?? -1}
+                  onOpen={() => setOpen(a.id)}
+                  act={act}
+                />
+              ))}
+              {shown.length === 0 && (
+                <p className="recap-none">{state.assets.length ? "Aucun visuel ici." : "Aucun visuel pour l'instant. Le Directeur artistique en propose dès que la direction est posée."}</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="art-start">
+            <p>
+              Le Directeur artistique s'occupe de l'apparence de votre jeu. Pas besoin d'avoir des idées précises : il part de votre jeu, vous pose quelques questions de
+              goût sous forme de choix, cherche des références et rédige la <b>bible visuelle</b>, le guide que suivront tous les visuels.
+            </p>
+            <p className="muted small">Vous pourrez aussi lui confier des images qui vous plaisent (captures, affiches, jeux, films…) : il les regarde et en tire une direction.</p>
+            <button className="rail-btn primary" onClick={start}>
+              <Icon name="sparkle" size={15} /> Construire la direction artistique
+            </button>
+          </div>
+        )}
+
+        {/* Le son (ADR-91), ici avec les visuels ; il reste aussi dans Pilotage → Son. */}
+        <section className="art-sound" aria-label="Son">
+          <div className="sec-h">
+            <h3>
+              <Icon name="note" size={16} /> Son
+            </h3>
+            <span className="sp" />
+            <small>Le directeur sonore propose, vous écoutez et choisissez ; un chantier les branche.</small>
+          </div>
+          <SoundDirection slug={slug} />
+        </section>
       </div>
 
-      <section
-        className={`conversation ${dragging ? "dropping" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => drop(e, "moodboard")}
-      >
-        <div className="mode-bar">
-          <span className="badge mode art-badge">
-            <Icon name="palette" size={14} /> Direction artistique
-          </span>
-          <span className="muted small">Confiez vos idées et vos images : il propose une direction cohérente, cherche des références et prépare chaque visuel.</span>
-        </div>
-        <div className="messages">
-          {state.messages.length === 0 && (
-            <div className="empty art-empty">
-              <p>
-                Le Directeur artistique s'occupe de l'apparence de votre jeu. Pas besoin d'avoir des idées précises : il part de votre jeu, vous pose quelques questions
-                de goût sous forme de choix, cherche des références et rédige la <b>bible visuelle</b>, le guide que suivront tous les visuels.
-              </p>
-              <p className="muted small">Glissez ici des images qui vous plaisent (captures, affiches, jeux, films…) : il les regarde et en tire une direction.</p>
-              <button onClick={() => void send("Construisons ensemble la direction artistique du jeu. Je n'ai pas d'idée précise : guide-moi.")}>
-                <Icon name="sparkle" size={16} /> Construire la direction artistique
-              </button>
-            </div>
-          )}
-          {state.messages.map((m) => (
-            <div key={m.id} className={`msg ${m.role === "human" ? "human" : "director art"}`}>
-              <div className="who">{m.role === "human" ? "Vous" : "Directeur artistique (IA)"}</div>
-              <ArtText
-                text={m.text}
-                slug={slug}
-                choices={m.id === lastArt?.id && lastIsArt && !state.busy.replying}
-                onChoose={(answer) => void send(answer)}
-                answers={answers.get(m.id)}
-                direction={state.direction}
-                act={act}
-              />
-            </div>
-          ))}
-          {state.busy.replying && (
-            <div className="msg director art muted">
-              <span className="live-dot" /> {exploring[0] ?? "Le Directeur artistique regarde vos images et cherche des références"}… (une à quelques minutes)
-            </div>
-          )}
-          {!state.busy.replying &&
-            exploring.map((e) => (
-              <div key={e} className="msg director art muted">
-                <span className="live-dot" /> {e}…
-              </div>
-            ))}
-          <div ref={endRef} />
-        </div>
-        {error && <p className="error">{error}</p>}
-        {attached.length > 0 && (
-          <div className="art-attached">
-            {attached.map((f) => (
-              <span key={f} className="art-chip">
-                <img src={api.artFile(slug, f)} alt="" />
-                <button className="icon-btn" aria-label="Retirer" onClick={() => setAttached((a) => a.filter((x) => x !== f))}>
-                  <Icon name="close" size={12} />
-                </button>
-              </span>
-            ))}
-            <span className="muted small">Ajoutées au moodboard ; elles partent avec votre message.</span>
-          </div>
-        )}
-        <div className="composer">
-          <button className="secondary attach" onClick={() => fileInput.current?.click()} disabled={uploading} aria-label="Joindre des images" title="Joindre des images d'inspiration">
-            <Icon name="upload" size={18} />
-          </button>
-          <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => e.target.files && void upload(e.target.files, "moodboard")} />
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={PHONE ? "Écrivez au Directeur artistique…" : "Une idée, une envie, une référence… (Entrée pour envoyer). Glissez des images ici."}
-            rows={PHONE ? 1 : 3}
-            enterKeyHint="send"
-          />
-          <button onClick={() => void send()} disabled={(!draft.trim() && !attached.length) || uploading} aria-label="Envoyer">
-            <Icon name="arrow" size={18} className="send-icon" />
-            <span className="send-label">{uploading ? "Envoi…" : "Envoyer"}</span>
-          </button>
-        </div>
-      </section>
-
-      <aside className="panel art-panel">
-        <div className="tabs">
-          {(["direction", "assets", "moodboard"] as Tab[]).map((t) => (
-            <button key={t} className={shown === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-              {t === "assets" ? `Visuels (${state.assets.length})` : t === "moodboard" ? `Moodboard (${state.moodboard.length})` : "Direction"}
-            </button>
-          ))}
-        </div>
-
-        {shown === "direction" && <DirectionView slug={slug} bible={state.bible} direction={state.direction} assets={state.assets} act={act} />}
-
-        {shown === "assets" && (
-          <div className="art-assets">
-            <GeneratorCard generator={state.generator} act={act} />
-            {state.assets.some((a) => a.model3d) && <Workshop3DCard workshop={state.workshop3d} act={act} />}
-            {state.assets.length === 0 && <p className="muted small">Aucun visuel pour l'instant. Le Directeur artistique en propose dès que la direction est posée.</p>}
-            {ORDER.flatMap((s) => state.assets.filter((a) => a.status === s).sort((x, y) => queueRank(state.queue, x) - queueRank(state.queue, y))).map((a) => (
-              <AssetCard
-                key={a.id}
-                slug={slug}
-                asset={a}
-                queued={state.queue?.findIndex((q) => q.id === a.id) ?? -1}
-                need={state.queue?.find((q) => q.id === a.id)?.need ?? null}
-                validating={state.busy.validating.includes(a.id)}
-                generating={state.busy.generating.find((g) => g.asset === a.id) ?? null}
-                local={state.generator.installed}
-                ready3d={state.workshop3d.blender.installed && (state.workshop3d.tripo.configured || !!a.model3d?.simple)}
-                spend={state.spend?.[a.id] ?? null}
-                onUpload={(f) => void upload(f, a.id)}
-                act={act}
-              />
-            ))}
-          </div>
-        )}
-
-        {shown === "moodboard" && (
-          <div className="art-mood" onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, "moodboard")}>
-            <button className="secondary" onClick={() => fileInput.current?.click()} disabled={uploading}>
-              <Icon name="upload" size={16} /> Ajouter des images
-            </button>
-            {state.moodboard.length === 0 && (
-              <p className="muted small">
-                Glissez ici des images qui vous inspirent, ou demandez au Directeur artistique d'en chercher sur le web à partir de vos mots : il les regarde et note ce
-                qu'il en retient.
-              </p>
+      {(da || settings || current) &&
+        createPortal(
+          <>
+            <div className="rc-backdrop" onClick={() => (setDa(null), setSettings(false), setOpen(null))} />
+            {da && (
+              <aside className="rc-drawer da-drawer" role="dialog" aria-label="Directeur artistique">
+                <header className="rc-d-h">
+                  <span className="da-av" aria-hidden="true">
+                    DA
+                  </span>
+                  <div className="da-h">
+                    <b>Directeur artistique</b>
+                    <small>
+                      {state.messages.length} message{state.messages.length > 1 ? "s" : ""} · la bible visuelle et le moodboard
+                    </small>
+                  </div>
+                  <span className="sp" />
+                  <button className="rc-icon" onClick={() => setDa(null)} aria-label="Fermer">
+                    <Icon name="close" size={16} />
+                  </button>
+                </header>
+                <div className="art-panel">
+                  <div className="tabs">
+                    {(["chat", "direction", "moodboard"] as DaTab[]).map((t) => (
+                      <button key={t} className={da === t ? "tab active" : "tab"} onClick={() => setDa(t)}>
+                        {t === "chat" ? "Discussion" : t === "moodboard" ? `Moodboard (${state.moodboard.length})` : "Direction"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {da === "chat" && (
+                  <section
+                    className={`conversation da-chat ${dragging ? "dropping" : ""}`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(e) => drop(e, "moodboard")}
+                  >
+                    <div className="messages">
+                      {state.messages.length === 0 && (
+                        <div className="empty art-empty">
+                          <p>Confiez-lui vos idées et vos images : il propose une direction cohérente, cherche des références et prépare chaque visuel.</p>
+                          <p className="muted small">Glissez ici des images qui vous plaisent : il les regarde et en tire une direction.</p>
+                          <button onClick={() => void send("Construisons ensemble la direction artistique du jeu. Je n'ai pas d'idée précise : guide-moi.")}>
+                            <Icon name="sparkle" size={16} /> Construire la direction artistique
+                          </button>
+                        </div>
+                      )}
+                      {state.messages.map((m) => (
+                        <div key={m.id} className={`msg ${m.role === "human" ? "human" : "director art"}`}>
+                          {m.role !== "human" && (
+                            <span className="msg-av da-av" aria-hidden="true">
+                              DA
+                            </span>
+                          )}
+                          <div className="msg-main">
+                            {m.role !== "human" && (
+                              <div className="msg-h">
+                                <b className="who">Directeur artistique</b>
+                                <time>{hm(m.at)}</time>
+                              </div>
+                            )}
+                            <ArtText
+                              text={m.text}
+                              slug={slug}
+                              choices={m.id === lastArt?.id && lastIsArt && !state.busy.replying}
+                              onChoose={(answer) => void send(answer)}
+                              answers={answers.get(m.id)}
+                              direction={state.direction}
+                              act={act}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      {state.busy.replying && (
+                        <p className="event wait">
+                          <span className="live-dot" /> {exploring[0] ?? "Le Directeur artistique regarde vos images et cherche des références"}… (une à quelques minutes)
+                        </p>
+                      )}
+                      {!state.busy.replying &&
+                        exploring.map((e) => (
+                          <p key={e} className="event wait">
+                            <span className="live-dot" /> {e}…
+                          </p>
+                        ))}
+                      <div ref={endRef} />
+                    </div>
+                    {error && <p className="error small">{error}</p>}
+                    {attached.length > 0 && (
+                      <div className="art-attached">
+                        {attached.map((f) => (
+                          <span key={f} className="art-chip">
+                            <img src={api.artFile(slug, f)} alt="" />
+                            <button className="icon-btn" aria-label="Retirer" onClick={() => setAttached((a) => a.filter((x) => x !== f))}>
+                              <Icon name="close" size={12} />
+                            </button>
+                          </span>
+                        ))}
+                        <span className="muted small">Ajoutées au moodboard ; elles partent avec votre message.</span>
+                      </div>
+                    )}
+                    <div className="composer">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            void send();
+                          }
+                        }}
+                        placeholder={PHONE ? "Écrivez au Directeur artistique…" : "Écrire au Directeur artistique… une idée, une envie, une référence (Entrée pour envoyer). Glissez des images ici."}
+                        rows={PHONE ? 1 : 2}
+                        enterKeyHint="send"
+                      />
+                      <div className="composer-row">
+                        <button className="secondary attach" onClick={() => fileInput.current?.click()} disabled={uploading} aria-label="Joindre des images" title="Joindre des images d'inspiration">
+                          <Icon name="image" size={16} />
+                          <span className="attach-label">Joindre une image</span>
+                        </button>
+                        <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => e.target.files && void upload(e.target.files, "moodboard")} />
+                        <span className="sp" />
+                        <button className="send" onClick={() => void send()} disabled={(!draft.trim() && !attached.length) || uploading} aria-label="Envoyer">
+                          <Icon name="arrow" size={16} className="send-icon" />
+                          <span className="send-label">{uploading ? "Envoi…" : "Envoyer"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                )}
+                {da === "direction" && (
+                  <div className="rc-d-b art-panel-body">
+                    {error && <p className="error small">{error}</p>}
+                    <DirectionView slug={slug} bible={state.bible} direction={state.direction} assets={state.assets} act={act} />
+                  </div>
+                )}
+                {da === "moodboard" && (
+                  <div className="rc-d-b art-panel-body art-mood" onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, "moodboard")}>
+                    {error && <p className="error small">{error}</p>}
+                    <button className="rail-btn" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                      <Icon name="upload" size={15} /> Ajouter des images
+                    </button>
+                    {state.moodboard.length === 0 && (
+                      <p className="muted small">
+                        Glissez ici des images qui vous inspirent, ou demandez au Directeur artistique d'en chercher sur le web à partir de vos mots : il les regarde et note ce
+                        qu'il en retient.
+                      </p>
+                    )}
+                    <Moodboard slug={slug} images={state.moodboard} direction={state.direction} act={act} />
+                    <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => e.target.files && void upload(e.target.files, "moodboard")} />
+                  </div>
+                )}
+              </aside>
             )}
-            <Moodboard slug={slug} images={state.moodboard} direction={state.direction} act={act} />
+            {settings && (
+              <aside className="rc-drawer art-settings" role="dialog" aria-label="Réglages techniques">
+                <header className="rc-d-h">
+                  <Icon name="gear" size={16} />
+                  <b>Réglages techniques · Art &amp; son</b>
+                  <span className="sp" />
+                  <button className="rc-icon" onClick={() => setSettings(false)} aria-label="Fermer">
+                    <Icon name="close" size={16} />
+                  </button>
+                </header>
+                <div className="rc-d-b">
+                  <p className="set-intro">Ces réglages ne servent qu'à l'outillage du Directeur artistique. Ils ne sont plus affichés par défaut.</p>
+                  {error && <p className="error small">{error}</p>}
+                  <section className="set-group">
+                    <h4>
+                      <Icon name="image" size={15} /> Générateur d'images local{" "}
+                      <span className={`rc-pill ${state.generator.installed ? "ok" : "grey"}`}>{state.generator.installed ? "prêt" : state.generator.installing ? "installation…" : "à installer"}</span>
+                    </h4>
+                    <p>Utilisé pour les croquis, les essais et les planches. Tourne sur votre carte graphique.</p>
+                    <GeneratorCard generator={state.generator} act={act} />
+                  </section>
+                  {state.google && (
+                    <section className="set-group">
+                      <h4>
+                        <Icon name="sparkle" size={15} /> Clé Google (Gemini) <span className={`rc-pill ${state.google.configured ? "ok" : "grey"}`}>{state.google.configured ? "enregistrée" : "facultative"}</span>
+                      </h4>
+                      <p>Pour les rendus détaillés quand le générateur local ne suffit pas.</p>
+                      <GoogleCard google={state.google} act={act} />
+                    </section>
+                  )}
+                  <section className="set-group">
+                    <h4>
+                      <Icon name="cube" size={15} /> Blender et Tripo{" "}
+                      <span className={`rc-pill ${state.workshop3d.blender.installed && state.workshop3d.tripo.configured ? "ok" : "grey"}`}>
+                        {state.workshop3d.blender.installed && state.workshop3d.tripo.configured ? "prêts" : `${[!state.workshop3d.blender.installed, !state.workshop3d.tripo.configured].filter(Boolean).length} étape(s)`}
+                      </span>
+                    </h4>
+                    <p>Tripo transforme une image validée en modèle 3D ; Blender le nettoie et le contrôle avant intégration.</p>
+                    <Workshop3DCard workshop={state.workshop3d} act={act} />
+                  </section>
+                </div>
+              </aside>
+            )}
+            {current && (
+              <aside className="rc-drawer art-detail" role="dialog" aria-label={`Visuel ${current.id}`}>
+                <header className="rc-d-h">
+                  <span className="k">
+                    {current.id} · {current.type}
+                  </span>
+                  <span className="sp" />
+                  <button className="rc-icon" onClick={() => setOpen(null)} aria-label="Fermer">
+                    <Icon name="close" size={16} />
+                  </button>
+                </header>
+                <div className="rc-d-b">
+                  {error && <p className="error small">{error}</p>}
+                  <AssetCard
+                    slug={slug}
+                    asset={current}
+                    queued={state.queue?.findIndex((q) => q.id === current.id) ?? -1}
+                    need={state.queue?.find((q) => q.id === current.id)?.need ?? null}
+                    validating={state.busy.validating.includes(current.id)}
+                    generating={state.busy.generating.find((g) => g.asset === current.id) ?? null}
+                    local={state.generator.installed}
+                    ready3d={state.workshop3d.blender.installed && (state.workshop3d.tripo.configured || !!current.model3d?.simple)}
+                    spend={state.spend?.[current.id] ?? null}
+                    onUpload={(f) => void upload(f, current.id)}
+                    act={act}
+                  />
+                </div>
+              </aside>
+            )}
+          </>,
+          document.body,
+        )}
+    </main>
+  );
+}
+
+const hm = (iso: string) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+/** La pastille d'un visuel : vert = dans le jeu, braise = vous attend, glace = en route, gris = de côté ou proposé. */
+function tilePill(a: ArtAsset, generating: ArtGenerating | null, validating: boolean, queued: number): [string, string] {
+  if (generating) return ["cyan", `Fabrication ${generating.round}/${generating.rounds}`];
+  if (validating) return ["cyan", "Le validateur regarde"];
+  if (a.sketches?.length && !a.direction && a.sketches.every((s) => s.file)) return ["ember", "Croquis à choisir"];
+  if (a.status === "integre") return ["ok", "Intégré"];
+  if (a.status === "ecarte") return ["grey", "Écarté"];
+  if (a.status === "a_valider") return ["ember", "À valider"];
+  if (a.status === "valide") return ["ember", "Validé, à intégrer"];
+  if (a.status === "integration") return ["cyan", "Intégration"];
+  if (waitsForYou(a)) return ["ember", "Votre décision"];
+  if (a.status === "production") return ["cyan", "En production"];
+  if (a.launchedAt) return ["cyan", "Confié"];
+  return ["grey", queued >= 0 ? `En file · n° ${queued + 1}` : "Proposé"];
+}
+
+/** Une vignette de la galerie : l'image, le statut, le nom ; le geste attendu sur place, tout le détail au clic. */
+function AssetTile({
+  slug,
+  asset: a,
+  index,
+  generating,
+  validating,
+  queued,
+  onOpen,
+  act,
+}: {
+  slug: string;
+  asset: ArtAsset;
+  index: number;
+  generating: ArtGenerating | null;
+  validating: boolean;
+  queued: number;
+  onOpen: () => void;
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  const thumb = thumbOf(a);
+  const [tone, label] = tilePill(a, generating, validating, queued);
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  return (
+    <div
+      className={`acard st-${a.status}${tone === "ember" ? " todo" : ""}`}
+      style={{ "--i": Math.min(index, 14) } as CSSProperties}
+      role="button"
+      tabIndex={0}
+      aria-label={`${a.id} ${a.name} : ${label}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <div className={`ashot${thumb ? "" : " ph"}`}>
+        {thumb ? (
+          <img src={api.artFile(slug, thumb)} alt="" loading="lazy" />
+        ) : (
+          <span className="rc-ph">
+            <Icon name={a.model3d ? "cube" : "image"} size={18} />
+            Pas encore d'aperçu
+          </span>
+        )}
+        <span className="ast">
+          <span className={`rc-pill ${tone}`}>{label}</span>
+        </span>
+        {a.model3d && <span className="rc-tag">3D</span>}
+      </div>
+      <div className="acard-b">
+        <small>
+          {a.id} · {a.type}
+        </small>
+        <b>{a.name}</b>
+        {a.status === "a_valider" && !validating && !generating && (
+          <div className="dacts" onClick={stop}>
+            <button className="rail-btn primary" onClick={() => void act(() => api.artDecide(slug, a.id, "valider"))}>
+              Valider
+            </button>
+            <button className="rail-btn" onClick={() => void act(() => api.artDecide(slug, a.id, "refaire"))}>
+              Refaire
+            </button>
           </div>
         )}
-      </aside>
-    </main>
+        {a.status === "valide" && (
+          <div className="dacts" onClick={stop}>
+            <button
+              className="rail-btn primary"
+              onClick={() =>
+                void act(async () => {
+                  const { thread } = await api.artIntegrate(slug, a.id);
+                  navigate({ page: "project", slug, thread, view: "discussion" });
+                })
+              }
+            >
+              Faire intégrer
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -303,7 +637,9 @@ function ArtText({
   direction: ArtState["direction"];
   act: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
-  const lines = text.split("\n");
+  // Les encarts de l'équipe (ADR-98) : consultations et souvenirs proposés, à part du texte.
+  const team = splitTeam(text);
+  const lines = team.text.split("\n");
   const images = lines.filter((l) => l.startsWith(IMAGE_MARK)).map((l) => l.slice(IMAGE_MARK.length).trim());
   const questions = lines.filter((l) => l.startsWith(CHOICE_MARK)).map((l) => l.slice(CHOICE_MARK.length).split(" || "));
   const boards = lines.filter((l) => l.startsWith(BOARD_MARK)).map((l) => l.slice(BOARD_MARK.length).trim());
@@ -334,6 +670,7 @@ function ArtText({
         <ReferenceBoard key={b} slug={slug} board={b} direction={direction} act={act} />
       ))}
       {questions.length > 0 && <Choices slug={slug} questions={questions} enabled={choices} onChoose={onChoose} answers={answers} />}
+      <TeamCards consults={team.consults} memories={team.memories} />
     </>
   );
 }
@@ -557,6 +894,59 @@ function Workshop3DCard({ workshop: w, act }: { workshop: Art3D; act: (fn: () =>
       ) : (
         <p className="muted small">Clé Tripo enregistrée · {w.tripo.credits} crédits utilisés ce mois-ci, plafond {w.tripo.cap}.</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Google Gemini (ADR-110) : votre clé, comme celle de Tripo (masquée, jamais renvoyée), le plafond du mois et sa dépense.
+ * Sans clé, rien ne change : le générateur local dessine tout.
+ */
+function GoogleCard({ google: g, act }: { google: ArtGoogle; act: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const [key, setKey] = useState("");
+  const [cap, setCap] = useState(String(g.cap));
+  const usd = (n: number) => `${n.toFixed(2).replace(".", ",")} $`;
+  const capRow = (
+    <div className="art-key-row">
+      <input type="number" min={0} max={1000} step={1} value={cap} onChange={(e) => setCap(e.target.value)} aria-label="Plafond mensuel Google, en dollars" />
+      <button className="small secondary" disabled={!(Number(cap) >= 0) || Number(cap) === g.cap || cap.trim() === ""} onClick={() => void act(() => api.artGoogleCap(Number(cap)))}>
+        Changer le plafond
+      </button>
+    </div>
+  );
+  if (g.configured)
+    return (
+      <div className="art-gen panel-card">
+        <p className="muted small art-gen-ready">
+          <Icon name="check" size={14} /> Clé Google (Gemini) enregistrée · {usd(g.usd)} dépensés ce mois-ci, plafond {usd(g.cap)}. Croquis, essais et vues de la planche par
+          Nano Banana 2.1, retouches finales par Nano Banana Pro ; le générateur local prend le relais si Google ne répond pas.
+        </p>
+        {capRow}
+      </div>
+    );
+  return (
+    <div className="art-gen panel-card">
+      <header className="art-gen-head">
+        <Icon name="sparkle" size={18} />
+        <b>Clé Google (Gemini)</b>
+        <span className="badge">Facultatif</span>
+      </header>
+      <div className="art-key">
+        <p className="muted small">
+          Google dessine alors les visuels (Nano Banana, service payant :{" "}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+            aistudio.google.com/apikey
+          </a>
+          ), environ 0,03 à 0,13 $ par image, dans le style des visuels déjà validés. Plafond : {usd(g.cap)} par mois ; au-delà, le générateur local reprend.
+        </p>
+        <div className="art-key-row">
+          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="AIza…" autoComplete="off" />
+          <button className="small" disabled={key.trim().length < 8} onClick={() => void act(() => api.artGoogleKey(key.trim()).then(() => setKey("")))}>
+            Enregistrer
+          </button>
+        </div>
+        {capRow}
+      </div>
     </div>
   );
 }
@@ -806,8 +1196,16 @@ function AssetCard({
             <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => e.target.files?.length && onUpload(e.target.files)} />
           </>
         )}
-        {a.model3d && (a.verdict?.ok || a.model3d.simple) && ready3d && !generating && ["propose", "production", "a_valider", "valide"].includes(a.status) && (
-          <button className="small" disabled={validating} onClick={() => void act(() => api.artModel(slug, a.id))}>
+        {a.model3d && (a.verdict?.ok || a.model3d.simple) && ready3d && !generating && ["propose", "production", "a_valider", "valide", "integre"].includes(a.status) && (
+          <button
+            className={a.status === "integre" ? "secondary small" : "small"}
+            disabled={validating}
+            title={a.status === "integre" ? "Tripo refait le modèle de zéro ; s'il est validé, il remplace celui du jeu (crédits Tripo et images Google)" : undefined}
+            onClick={() => {
+              if (a.status === "integre" && !window.confirm(`Refaire la 3D de ${a.id} « ${a.name} » ? Le nouveau modèle remplacera celui du jeu une fois validé. Cela coûte des crédits Tripo et quelques images Google.`)) return;
+              void act(() => api.artModel(slug, a.id));
+            }}
+          >
             <Icon name="cube" size={14} /> {a.model ? "Refaire la 3D" : "Fabriquer la 3D"}
           </button>
         )}

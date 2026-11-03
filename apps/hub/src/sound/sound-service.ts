@@ -107,6 +107,10 @@ export class SoundService {
   readonly #generating = new Map<string, Set<string>>();
   readonly #errors = new Map<string, string>();
   readonly #background = new Set<Promise<unknown>>();
+  /** La mémoire du studio (ADR-99), ajoutée à ses consignes. */
+  memory: (() => string) | null = null;
+  /** Un son proposé, choisi, retiré ou vérifié : le plan de production qui l'attend avance (ADR-107). */
+  onChange: ((project: string) => void) | null = null;
   #credits: { at: number; value: SoundCredits | null } | null = null;
   #queue: Promise<void> = Promise.resolve();
 
@@ -189,14 +193,33 @@ export class SoundService {
 
   // ── Le directeur sonore propose ──
 
+  /** La clé ElevenLabs est réglée (les essais sont possibles). */
+  configured(): boolean {
+    return this.#gen.configured();
+  }
+
   /** « Demander des sons » : le directeur sonore propose une liste, que vous écoutez et choisissez ensuite. */
   propose(session: HumanSession, project: string, request: string): void {
     assertHumanSession(session);
+    this.#track(this.#propose(project, request).catch(() => {}));
+  }
+
+  /**
+   * Un plan de production demande ses sons (ADR-107) : même directeur sonore, même liste à écouter et à choisir par vous ;
+   * rend les numéros proposés. Aucune génération : les essais restent sur votre clic.
+   */
+  proposeFor(project: string, request: string): Promise<string[]> {
+    const job = this.#propose(project, request);
+    this.#track(job.catch(() => {}));
+    return job;
+  }
+
+  #propose(project: string, request: string): Promise<string[]> {
     const p = this.#projects.get(project);
     if (this.#proposing.has(project)) throw new SoundError("Le directeur sonore prépare déjà une liste");
     this.#proposing.add(project);
     this.#errors.delete(project);
-    const job = (async () => {
+    return (async () => {
       try {
         const read = (rel: string, max: number) => (existsSync(join(p.root, rel)) ? readFileSync(join(p.root, rel), "utf8").slice(0, max) : "");
         const existing = this.sounds(project);
@@ -209,24 +232,29 @@ export class SoundService {
         ]
           .filter(Boolean)
           .join("\n\n");
-        const { data } = await this.#orchestrator.structured({ systemPrompt: SOUND_DIRECTOR, prompt, jsonSchema: PROPOSAL_SCHEMA, meta: { project, agent: "sound_director" } });
+        const { data } = await this.#orchestrator.structured({ systemPrompt: [SOUND_DIRECTOR, this.memory?.() ?? ""].filter(Boolean).join("\n\n"), prompt, jsonSchema: PROPOSAL_SCHEMA, meta: { project, agent: "sound_director" } });
         const out = Proposal.parse(data);
         const all = this.sounds(project);
         let n = all.reduce((m, s) => Math.max(m, Number(s.id.slice(2))), 0);
+        const ids: string[] = [];
         for (const s of out.sounds) {
           n++;
-          all.push({ id: `S-${String(n).padStart(4, "0")}`, ...s, status: "propose", takes: [], chosen: null, path: null, task: null, note: null });
+          const id = `S-${String(n).padStart(4, "0")}`;
+          ids.push(id);
+          all.push({ id, ...s, status: "propose", takes: [], chosen: null, path: null, task: null, note: null });
         }
         this.#write(project, all);
         await this.#commit(project, [MANIFEST], `studio: le directeur sonore propose ${out.sounds.length} son(s)`);
         this.#journal.append({ project, actor: { kind: "system" }, type: "sound.proposed", subject: null, payload: { count: out.sounds.length, note: out.note } });
+        this.onChange?.(project);
+        return ids;
       } catch (err) {
         this.#errors.set(project, `Directeur sonore : ${(err as Error).message.slice(0, 400)}`);
+        throw err;
       } finally {
         this.#proposing.delete(project);
       }
     })();
-    this.#track(job);
   }
 
   /** Vous retouchez un son avant de le générer (description, durée, boucle). */
@@ -245,6 +273,7 @@ export class SoundService {
     this.#write(project, all.filter((x) => x.id !== id));
     for (const t of s.takes) rmSync(join(this.takesDir(project), t.file), { force: true });
     void this.#commit(project, [MANIFEST], `studio: son ${id} retiré`);
+    this.onChange?.(project);
   }
 
   // ── Essais ──
@@ -295,6 +324,7 @@ export class SoundService {
     if (["en_integration", "integre"].includes(s.status)) throw new SoundError("Ce son est déjà dans le jeu");
     const out = this.#update(project, id, { chosen: file, status: "choisi" });
     void this.#commit(project, [MANIFEST], `studio: son ${id} choisi`);
+    this.onChange?.(project);
     return out;
   }
 
@@ -303,10 +333,19 @@ export class SoundService {
   /** « Intégrer les sons choisis » : copiés dans le jeu, puis un chantier les branche. */
   async integrate(session: HumanSession, project: string): Promise<{ task: Task; after: string | null }> {
     assertHumanSession(session);
+    return this.#integrate(project, null, null, "human");
+  }
+
+  /** Le plan de production branche ses sons (ADR-107) : seulement ceux-là, choisis par vous, dans la discussion du plan. */
+  integrateFor(project: string, ids: string[], thread: string): Promise<{ task: Task; after: string | null }> {
+    return this.#integrate(project, new Set(ids), thread, "system");
+  }
+
+  async #integrate(project: string, only: Set<string> | null, inThread: string | null, by: "human" | "system"): Promise<{ task: Task; after: string | null }> {
     const p = this.#projects.get(project);
     if (p.autonomy === "supervised") throw new SoundError("En « Je valide tout », demandez l'intégration des sons au directeur dans une discussion");
     // Les sons choisis, et ceux qu'un chantier précédent a copiés sans les brancher.
-    const chosen = this.sounds(project).filter((s) => (s.status === "choisi" && s.chosen) || s.status === "non_branche");
+    const chosen = this.sounds(project).filter((s) => ((s.status === "choisi" && s.chosen) || s.status === "non_branche") && (!only || only.has(s.id)));
     if (!chosen.length) throw new SoundError("Aucun son choisi à intégrer");
     const godot = isGodot(p.root);
     const copied: string[] = [];
@@ -335,14 +374,14 @@ export class SoundService {
       "Ne change aucune règle du jeu. Les tests et les parties gardées doivent passer à l'identique.",
       "Dans ton compte rendu : pour chaque son, l'endroit exact du code qui le joue.",
     ].join("\n");
-    const thread = this.#conversations.createThread(project, `Sons : ${chosen.map((s) => s.name).join(", ").slice(0, 60)}`);
+    const thread = inThread ? this.#conversations.getThread(project, inThread) : this.#conversations.createThread(project, `Sons : ${chosen.map((s) => s.name).join(", ").slice(0, 60)}`, "sound");
     const title = `${chosen.map((s) => s.id).join(", ")} : brancher ${chosen.length === 1 ? `le son « ${chosen[0]!.name} »` : `${chosen.length} sons`}`.slice(0, 160);
     const task = this.#tasks.createFromConversation(project, { title, goal: goal.slice(0, 4000) }, thread.id);
     for (const s of chosen) this.#update(project, s.id, { status: "en_integration", task: task.id, note: null });
     await this.#commit(project, [MANIFEST], `studio: sons confiés à ${task.id}`);
     const { after } = await this.#tasks.launch(project, task.id);
     this.#conversations.notify(project, thread.id, `♪ ${chosen.length} son(s) copiés dans le jeu ; ${after ? `${task.id} attend son tour après ${after.id}` : `${task.id} lancé`} pour les brancher. Après la fusion, le hub vérifie que chacun est bien joué quelque part.`);
-    this.#journal.append({ project, actor: { kind: "human" }, type: "sound.integration_requested", subject: task.id, payload: { sounds: chosen.map((s) => s.id) } });
+    this.#journal.append({ project, actor: by === "human" ? { kind: "human" } : { kind: "system" }, type: "sound.integration_requested", subject: task.id, payload: { sounds: chosen.map((s) => s.id) } });
     return { task: this.#tasks.get(project, task.id), after: after?.id ?? null };
   }
 
@@ -363,6 +402,7 @@ export class SoundService {
     }
     await this.#commit(task.project, [MANIFEST], `studio: sons de ${task.id} vérifiés`);
     this.#journal.append({ project: task.project, actor: { kind: "system" }, type: "sound.checked", subject: task.id, payload: { sounds: sounds.map((s) => s.id) } });
+    this.onChange?.(task.project);
   }
 
   /** Branché sur les changements de statut des chantiers : un chantier de sons fusionné est vérifié. */

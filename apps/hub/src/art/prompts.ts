@@ -88,14 +88,14 @@ Le circuit d'un visuel (ADR-49), dans cet ordre, sans en sauter :
    esprit). Le hub les fabrique et demande à l'utilisateur laquelle il préfère, d'un clic. Il n'y a pas de croquis pour
    une petite icône ou un visuel déjà cadré : [[GENERER]] directement.
 3. FABRICATION : le croquis choisi est décliné en variantes ; le validateur choisit la meilleure. Pour un modèle 3D, il
-   juge seulement la FORME (silhouette, proportions, pose, netteté) : les couleurs exactes et les petits détails sont
-   repeints ensuite dans Blender avec la palette de la fiche. Tu n'interviens pas ; le hub enchaîne seul.
+   juge la FORME (silhouette, proportions, pose, netteté) et les COULEURS : Tripo recopie la peinture de l'image sur le
+   modèle, Blender ne fait que la nuancer. Tu n'interviens pas ; le hub enchaîne seul.
 4. ATELIER 3D (si [[MODELE3D]]) : Tripo fait le modèle à partir de l'image (ou rien pour un objet simple, modélisé
-   directement dans Blender), puis l'artisan 3D le nettoie et le repeint dans Blender en regardant ses photos.
+   directement dans Blender), puis l'artisan 3D le range dans Blender (orientation, matière, teintes vers la palette).
 5. DANS LE JEU : le visuel part tout seul chez le directeur du projet, puis le hub le photographie dans une scène vitrine.
 Pendant les étapes 3 à 5, ne pose pas de question sur ce visuel : note les remarques de l'utilisateur et applique-les au
 tour suivant. S'il dit que ça ne va pas, repars du cadrage (questions) ou de nouveaux croquis, pas d'une rustine.
-Mets dans la fiche (specs) les codes hexadécimaux de la palette du visuel : l'artisan 3D les utilise pour repeindre.
+Mets dans la fiche (specs) les codes hexadécimaux de la palette du visuel : l'artisan 3D y ramène les teintes du modèle.
 - Midjourney (utilisé à la main par l'utilisateur, pas d'accès automatique), quand le générateur local n'est pas prêt : des
   prompts en anglais, précis, dans le style de la bible, avec les paramètres utiles (--ar, --stylize, --style raw, --no …). Pour
   la cohérence, indique quelles images du moodboard joindre comme référence de style (--sref) : l'utilisateur les déposera lui-même.
@@ -125,7 +125,9 @@ Balises (retirées de l'affichage et appliquées par le hub ; place-les à la fi
   fiche ; la 3D part tout de suite. JAMAIS « simple » pour ce qui se voit de près ou porte le jeu (l'arme du joueur en vue
   à la première personne, un personnage, un ennemi, un objet héros) : l'artisan n'assemble que des boîtes et des cylindres,
   bien plus pauvres qu'un modèle Tripo. Un modèle Tripo jugé « mou » ou « baveux » se reprend par Tripo, avec un budget
-  plus haut et une image plus nette, pas en le remplaçant par une version faite main. « taille » : plus grande dimension en mètres dans le jeu ; « triangles » : budget, que le
+  plus haut et une image plus nette, pas en le remplaçant par une version faite main. Ajoute « facettes » pour un style
+  low-poly à facettes (chaque face plate, arêtes franches) : sans lui, Tripo lisse le modèle et ses arêtes bavent. Le hub
+  le met aussi d'office quand la fiche dit « low-poly » ou « facettes ». « taille » : plus grande dimension en mètres dans le jeu ; « triangles » : budget, que le
   jeu web affiche sans peine : 15000 à 25000 pour un personnage principal, 8000 à 15000 pour un ennemi ou un PNJ, 8000 à
   15000 pour l'arme du joueur en vue à la première personne (elle remplit l'écran), 1000 à 5000 pour un objet ou un décor
   (trop peu écrase les détails : surface bosselée, couleurs qui bavent) ; « squelette » s'il doit être animé ; « animations » : 8 au
@@ -311,6 +313,7 @@ export function parseModel3D(raw: string): Model3DSpec {
     rig: animations.length > 0 || /squelette/i.test(raw),
     animations,
     ...(/\bsimple\b/i.test(raw) ? { simple: true } : {}),
+    ...(/\bfacett/i.test(raw) ? { facettes: true } : {}),
   };
 }
 
@@ -392,16 +395,22 @@ export const PICK_SCHEMA = {
       maxLength: 1000,
       description: "si on te dit que Flux Kontext est prêt et que le meilleur essai est proche, avec des défauts localisés : la consigne de retouche en anglais (sinon null)",
     },
+    orientation: {
+      type: "string",
+      enum: ["face", "profil_droite", "profil_gauche", "trois_quarts", "dos"],
+      description:
+        "pour une image qui servira à la 3D : l'angle sous lequel le meilleur essai montre le sujet. profil_droite si le sujet regarde vers la DROITE de l'image, profil_gauche vers la GAUCHE ; trois_quarts entre face et profil",
+    },
   },
 } as const;
 
 /**
- * Le validateur devant une image qui servira de modèle à la 3D (ADR-49) : il juge la forme, pas la peinture, car l'artisan
- * 3D repeint ensuite le modèle dans Blender avec la palette de la fiche.
+ * Le validateur devant une image qui servira de modèle à la 3D (ADR-49, ADR-54, ADR-109) : Tripo recopie forme ET peinture,
+ * Blender ne repeint plus ; il juge donc la forme et les grandes couleurs.
  */
 export const REFERENCE_VALIDATOR_SYSTEM = `Tu es le VALIDATEUR ARTISTIQUE de Nidavellir. Les images que tu juges serviront de MODÈLE à une 3D : Tripo en tire
-un modèle 3D, puis l'artisan 3D le nettoie et le REPEINT dans Blender avec la palette de la fiche. Tu juges donc la FORME,
-pas la peinture. Ton dossier de travail est studio/art/ : lis bible.md, la fiche de l'asset dans assets.json, regarde le
+un modèle 3D dont la FORME et la PEINTURE sont recopiées de l'image ; l'artisan 3D, dans Blender, ne fait ensuite que le
+ranger et nuancer les teintes, il ne repeint pas. Tu juges donc la forme ET les couleurs. Ton dossier de travail est studio/art/ : lis bible.md, la fiche de l'asset dans assets.json, regarde le
 croquis choisi par le directeur créatif s'il y en a un, puis REGARDE chaque essai (outil Read).
 Ce qui compte (et peut bloquer) : silhouette lisible et fidèle à la fiche et au croquis choisi (le trait qui définit l'asset :
 une épaulière énorme, une tête en pointe, quatre pattes au lieu de huit…), proportions, objet entier dans le cadre, vue de face
@@ -409,7 +418,9 @@ une épaulière énorme, une tête en pointe, quatre pattes au lieu de huit…),
 aucune cape, jupe longue ou arme qui soude un membre au corps quand il sera animé), fond uni, image nette, lumière
 douce et égale. Ce qui bloque aussi, parce que Tripo le recopie sur le modèle : lueur forte, halo, ombre portée marquée,
 reflets brillants, flou.
-Ce qui ne bloque PAS (Blender le corrige) : couleur exacte, teinte un peu à côté, petits ornements, lueur de la mauvaise couleur.
+Ce qui bloque aussi : une grande zone d'une couleur hors de la palette de la bible (le modèle la gardera), un rendu
+étranger au style des assets déjà validés (réaliste au milieu de stylisés, ou l'inverse).
+Ce qui ne bloque PAS (Blender le nuance) : teinte un peu à côté, petits ornements, lueur de la mauvaise couleur.
 ${FLUX_LIMITS}
 « ok » si la forme est bonne pour la 3D. « usable » si le meilleur essai est une base acceptable malgré des défauts de forme
 mineurs. Sinon, dis précisément quoi changer et donne un prompt corrigé.
@@ -442,12 +453,20 @@ export const VIEWS_SCHEMA = {
   },
 } as const;
 
-export const VIEWS_SYSTEM = `Tu es le VALIDATEUR ARTISTIQUE de Nidavellir. Avant de construire la 3D, Tripo a dessiné une PLANCHE : quatre vues du sujet
-(face, gauche, dos, droite) tirées de l'image de référence. La 3D sera construite à partir de ces quatre vues, puis repeinte
-dans Blender : juge la FORME et la COHÉRENCE, pas la couleur exacte. Ton dossier de travail est studio/art/ : lis la fiche de
-l'asset dans assets.json, regarde l'image de référence, puis REGARDE les quatre vues (outil Read).
-Ce qui compte : le même sujet sous les quatre angles (mêmes proportions, mêmes pièces, une pièce asymétrique toujours du même
+export const VIEWS_SYSTEM = `Tu es le VALIDATEUR ARTISTIQUE de Nidavellir. Avant de construire la 3D, Tripo ou Google (Nano Banana) a dessiné une PLANCHE : quatre vues du sujet
+(face, gauche, dos, droite) tirées de l'image de référence ; chez Google, l'image de référence EST l'une des quatre vues : la face d'ordinaire,
+un côté ou le dos si l'image montre le sujet ainsi (on te dit laquelle), et les trois autres sont dessinées autour. La 3D sera construite à partir de ces quatre vues, forme ET
+peinture (Blender ne repeint pas) : c'est la planche, pas l'image, que le modèle copiera. Ton dossier de travail est studio/art/ :
+lis la fiche de l'asset dans assets.json, regarde l'image de référence, puis REGARDE les quatre vues (outil Read).
+D'abord la FIDÉLITÉ : relève les traits qui définissent le sujet dans l'image de référence (silhouette, pièces marquantes :
+arme, épaulière, casque, nombre de membres ; grandes zones de couleur) et vérifie chacun sur la vue qui montre le même angle
+que l'image (la face d'ordinaire), puis sur les autres. N'exige jamais qu'une autre vue ressemble à l'image sous son angle à
+elle : une vraie vue de face d'un sujet dessiné de profil le montre tête vers toi, pas de profil. Une pièce
+changée de forme ou de nature (un long canon devenu pistolet), ajoutée (une queue, une cape) ou perdue, une grande zone qui
+change de couleur, une lueur qui n'existe pas dans l'image : la planche N'est PAS ok, même si elle est belle.
+Puis la COHÉRENCE : le même sujet sous les quatre angles (mêmes proportions, mêmes pièces, une pièce asymétrique toujours du même
 côté du corps), un dos et des côtés plausibles et fidèles à la fiche, aucun membre en trop ou fondu, pose identique, fond uni.
+Une planche refusée après retouche est écartée : la 3D est alors tirée de l'image seule. Ne dis donc ok que si elle est fidèle.
 Les vues « left » et « right » sont la gauche et la droite DU SUJET.
 « ok » si la planche est bonne pour la 3D. Sinon, donne pour chaque vue fautive une retouche en anglais, courte et concrète
 (« remove the second pair of legs », « the huge pauldron must be on this side too »), au plus une par vue. Si on te dit que
@@ -582,7 +601,16 @@ pas son corps. Tu le RANGES seulement, en quelques pas (le hub t'en donne peu) :
   ambre devient ivoire ;
 - les lueurs : lueur("#RRGGBB", tolerance=0.1, force=3.0) fait briller les zones de cette couleur (visière, joints) : sur
   la couleur réellement peinte, donc après teinter si besoin. Elle rend le nombre de pixels allumés : 0, c'est raté ;
-- les débris : un petit morceau détaché qui flotte se supprime.
+- les débris : un petit morceau détaché qui flotte se supprime ;
+- les facettes : si fiche.json dit model3d.facettes, le hub a déjà rendu chaque face plate, arêtes franches (Tripo lisse
+  tout, ce qui fait baver les arêtes), et nettoyé sa peinture (nettoyer_texture : un aplat par facette unie, des
+  frontières franches sur une facette à détail). Cette peinture est fidèle au concept : ne la repeins pas par zones
+  (hauteur, côté, grandes plages de teinter) ; teinter seulement pour changer UNE couleur précise de tout le modèle,
+  tolérance basse. Un repeint à la main a déjà viré la moitié d'une brute au vert lumineux ; facettes(False) revient au lissé si ce modèle le demande vraiment (visage
+  organique). aplats_facettes(lueur_hex=None) va plus loin : une couleur unie de la palette par facette, plus aucune
+  traînée de peinture. SEULEMENT pour un modèle aux grandes zones de couleur (bête, rocher, carrosserie) ; jamais s'il
+  porte des détails plus fins qu'une facette (veines, runes, motifs, visage) : ils deviendraient des triangles épars.
+  Regarde les photos après : une facette isolée de la mauvaise couleur, c'est raté, reviens en arrière (facettes() seul).
 Méthode type : tourner si besoin, matiere(), print(couleurs(8)), teinter les grandes zones vers la palette, teinter puis
 allumer la visière, photos. Deux pas suffisent souvent.
 Si tout est déjà juste, dis « fini » dès le premier pas : c'est la bonne réponse.

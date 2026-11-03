@@ -1,7 +1,8 @@
 # L'atelier Blender du Directeur artistique (ADR-49), lance sans fenetre par le hub :
 #   blender -b [scene.blend] --factory-startup --python workshop.py -- job.json
 # Modes : prepare (importe le modele brut et le met aux mesures), python (un pas de l'artisan 3D : son code, garde par
-# une liste blanche), photos (cinq vues, la scene n'est pas modifiee), export (mesures finales, .glb, photos, chiffres).
+# une liste blanche), photos (cinq vues, la scene n'est pas modifiee), export (mesures finales, .glb, photos, chiffres),
+# restaurer (la scene revient a une copie gardee, ADR-116).
 # Le hub pilote l'artisan pas a pas : il execute son code, lui rend la sortie, les mesures et les photos a regarder.
 # Convention : le devant du modele regarde -Y dans Blender, soit +Z dans le .glb (Y en haut, 1 unite = 1 m).
 import bpy, bmesh, sys, os, json, math, io, re, traceback, contextlib
@@ -150,6 +151,78 @@ def reparer():
     return controle()
 
 
+def _image_ok(img):
+    """Une image de texture qui se rend : emballee, generee, ou son fichier present. Sinon Blender la peint en magenta."""
+    if img is None:
+        return False
+    if img.packed_file or img.source == "GENERATED":
+        return True
+    path = bpy.path.abspath(img.filepath) if img.filepath else ""
+    return bool(path) and os.path.exists(path)
+
+
+def _lit_part(img):
+    """Part des pixels allumes d'un masque de lueur (0 a 1)."""
+    try:
+        import numpy as np
+        px = _pixels(img)
+        return float((px[:, :3].max(axis=1) > 0.02).mean()) if len(px) else 0.0
+    except Exception:
+        return 1.0
+
+
+def _emissive(m):
+    """Part du materiau qui brille (0 a 1) : emission non nulle, masque de lueur compris, ou nœud d'emission."""
+    if not m or not m.use_nodes:
+        return 0.0
+    p = principled(m)
+    if p:
+        strength = p.inputs["Emission Strength"]
+        if not strength.is_linked and strength.default_value <= 0:
+            return 0.0
+        color = p.inputs["Emission Color"]
+        if color.is_linked:
+            node = color.links[0].from_node
+            return _lit_part(node.image) if node.type == "TEX_IMAGE" and node.image else 1.0
+        return 1.0 if max(list(color.default_value)[:3]) > 0.001 else 0.0
+    for n in m.node_tree.nodes:
+        if n.type == "EMISSION" and n.outputs[0].is_linked and (n.inputs["Strength"].is_linked or n.inputs["Strength"].default_value > 0):
+            return 1.0
+    return 0.0
+
+
+def sante():
+    """La sante de la scene, sans LLM (ADR-116) : textures presentes ou manquantes, part de la surface texturee et
+    brillante (ponderee par l'aire), materiaux, triangles. Le hub compare avant et apres chaque code de l'artisan."""
+    mats = materials()
+    presentes, manquantes = set(), 0
+    for m in mats:
+        if not m.use_nodes:
+            continue
+        for n in m.node_tree.nodes:
+            # Un noeud image branche : vide ou image absente, le rendu est magenta.
+            if n.type == "TEX_IMAGE" and any(o.is_linked for o in n.outputs):
+                if _image_ok(n.image):
+                    presentes.add(n.image.name)
+                else:
+                    manquantes += 1
+    glow = {m.name: _emissive(m) for m in mats}
+    textured = {m.name: bool(base_image(m)) and _image_ok(base_image(m)) for m in mats}
+    total = lit = tex = 0.0
+    for o in meshes():
+        k = abs(o.matrix_world.to_3x3().determinant()) ** (2.0 / 3.0)
+        slots = [s.material for s in o.material_slots]
+        for f in o.data.polygons:
+            a = f.area * k
+            m = slots[f.material_index] if f.material_index < len(slots) else None
+            total += a
+            if m:
+                lit += a * glow.get(m.name, 0.0)
+                tex += a if textured.get(m.name) else 0.0
+    pct = lambda x: round(100.0 * x / total, 1) if total else 0.0
+    return {"textures": len(presentes), "textures_manquantes": manquantes, "part_texturee": pct(tex), "part_emissive": pct(lit), "materiaux": len(mats), "triangles": triangles()}
+
+
 def summary():
     lo, hi = bounds()
     mats = []
@@ -167,6 +240,7 @@ def summary():
         "materiaux": mats,
         "animations": [{"nom": a.name, "images": [int(a.frame_range[0]), int(a.frame_range[1])]} for a in bpy.data.actions],
         "controle": controle(),
+        "sante": sante(),
     }
 
 
@@ -223,6 +297,276 @@ def budget(max_tris):
             with bpy.context.temp_override(object=o, active_object=o, selected_objects=[o], selected_editable_objects=[o]):
                 bpy.ops.object.modifier_apply(modifier=mod.name)
     return before
+
+
+# ---- Facettes (ADR-114) ----
+# Tripo livre un modele low-poly regle pour paraitre LISSE (toutes ses faces lissees, normales personnalisees) : les facettes
+# fondent l'une dans l'autre et sa peinture deborde d'une face sur l'autre, les « aretes baveuses ». Un style a facettes
+# veut l'inverse : chaque face plate, l'arete franche.
+
+def facettes(oui=True, auto=False):
+    """Facettes nettes (oui) ou modele lisse (non). auto : seulement si l'artisan n'a encore rien choisi."""
+    if auto and "facettes" in scene:
+        return bool(scene["facettes"])
+    for o in meshes():
+        if o.get("calque"):
+            continue
+        me = o.data
+        if oui:
+            me.polygons.foreach_set("use_smooth", [False] * len(me.polygons))
+            if me.has_custom_normals:
+                with bpy.context.temp_override(object=o, active_object=o, selected_objects=[o], selected_editable_objects=[o]):
+                    bpy.ops.mesh.customdata_custom_splitnormals_clear()
+        else:
+            me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
+        me.update()
+    scene["facettes"] = bool(oui)
+    return bool(oui)
+
+
+_OK1 = ((0.4122214708, 0.5363325363, 0.0514459929), (0.2119034982, 0.6806995451, 0.1073969566), (0.0883024619, 0.2817188376, 0.6299787005))
+_OK2 = ((0.2104542553, 0.7936177850, -0.0040720468), (1.9779984951, -2.4285922050, 0.4505937099), (0.0259040371, 0.7827717662, -0.8086757660))
+
+
+def _oklab(rgb):
+    import numpy as np
+    c = np.clip(rgb, 0, 1)
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return np.cbrt(c @ np.array(_OK1).T) @ np.array(_OK2).T
+
+
+def _kmeans(x, k, it=8):
+    import numpy as np
+    order = np.argsort(x[:, 0])
+    c = x[order[np.linspace(0, len(x) - 1, k).astype(int)]].copy()
+    lab = np.zeros(len(x), int)
+    for _ in range(it):
+        lab = ((x[:, None] - c[None]) ** 2).sum(2).argmin(1)
+        for j in range(k):
+            if (lab == j).any():
+                c[j] = np.median(x[lab == j], axis=0)
+    return c, lab
+
+
+def nettoyer_texture(seuil=0.05, couleurs_permises=None, auto=False):
+    """La peinture de Tripo, nette facette par facette (ADR-114). Tripo peint son modele detaille puis la reporte sur le
+    low-poly : des taches floues qui chevauchent les facettes, du grain, des degrades. Chaque facette d'une seule couleur
+    (ecart sous `seuil`, en Oklab) devient un aplat ; une facette qui porte un detail (veine, oeil, rivet) garde ses deux
+    ou trois couleurs, avec des frontieres franches. Une couleur proche de la palette s'y aligne. Les UV ne bougent pas :
+    rien n'est perdu de ce que Tripo a dessine. auto : seulement si ce n'est pas deja fait. Rend le nombre de facettes par cas."""
+    import numpy as np
+    if auto and scene.get("texture_nettoyee"):
+        return None
+    pal_hex = [h for h in (couleurs_permises or job.get("palette") or [])]
+    pal = np.array([hex_rgb(h) for h in pal_hex], dtype=np.float64) if pal_hex else None
+    pal_lab = _oklab(pal) if pal is not None else None
+    stats = {"aplats": 0, "deux": 0, "trois": 0}
+    done = set()
+    for o in meshes():
+        if o.get("calque"):
+            continue
+        me = o.data
+        uvl = me.uv_layers.active
+        if not uvl:
+            continue
+        uv = np.empty(len(me.loops) * 2, dtype=np.float64)
+        uvl.data.foreach_get("uv", uv)
+        uv = uv.reshape(-1, 2)
+        for si, sl in enumerate(o.material_slots):
+            m = sl.material
+            if not m or not m.use_nodes:
+                continue
+            bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+            lk = bsdf.inputs["Base Color"].links if bsdf else []
+            img = lk[0].from_node.image if lk and lk[0].from_node.type == "TEX_IMAGE" else None
+            if not img or not img.size[0] or img.name in done:
+                continue
+            done.add(img.name)
+            W, H = img.size
+            px = np.empty(W * H * 4, dtype=np.float32)
+            img.pixels.foreach_get(px)
+            px = px.reshape(H, W, 4)
+            rgb = px[:, :, :3].astype(np.float64)
+            outp = rgb.copy()
+            owner = np.zeros((H, W), bool)
+            for p in me.polygons:
+                if p.material_index != si:
+                    continue
+                pts = uv[list(p.loop_indices)] * [W, H]
+                x0, y0 = np.floor(pts.min(0) - 2).astype(int)
+                x1, y1 = np.ceil(pts.max(0) + 2).astype(int)
+                x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, W - 1), min(y1, H - 1)
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                gx, gy = np.meshgrid(np.arange(x0, x1 + 1) + 0.5, np.arange(y0, y1 + 1) + 0.5)
+                inside = np.zeros(gx.shape, bool)
+                near = np.zeros(gx.shape, bool)
+                for t in range(1, len(pts) - 1):
+                    A, B, C = pts[0], pts[t], pts[t + 1]
+                    d = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1])
+                    if abs(d) < 1e-9:
+                        continue
+                    l1 = ((B[1] - C[1]) * (gx - C[0]) + (C[0] - B[0]) * (gy - C[1])) / d
+                    l2 = ((C[1] - A[1]) * (gx - C[0]) + (A[0] - C[0]) * (gy - C[1])) / d
+                    l3 = 1 - l1 - l2
+                    inside |= (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
+                    e = 2.5 / max(1.0, abs(d) ** 0.5)   # ~2 px de marge : le filtrage lit un peu au-dela du bord
+                    near |= (l1 >= -e) & (l2 >= -e) & (l3 >= -e)
+                if not inside.any():
+                    inside = near
+                if not near.any():
+                    continue
+                sub = rgb[y0:y1 + 1, x0:x1 + 1]
+                core = sub[inside]
+                lab = _oklab(core)
+                spread = np.percentile(np.linalg.norm(lab - np.median(lab, 0), axis=1), 85)
+                assign = np.zeros(int(near.sum()), int)
+                cols = np.array([np.median(core, 0)])
+                if spread >= seuil and len(core) >= 12:
+                    c2, a2 = _kmeans(lab, 2)
+                    if np.linalg.norm(c2[0] - c2[1]) >= seuil * 1.5:
+                        c3, a3 = _kmeans(lab, 3)
+                        dmin = min(np.linalg.norm(c3[i] - c3[j]) for i in range(3) for j in range(i + 1, 3))
+                        if dmin > seuil * 2 and min(np.bincount(a3, minlength=3)) > 0.08 * len(lab):
+                            cen, al, k = c3, a3, 3
+                        else:
+                            cen, al, k = c2, a2, 2
+                        cols = np.array([np.median(core[al == j], 0) if (al == j).any() else core.mean(0) for j in range(k)])
+                        grid = np.full(near.shape, -1)
+                        grid[near] = ((_oklab(sub[near])[:, None] - cen[None]) ** 2).sum(2).argmin(1)
+                        g2 = grid.copy()   # filtre majoritaire 3x3 : pas de pixel isole
+                        for yy, xx in zip(*np.nonzero(near)):
+                            w_ = grid[max(0, yy - 1):yy + 2, max(0, xx - 1):xx + 2].ravel()
+                            g2[yy, xx] = np.bincount(w_[w_ >= 0]).argmax()
+                        assign = g2[near]
+                if len(cols) == 1:
+                    stats["aplats"] += 1
+                else:
+                    stats["deux" if len(cols) == 2 else "trois"] += 1
+                if pal is not None:
+                    for j in range(len(cols)):
+                        dd = np.linalg.norm(pal_lab - _oklab(cols[j][None]), axis=1)
+                        if dd.min() < 0.05:
+                            cols[j] = pal[dd.argmin()]
+                vals = cols[assign]
+                blk = outp[y0:y1 + 1, x0:x1 + 1]
+                own = owner[y0:y1 + 1, x0:x1 + 1]
+                is_core = inside[near]
+                for q, (yy, xx) in enumerate(zip(*np.nonzero(near))):
+                    if is_core[q]:   # le coeur d'une facette l'emporte sur la marge d'une voisine
+                        blk[yy, xx] = vals[q]
+                        own[yy, xx] = True
+                    elif not own[yy, xx]:
+                        blk[yy, xx] = vals[q]
+            px[:, :, :3] = outp
+            img.pixels.foreach_set(px.ravel())
+            img.pack()
+    scene["texture_nettoyee"] = True
+    return stats
+
+
+def aplats_facettes(couleurs_permises=None, lueur_hex=None):
+    """Une couleur unie par facette, choisie dans la palette par vote sur la peinture de Tripo au coeur de la facette
+    (jamais sur ses bords, la ou elle bave), puis une facette isolee prend la couleur de ses voisines. Pour un modele aux
+    grandes zones de couleur seulement : les details plus fins qu'une facette (veines, runes, motifs) disparaissent.
+    Rend le nombre de facettes repeintes par couleur."""
+    import numpy as np
+    pal_hex = [h.upper() for h in (couleurs_permises or job.get("palette") or [])]
+    if not pal_hex:
+        raise ValueError("aucune palette : passe couleurs_permises=[\"#RRGGBB\", ...]")
+    pal = np.array([hex_rgb(h) for h in pal_hex], dtype=np.float32)
+    glow = pal_hex.index(lueur_hex.upper()) if lueur_hex and lueur_hex.upper() in pal_hex else None
+    facettes(True)
+    compte = {}
+    for o in meshes():
+        if o.get("calque"):
+            continue
+        me = o.data
+        uvl = me.uv_layers.active
+        if not uvl:
+            continue
+        slots = {}
+        for i, sl in enumerate(o.material_slots):
+            m = sl.material
+            if not m or not m.use_nodes:
+                continue
+            img = next((n.image for n in m.node_tree.nodes if n.type == "TEX_IMAGE" and n.image), None)
+            if img and img.size[0] * img.size[1] > 0:
+                w, h = img.size
+                a = np.empty(w * h * 4, dtype=np.float32)
+                img.pixels.foreach_get(a)
+                slots[i] = (m, img, a.reshape(h, w, 4))
+        glow_slots = {i for i, sl in enumerate(o.material_slots) if sl.material and i not in slots and glow is not None}
+        faces = [p for p in me.polygons if p.material_index in slots or p.material_index in glow_slots]
+        if not faces or not slots:
+            continue
+        uv = np.empty(len(me.loops) * 2, dtype=np.float32)
+        uvl.data.foreach_get("uv", uv)
+        uv = uv.reshape(-1, 2)
+        colors = []
+        for p in faces:
+            if p.material_index in glow_slots:
+                colors.append(glow)
+                continue
+            px = slots[p.material_index][2]
+            h, w = px.shape[:2]
+            pts = uv[list(p.loop_indices)]
+            c = pts.mean(axis=0)
+            samp = [c] + [c + 0.5 * (q - c) for q in pts] + [c + 0.25 * (q - c) for q in pts]
+            cols = np.array([px[min(h - 1, max(0, int((v % 1) * h))), min(w - 1, max(0, int((u % 1) * w))), :3] for u, v in samp])
+            votes = np.bincount(((cols[:, None, :] - pal[None]) ** 2).sum(2).argmin(1), minlength=len(pal))
+            colors.append(int(votes.argmax()))
+        # voisines par arete, comparees en positions : le maillage de Tripo est coupe a chaque couture des UV
+        co = [tuple(round(x, 4) for x in v.co) for v in me.vertices]
+        edges = {}
+        for k, p in enumerate(faces):
+            vs = [co[i] for i in p.vertices]
+            for a, b in zip(vs, vs[1:] + vs[:1]):
+                edges.setdefault(frozenset((a, b)), []).append(k)
+        neigh = [set() for _ in faces]
+        for fs in edges.values():
+            for a in fs:
+                neigh[a].update(x for x in fs if x != a)
+        for _ in range(3):
+            new = list(colors)
+            for k, nb in enumerate(neigh):
+                if nb:
+                    v = np.bincount([colors[j] for j in nb], minlength=len(pal))
+                    if v[colors[k]] <= 1 and v.max() >= 2 and v.argmax() != colors[k]:
+                        new[k] = int(v.argmax())
+            colors = new
+        tex_slot = next(iter(slots))
+        for k, p in enumerate(faces):
+            if glow is not None and p.material_index in glow_slots and colors[k] != glow:
+                p.material_index = tex_slot
+            elif glow is not None and p.material_index not in glow_slots and colors[k] == glow and glow_slots:
+                p.material_index = min(glow_slots)
+        # un atlas de petites cases unies, chaque facette pointe le centre de sa case (filtrage au plus proche)
+        cell, g = 4, math.ceil(math.sqrt(len(faces)))
+        size = g * cell
+        atlas = np.ones((size, size, 4), dtype=np.float32)
+        new_uv = uv.copy()
+        for k, p in enumerate(faces):
+            gx, gy = k % g, k // g
+            atlas[gy * cell:(gy + 1) * cell, gx * cell:(gx + 1) * cell, :3] = pal[colors[k]]
+            for li in p.loop_indices:
+                new_uv[li] = ((gx + 0.5) / g, (gy + 0.5) / g)
+            compte[pal_hex[colors[k]]] = compte.get(pal_hex[colors[k]], 0) + 1
+        uvl.data.foreach_set("uv", new_uv.reshape(-1))
+        image = bpy.data.images.new(o.name[:40] + "_facettes", size, size)
+        image.pixels.foreach_set(atlas.reshape(-1))
+        image.pack()
+        for m, img, _ in slots.values():
+            nodes, links = m.node_tree.nodes, m.node_tree.links
+            bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+            if bsdf:
+                for l in list(bsdf.inputs["Normal"].links):
+                    links.remove(l)
+            for n in nodes:
+                if n.type == "TEX_IMAGE" and n.image == img:
+                    n.image = image
+                    n.interpolation = "Closest"
+    return compte
 
 
 # ---- Outils de l'artisan (exposes a son code) ----
@@ -623,17 +967,84 @@ def pieces():
 
 # ---- Photos ----
 
+def studio(name="Studio"):
+    """
+    Le studio photo (ADR-109) : trois lumieres douces qui suivent la camera (principale, debouchage, contre-jour), un fond en
+    degrade que seule la camera voit, une ambiance neutre, la gestion des couleurs AgX. Chaque asset est photographie sous la
+    meme lumiere, de chaque cote : un personnage sombre reste lisible, et deux assets se comparent. Rend light(azimut, sombre).
+    """
+    world = bpy.data.worlds.new(name)
+    world.use_nodes = True
+    nt = world.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new("ShaderNodeOutputWorld")
+    ambient = nt.nodes.new("ShaderNodeBackground")
+    ambient.inputs[0].default_value = (0.5, 0.5, 0.52, 1)
+    ambient.inputs[1].default_value = 0.45
+    backdrop = nt.nodes.new("ShaderNodeBackground")
+    coord = nt.nodes.new("ShaderNodeTexCoord")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    path = nt.nodes.new("ShaderNodeLightPath")
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    nt.links.new(coord.outputs["Window"], sep.inputs[0])
+    nt.links.new(sep.outputs["Y"], ramp.inputs[0])
+    nt.links.new(ramp.outputs["Color"], backdrop.inputs[0])
+    nt.links.new(path.outputs["Is Camera Ray"], mix.inputs[0])
+    nt.links.new(ambient.outputs[0], mix.inputs[1])
+    nt.links.new(backdrop.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs[0])
+    scene.world = world
+
+    def backdrop_tone(bottom, top):
+        ramp.color_ramp.elements[0].color = bottom + (1,)
+        ramp.color_ramp.elements[1].color = top + (1,)
+
+    backdrop_tone((0.05, 0.055, 0.06), (0.30, 0.31, 0.33))
+    rigs = []
+    # (decalage depuis l'axe de la camera en degres, hauteur en degres sous l'horizon, force, couleur, douceur en degres)
+    for nom, decal, tilt, force, couleur, douceur in (
+        ("Principale", -40, 50, 3.2, (1.0, 0.96, 0.9), 12),
+        ("Debouchage", 65, 68, 1.1, (0.85, 0.9, 1.0), 25),
+        ("ContreJour", 165, 35, 3.0, (1.0, 1.0, 1.0), 8),
+    ):
+        lamp = bpy.data.objects.new(nom, bpy.data.lights.new(nom, "SUN"))
+        lamp.data.energy = force
+        lamp.data.color = couleur
+        lamp.data.angle = math.radians(douceur)
+        scene.collection.objects.link(lamp)
+        rigs.append((lamp, decal, tilt))
+    try:
+        scene.view_settings.view_transform = "AgX"
+        scene.view_settings.look = "AgX - Medium High Contrast"
+    except TypeError:
+        try:
+            scene.view_settings.view_transform = "Filmic"
+        except TypeError:
+            pass
+    try:
+        scene.eevee.taa_render_samples = 32
+        scene.eevee.use_shadows = True
+    except AttributeError:
+        pass
+
+    def light(azimut_deg, sombre=False):
+        """Oriente les lumieres pour une camera placee a cet azimut (degres, autour du centre), fond sombre ou clair."""
+        for lamp, decal, tilt in rigs:
+            # Un soleil eclaire vers son -Z ; tourne de 0 autour de Z, il vient de -Y : +90 le fait venir du cote de la camera.
+            lamp.rotation_euler = (math.radians(tilt), 0, math.radians(azimut_deg + 90 + decal))
+        if sombre:
+            backdrop_tone((0.01, 0.012, 0.015), (0.04, 0.045, 0.05))
+        else:
+            backdrop_tone((0.05, 0.055, 0.06), (0.30, 0.31, 0.33))
+
+    return light
+
+
 def photos(out_dir, prefix, size_hint=0):
     lo, hi = bounds()
-    world = bpy.data.worlds.new("Fond")
-    world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs[0].default_value = (0.32, 0.33, 0.35, 1)
-    world.node_tree.nodes["Background"].inputs[1].default_value = 0.8
-    scene.world = world
-    sun = bpy.data.objects.new("Soleil", bpy.data.lights.new("Soleil", "SUN"))
-    sun.data.energy = 3.5
-    sun.rotation_euler = (math.radians(50), 0, math.radians(35))
-    scene.collection.objects.link(sun)
+    light = studio("Fond")
     center = (lo + hi) / 2
     radius = max((hi - lo).length, 0.1) * 1.6
     target = bpy.data.objects.new("Cible", None)
@@ -647,8 +1058,8 @@ def photos(out_dir, prefix, size_hint=0):
     track.track_axis = "TRACK_NEGATIVE_Z"
     track.up_axis = "UP_Y"
     scene.camera = cam
-    scene.render.resolution_x = 640
-    scene.render.resolution_y = 640
+    scene.render.resolution_x = 1024
+    scene.render.resolution_y = 1024
     scene.render.image_settings.file_format = "PNG"
     try:
         scene.render.engine = "BLENDER_EEVEE_NEXT"
@@ -691,6 +1102,7 @@ def photos(out_dir, prefix, size_hint=0):
     for name, deg in (("face", -90), ("trois-quarts", -45), ("profil", 0), ("dos", 90)):
         a = math.radians(deg)
         cam.location = center + Vector((math.cos(a) * radius, math.sin(a) * radius, radius * 0.45))
+        light(deg)
         out.append(shoot("%s/%s-%s.png" % (out_dir, prefix, name)))
     # Le modele en mouvement (ADR-53) : une image au milieu de quelques animations, vue de trois-quarts, pour juger la
     # deformation (rien ne doit s'etirer, se detacher ni traverser le corps).
@@ -702,6 +1114,7 @@ def photos(out_dir, prefix, size_hint=0):
                     seen.add(a.name)
                     chosen.append(a)
         a45 = math.radians(-45)
+        light(-45)
         for act in chosen:
             play(act, int((act.frame_range[0] + act.frame_range[1]) / 2))
             # La camera suit le modele dans sa pose (une course peut le deplacer).
@@ -720,9 +1133,9 @@ def photos(out_dir, prefix, size_hint=0):
     principled(gm).inputs["Base Color"].default_value = linear(hex_rgb("#30353C")) + [1]
     principled(gm).inputs["Roughness"].default_value = 1
     ground.data.materials.append(gm)
-    world.node_tree.nodes["Background"].inputs[0].default_value = (0.02, 0.025, 0.03, 1)
     far = max(max(hi - lo), 0.5) * 3.2
     cam.location = center + Vector((far * 0.35, -far * 0.6, far * 0.75))
+    light(math.degrees(math.atan2(-0.6, 0.35)), sombre=True)
     out.append(shoot("%s/%s-vue-jeu.png" % (out_dir, prefix)))
     # Le sol ne doit pas rester dans la scene : il fausserait les mesures et les bandes d'animation.
     bpy.data.objects.remove(ground, do_unlink=True)
@@ -886,7 +1299,7 @@ def run_code(code):
     safe = {k: getattr(builtins, k) for k in dir(builtins) if k not in ("open", "eval", "exec", "compile", "__import__", "input", "breakpoint", "globals", "vars", "memoryview", "help", "exit", "quit")}
     safe["__import__"] = guarded_import
     env = {"__builtins__": safe, "bpy": bpy, "bmesh": bmesh, "Vector": Vector, "math": math}
-    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "animations", "couper", "vitesse", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature"):
+    for k in ("meshes", "triangles", "bounds", "materials", "summary", "normalize", "budget", "tourner", "matiere", "aplat", "nouveau_materiau", "quantifier", "couleurs", "teinter", "lueur", "animations", "couper", "vitesse", "boite", "cylindre", "base_image", "squelette", "zones", "fixer", "piece", "membre", "pieces", "calque", "armature", "facettes", "aplats_facettes", "nettoyer_texture"):
         env[k] = globals()[k]
     env["mesures"] = summary
     env["controle"] = controle
@@ -962,13 +1375,26 @@ if mode == "prepare":
         budget(int(job.get("max_tris") or 0))
         normalize(float(job.get("size") or 0))
         shrink_textures(int(job.get("max_texture") or 0))
+        if job.get("facettes"):
+            facettes(True)
+            nettoyer_texture()
     bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
     done(summary())
 elif mode == "python":
+    # Garde au pas (ADR-116) : la scene d'avant ce code est gardee, sa sante mesuree avant et apres ; le hub decide.
+    import shutil
+    shutil.copyfile(job["blend"], os.path.join(os.path.dirname(job["blend"]), "scene-avant-pas.blend"))
+    avant = sante()
     r = run_code(job["code"])
     if r["ok"]:
+        r["sante"] = {"avant": avant, "apres": sante()}
         bpy.ops.wm.save_as_mainfile(filepath=job["blend"])
     done(r)
+elif mode == "restaurer":
+    # La scene revient a une copie gardee (ADR-116) : celle d'avant un code casse, ou celle de la meilleure passe.
+    import shutil
+    shutil.copyfile(job["source"], job["blend"])
+    done({"ok": True})
 elif mode == "photos":
     done({"photos": photos(job["out_dir"], job["prefix"]), "mesures": summary()})
 elif mode == "animations":
@@ -1006,6 +1432,11 @@ elif mode == "export":
     before = budget(int(job.get("max_tris") or 0))
     normalize(float(job.get("size") or 0))
     shrink_textures(int(job.get("max_texture") or 0))
+    # La reduction au budget recree des faces : le choix de l'atelier (ou le style de la fiche) est reapplique.
+    if scene.get("facettes") is not None:
+        facettes(bool(scene["facettes"]))
+    elif job.get("facettes"):
+        facettes(True)
     has_anim = any(o.type == "ARMATURE" and o.animation_data and o.animation_data.nla_tracks for o in scene.objects)
     bpy.ops.export_scene.gltf(filepath=job["output"], export_format="GLB", export_yup=True, export_animations=True, export_animation_mode="NLA_TRACKS" if has_anim else "ACTIONS", export_apply=False)
     s = summary()

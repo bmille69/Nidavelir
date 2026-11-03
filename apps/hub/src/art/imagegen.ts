@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { GenNote } from "./google-images.ts";
 
 /**
  * Le générateur d'images local du Directeur artistique (ADR-46) : ComfyUI et le modèle Flux, sur la carte graphique.
@@ -27,7 +28,22 @@ export type GenState = {
  * `init` : une variation d'une image existante (le croquis choisi, ADR-49) au lieu d'une image partie de zéro.
  * `denoise` va de 0 (l'image telle quelle) à 1 (rien n'en reste).
  */
-export type GenRequest = { prompt: string; width: number; height: number; seed: number; init?: { image: Buffer; denoise: number }; edit?: { images: Buffer[] }; scale?: { width: number; height: number } };
+export type GenRequest = {
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  init?: { image: Buffer; denoise: number };
+  edit?: { images: Buffer[] };
+  scale?: { width: number; height: number };
+  /** Google peut dessiner cette image (ADR-110) : Nano Banana 2.1 (`draft`) ou Pro (`final`) ; sans, Flux seul. */
+  tier?: "draft" | "final";
+  size?: "1K" | "2K";
+  /** Références de style du jeu (images de la bible, assets validés), jointes à Google ; Flux les ignore. */
+  refs?: Buffer[];
+  /** Ce que Google a dessiné et coûté, ou pourquoi il a été écarté, pour le fil. */
+  report?: (n: GenNote) => void;
+};
 /* `scale` (sprites du studio de modding, ADR-65) : l'image finale est réduite à cette taille, au plus proche voisin (pixel art). */
 /*
  * `edit` (Flux Kontext, ADR-51) : le prompt est une consigne appliquée à la première image (« move the big pauldron to the

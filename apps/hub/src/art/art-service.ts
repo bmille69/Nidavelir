@@ -13,13 +13,16 @@ import type { ProjectRegistry } from "../projects/project-registry.ts";
 import type { VcsPort } from "../vcs/git.ts";
 import { ART_DIR, artRoot, nextAssetId, PENDING_VISUALS, readManifest, writeAtomic, writeManifest, type Asset, type AssetStatus, type Verdict } from "./manifest.ts";
 import type { GenState, ImageGenPort } from "./imagegen.ts";
+import { googleSheet, noteLines, type GenNote, type GoogleImagesPort, type GoogleState, type SheetPort } from "./google-images.ts";
 import { directionContext, nextId, readDirection, recordChoice, writeDirection, type Direction, type Verdict as Taste } from "./direction.ts";
 import { RealWebRefs, type WebRefsPort } from "./web-refs.ts";
 import { computeBilan, wasLoaded, type BilanRow } from "./bilan.ts";
 import { AssetBudget, euros, type AssetSpend } from "./budget.ts";
 import { compareShots, LOOK_CHANGED, LOOK_UNSTABLE } from "./visual-diff.ts";
 import { isGodot } from "../godot/toolchain.ts";
-import { RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type ViewEdit, type ViewImage } from "./model3d.ts";
+import { compactMarks, withMarks, type TeamService } from "../team/team-service.ts";
+import { ORIENTATIONS, referenceView, RIG_V1, RIG_V3, rigAnimations, type Geometry, type Model3DPort, type Model3DSpec, type Model3DState, type Orientation, type View, type ViewEdit, type ViewImage } from "./model3d.ts";
+import { asSante, passRank, stepBreak } from "./workshop-guard.ts";
 import {
   ART_SYSTEM,
   BOARD_MARK,
@@ -84,6 +87,8 @@ export type ArtState = {
   generator: GenState;
   /** L'atelier 3D : Blender et Tripo (ADR-47). */
   workshop3d: Model3DState;
+  /** Google Gemini (ADR-110) : clé configurée ou non (jamais la clé elle-même), dépense et plafond du mois. */
+  google: GoogleState | null;
   /** Ce que chaque visuel a coûté et son plafond (ADR-82), pour ceux qui ont déjà dépensé. */
   spend: Record<string, AssetSpend>;
 };
@@ -144,10 +149,11 @@ export class ArtService {
   readonly #queue = new Map<string, Promise<unknown>>();
   readonly #imagegen: ImageGenPort;
   readonly #model3d: Model3DPort;
+  readonly #google: GoogleImagesPort | null;
   readonly #screenshot: (project: string, task: string) => string | null;
   readonly #generating = new Map<string, Map<string, Generating>>();
   /** Les modèles déjà branchés dans le jeu dont une version retouchée part en intégration (ADR-55) : « project/id ». */
-  readonly #replacing = new Set<string>();
+  readonly #replacing = new Map<string, "retouch" | "redo">();
   readonly #vitrine: (project: string, id: string, file?: string) => Promise<VitrineShot | null>;
   readonly #webRefs: WebRefsPort;
   /** Les vérifications du bilan en cours, par projet (ADR-71). */
@@ -167,7 +173,9 @@ export class ArtService {
   /** Ce que chaque visuel a coûté, et son plafond (ADR-82). */
   readonly budget: AssetBudget;
   /** Compétences de la page « Compétences » données au DA, ajoutées à ses consignes. */
-  skills: { promptBlock(agent: "art_director", project: string | null): string } | null = null;
+  skills: { promptFor(agent: "art_director", project: string | null): { text: string; dir: string | null } } | null = null;
+  /** L'équipe (ADR-98) : consulter un collègue, proposer un souvenir, lire le jeu. */
+  team: TeamService | null = null;
 
   constructor(deps: {
     db: Db;
@@ -179,6 +187,8 @@ export class ArtService {
     conversations: ConversationService;
     imagegen: ImageGenPort;
     model3d: Model3DPort;
+    /** Google Gemini (ADR-110) : la clé, le plafond et la planche ; ses images passent par `imagegen`. */
+    google?: GoogleImagesPort;
     /** La capture du jeu prise par le hub avant la fusion d'un chantier (ADR-32), si elle existe. */
     screenshot?: (project: string, task: string) => string | null;
     /**
@@ -202,6 +212,7 @@ export class ArtService {
     this.#conversations = deps.conversations;
     this.#imagegen = deps.imagegen;
     this.#model3d = deps.model3d;
+    this.#google = deps.google ?? null;
     this.#screenshot = deps.screenshot ?? (() => null);
     this.#vitrine = deps.vitrine ?? (async () => null);
     this.#webRefs = deps.webRefs ?? new RealWebRefs();
@@ -238,6 +249,7 @@ export class ArtService {
       },
       generator: this.#imagegen.state(),
       workshop3d: this.#model3d.state(),
+      google: this.#google?.state() ?? null,
       spend: this.budget.all(project),
     };
   }
@@ -291,6 +303,32 @@ export class ArtService {
     return this.#model3d.state();
   }
 
+  /** Votre clé Google (Gemini, ADR-110) : vérifiée auprès de Google, gardée dans les données du hub. */
+  async setGoogleKey(session: HumanSession, key: string): Promise<GoogleState> {
+    assertHumanSession(session);
+    const google = this.#google;
+    if (!google) throw new ArtError("Google n'est pas branché sur ce hub");
+    await google.setKey(key).catch((err: Error) => {
+      throw new ArtError(err.message);
+    });
+    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.configured", subject: "google", payload: {} });
+    return google.state();
+  }
+
+  /** Le plafond mensuel des images Google, en dollars (ADR-110). */
+  setGoogleCap(session: HumanSession, usd: number): GoogleState {
+    assertHumanSession(session);
+    const google = this.#google;
+    if (!google) throw new ArtError("Google n'est pas branché sur ce hub");
+    try {
+      google.setCap(usd);
+    } catch (err) {
+      throw new ArtError((err as Error).message);
+    }
+    this.#journal.append({ project: null, actor: { kind: "human" }, type: "tool.configured", subject: "google", payload: { cap: usd } });
+    return google.state();
+  }
+
   /** Fabriquer (ou refaire) la 3D d'un asset dont l'image est validée. */
   generateModel(session: HumanSession, project: string, id: string): Asset {
     assertHumanSession(session);
@@ -300,9 +338,11 @@ export class ArtService {
     if (!asset.model3d.simple && !asset.verdict?.ok) throw new ArtError("Il faut d'abord une image validée");
     const missing = this.#missing3d(!!asset.model3d.simple);
     if (missing) throw new ArtError(missing);
-    if (asset.status === "integration" || asset.status === "integre") throw new ArtError("Cet asset est déjà parti dans le jeu");
+    // Un asset déjà dans le jeu peut être refait (ADR-112) : Tripo repart de zéro, le nouveau modèle remplace l'ancien au
+    // branchement. Pendant son intégration, non : le développeur est en train de le brancher.
+    if (asset.status === "integration") throw new ArtError("Cet asset est en cours d'intégration : attendez qu'il soit dans le jeu");
     this.#assertBudget(project, id);
-    this.#startModel(project, id);
+    this.#startModel(project, id, false, asset.status === "integre");
     return asset;
   }
 
@@ -869,19 +909,27 @@ export class ArtService {
     this.#setStatus(asset, "integration");
     writeManifest(gameRoot, m);
     await this.#commit(gameRoot, `art: intégration demandée pour ${id}`);
-    const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80));
+    const thread = this.#conversations.createThread(project, `Intégrer ${id} : ${asset.name}`.slice(0, 80), "art");
     const model = asset.model;
     const placed = this.#dependents(project, id).filter((t) => t.status === "merged");
     const unit = unitOf(asset);
+    const replacing = this.#replacing.get(`${project}/${id}`);
+    this.#replacing.delete(`${project}/${id}`);
     const text = [
       `Le Directeur artistique a fait valider un visuel : ${id} « ${asset.name} » (${asset.type}). Fais-le brancher dans le jeu.`,
       `- Fichier validé : studio/art/${file}`,
       finding ? `- Le bilan du hub a vérifié le jeu : ${finding}` : "",
-      this.#replacing.delete(`${project}/${id}`)
+      replacing === "retouch"
         ? "- C'est une version retouchée d'un modèle déjà branché : remplace l'ancien fichier par celui-ci (mêmes mesures, même squelette, mêmes animations), sans rien changer d'autre au branchement."
-        : "",
+        : replacing === "redo"
+          ? "- C'est un modèle refait de zéro (ADR-112) pour un visuel déjà branché : remplace l'ancien fichier par celui-ci. Son squelette est neuf : vérifie l'échelle, l'orientation et les noms d'animations ci-dessous dans le jeu, sans rien changer d'autre au branchement."
+          : "",
       model
         ? `- Modèle 3D glTF binaire (.glb) : axe Y vers le haut, ${unit === "px" ? "1 unité = 1 px du jeu, comme le disent ses spécifications" : "1 unité = 1 mètre"}, posé au sol (y = 0) et centré, le devant tourné vers +Z, ${model.dims.map((d) => `${d} ${unit}`).join(" × ")}, ${model.tris} triangles${model.animations.length ? `, animations : ${model.animations.join(", ")}` : ", sans animation"}. Couleurs, matière mate et lueurs (émissif) sont déjà dans le fichier : garde ses matériaux tels quels. Photos : ${model.renders.map((r) => `studio/art/${r}`).join(", ")}.`
+        : "",
+      // ADR-117 : le Chien (A-0002) avait perdu sa texture, repeinte d'un albedo uni pour forcer la couleur.
+      model
+        ? "- Ne remplace jamais la texture du modèle par une couleur unie. Une couleur qui dérive sous la lumière se règle par la lumière de la vitrine ou les paramètres du matériau (émission, rugosité), pas en effaçant la texture. Si la texture elle-même est fausse, dis-le dans le rapport (« à reprendre dans l'atelier ») au lieu de la repeindre."
         : "",
       `- Usage : ${asset.usage}`,
       asset.specs ? `- Spécifications : ${asset.specs}` : "",
@@ -998,7 +1046,7 @@ export class ArtService {
         null,
       );
       if (retry) {
-        const thread = this.#conversations.createThread(project, `Retoucher ${id} dans le jeu`.slice(0, 80));
+        const thread = this.#conversations.createThread(project, `Retoucher ${id} dans le jeu`.slice(0, 80), "art");
         const text = [
           `Le validateur artistique a regardé ${id} « ${a.name} » dans le jeu (capture : studio/art/${file}) : ${missing ? "la scène vitrine ne le montre pas" : "à retoucher"}.`,
           a.ingame.summary,
@@ -1024,10 +1072,19 @@ export class ArtService {
 
   /** Ce qui attend votre avis chez le Directeur artistique (« À vous de jouer », ADR-64). */
   waiting(project: string): { text: string; href: string }[] {
+    return this.yours(project).map(({ text, href }) => ({ text, href }));
+  }
+
+  /**
+   * Les mêmes attentes, avec leur nature et le visuel concerné : la boîte « À vous » les tranche sur place (ADR-113).
+   * `question` : une question du DA dans sa discussion ; `sketch` : un croquis à choisir ; `model` / `image` : la 3D ou
+   * l'image refusée par le validateur, à valider quand même ou à refaire ; `render` : un rendu déposé, à valider.
+   */
+  yours(project: string): { kind: "question" | "sketch" | "model" | "image" | "render"; asset: Asset | null; text: string; href: string }[] {
     const href = `#/p/${project}/art`;
-    const out: { text: string; href: string }[] = [];
+    const out: { kind: "question" | "sketch" | "model" | "image" | "render"; asset: Asset | null; text: string; href: string }[] = [];
     const last = this.messages(project).at(-1);
-    if (last?.role === "art" && last.text.includes(CHOICE_MARK) && !this.#replying.has(project)) out.push({ text: "Le Directeur artistique attend votre réponse à sa question", href });
+    if (last?.role === "art" && last.text.includes(CHOICE_MARK) && !this.#replying.has(project)) out.push({ kind: "question", asset: null, text: "Le Directeur artistique attend votre réponse à sa question", href });
     let assets: Asset[] = [];
     try {
       assets = readManifest(this.#projects.get(project).root).assets;
@@ -1037,10 +1094,10 @@ export class ArtService {
     const busy = (id: string) => !!this.#generating.get(project)?.has(id) || !!this.#validating.get(project)?.has(id);
     for (const a of assets) {
       if (busy(a.id)) continue;
-      if (a.sketches?.length && !a.direction && a.sketches.every((s) => s.file)) out.push({ text: `${a.id} « ${a.name} » : choisissez un croquis`, href });
-      else if (a.status === "production" && a.model?.verdict && !a.model.verdict.ok) out.push({ text: `${a.id} « ${a.name} » : la 3D attend votre décision`, href });
-      else if (a.status === "production" && !a.model && a.verdict && !a.verdict.ok) out.push({ text: `${a.id} « ${a.name} » : l'image attend votre décision`, href });
-      else if (a.status === "a_valider") out.push({ text: `${a.id} « ${a.name} » : rendu à valider`, href });
+      if (a.sketches?.length && !a.direction && a.sketches.every((s) => s.file)) out.push({ kind: "sketch", asset: a, text: `${a.id} « ${a.name} » : choisissez un croquis`, href });
+      else if (a.status === "production" && a.model?.verdict && !a.model.verdict.ok) out.push({ kind: "model", asset: a, text: `${a.id} « ${a.name} » : la 3D attend votre décision`, href });
+      else if (a.status === "production" && !a.model && a.verdict && !a.verdict.ok) out.push({ kind: "image", asset: a, text: `${a.id} « ${a.name} » : l'image attend votre décision`, href });
+      else if (a.status === "a_valider") out.push({ kind: "render", asset: a, text: `${a.id} « ${a.name} » : rendu à valider`, href });
     }
     return out;
   }
@@ -1192,7 +1249,7 @@ export class ArtService {
   resume(): void {
     const jobs = this.#db.prepare("SELECT * FROM art_jobs ORDER BY started_at").all() as { key: string; project: string; kind: string; payload_json: string }[];
     this.#db.prepare("DELETE FROM art_jobs").run();
-    const models: { project: string; id: string; retouch: boolean }[] = [];
+    const models: { project: string; id: string; retouch: boolean; fresh: boolean }[] = [];
     for (const j of jobs) {
       const p = JSON.parse(j.payload_json);
       try {
@@ -1201,7 +1258,7 @@ export class ArtService {
         else if (j.kind === "produce") this.#startProduce(j.project, p.id);
         else if (j.kind === "board") this.#startBoard(j.project, p);
         else if (j.kind === "duel") this.#startDuel(j.project, p);
-        else if (j.kind === "model") models.push({ project: j.project, id: p.id, retouch: p.retouch === true });
+        else if (j.kind === "model") models.push({ project: j.project, id: p.id, retouch: p.retouch === true, fresh: p.fresh === true });
       } catch {
         /* projet retiré entre-temps */
       }
@@ -1216,7 +1273,7 @@ export class ArtService {
       this.#track(
         after.then(() => {
           this.#insert(m.project, "art", `La 3D de ${m.id} a été interrompue par le redémarrage du hub : je la reprends. Ce que Tripo avait déjà fabriqué ou commencé est repris, pas repayé.`, null);
-          this.#startModel(m.project, m.id, m.retouch);
+          this.#startModel(m.project, m.id, m.retouch, m.fresh);
         }),
       );
     }
@@ -1236,16 +1293,22 @@ export class ArtService {
     const root = artRoot(p.root);
     mkdirSync(join(root, "moodboard"), { recursive: true });
     this.#replying.add(project);
+    // L'équipe (ADR-98) : il peut consulter le Concepteur ou le directeur, proposer un souvenir et lire le jeu.
+    const team = this.team?.open(project, "da", { consult: true, remember: true, read: true }) ?? null;
     try {
+      const skills = this.skills?.promptFor("art_director", project) ?? { text: "", dir: null };
       const { text: raw, costUsd } = await this.#orchestrator.reply({
-        systemPrompt: [ART_SYSTEM, this.#gameContext(project), this.skills?.promptBlock("art_director", project) ?? ""].filter(Boolean).join("\n\n"),
-        prompt: renderArtHistory(history),
+        systemPrompt: [ART_SYSTEM, this.#gameContext(project), skills.text, team?.prompt ?? ""].filter(Boolean).join("\n\n"),
+        prompt: renderArtHistory(history.map((m) => ({ ...m, text: compactMarks(m.text) }))),
         readDir: root,
         tools: ["WebSearch", "WebFetch"],
         role: "art",
         timeoutMs: 15 * 60_000,
         meta: { project, agent: "art_director" },
+        ...(skills.dir ? { skillsDir: skills.dir } : {}),
+        ...(team ? { team: team.grant } : {}),
       });
+      team?.close();
       const parsed = parseArtDirectives(raw);
       const { directives } = parsed;
       // Les options illustrées sont dessinées avant que la question s'affiche (ADR-58).
@@ -1256,7 +1319,7 @@ export class ArtService {
       const launches = directives.sketches.length + directives.generate.length + directives.model3d.length;
       if (asking && launches) applied.push("fabrication en attente de vos réponses");
       const summary = applied.length ? `\n${DONE_MARK}${applied.join(" · ")}` : "";
-      this.#insert(project, "art", `${text || "C'est noté."}${summary}`, costUsd);
+      this.#insert(project, "art", withMarks(`${text || "C'est noté."}${summary}`, team), costUsd);
       await this.#commit(p.root, `art: ${applied.join(", ") || "réponse du Directeur artistique"}`);
       // Planches et duels ne fabriquent aucun visuel du jeu : ils partent même avec des questions (ADR-58).
       for (const b of directives.references) this.#startBoard(project, b);
@@ -1283,6 +1346,7 @@ export class ArtService {
     } catch (err) {
       this.#insert(project, "art", `Je n'ai pas pu répondre : ${(err as Error).message.slice(0, 300)}. Renvoyez votre message pour réessayer.`, null);
     } finally {
+      team?.close();
       this.#replying.delete(project);
       this.#track(Promise.resolve().then(() => this.#advance(project)));
     }
@@ -1438,12 +1502,23 @@ export class ArtService {
       if (!asset || !options.length) return;
       const [width, height] = (asset.format ?? "1024x1024").split("x").map(Number) as [number, number];
       const style = this.#styleOf(root, asset);
+      const refs = this.#styleRefs(gameRoot, asset);
+      const google = this.#reporter(project, id);
       const files: string[] = [];
       for (const [k, o] of options.entries()) {
         progress.stage = "croquis";
         progress.step = `Croquis ${k + 1} sur ${options.length}${style ? " (dans le style de la référence)" : ""}`;
-        const png = await this.#imagegen.generate({ prompt: style ? styled(o.prompt) : o.prompt, width, height, seed: randomInt(2 ** 31), ...(style ? { edit: { images: [style] } } : {}) });
-        const file = this.#free(root, "production", `${id.toLowerCase()}-croquis-${k + 1}`, ".png");
+        const png = await this.#imagegen.generate({
+          prompt: style ? styled(o.prompt) : o.prompt,
+          width,
+          height,
+          seed: randomInt(2 ** 31),
+          ...(style ? { edit: { images: [style] } } : {}),
+          tier: "draft",
+          refs,
+          report: google.report,
+        });
+        const file = this.#free(root, "production", `${id.toLowerCase()}-croquis-${k + 1}`, imageExt(png));
         writeAtomic(join(root, file), png);
         files.push(file);
         progress.preview = { kind: "art", file };
@@ -1461,6 +1536,7 @@ export class ArtService {
         [
           `Voici ${asset.sketches.length} directions pour ${id} « ${asset.name} ». Choisissez celle qui vous parle : je la fabrique et la mène jusqu'au jeu sans vous redemander.`,
           `${CHOICE_MARK}${sketchQuestion(id, asset.name)} || ${[...asset.sketches.map((s, k) => `Croquis ${k + 1} : ${s.label}${s.file ? `${VISUAL_SEP}${s.file}` : ""}`), "Aucun, on en reparle"].join(" || ")}`,
+          ...noteLines(google.notes),
         ].join("\n"),
         null,
       );
@@ -1529,14 +1605,15 @@ export class ArtService {
       return { q: q!, opts };
     });
     const draw = this.#imagegen.state().installed ? todo.slice(0, MAX_VIGNETTES) : [];
+    const google = this.#reporter(project, null);
     if (draw.length)
       await this.#explore(project, "vignettes", "Le Directeur artistique dessine les vignettes de ses questions", async (say) => {
         const seq = (this.#db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM art_messages WHERE project = ?").get(project) as { next: number }).next;
         for (const [n, t] of draw.entries()) {
           say(`Vignettes des questions : ${n + 1} sur ${draw.length}`);
           try {
-            const png = await this.#imagegen.generate({ prompt: t.prompt, width: 512, height: 512, seed: randomInt(2 ** 31) });
-            const file = this.#free(root, "choix", `m${seq}-${n + 1}`, ".png");
+            const png = await this.#imagegen.generate({ prompt: t.prompt, width: 512, height: 512, seed: randomInt(2 ** 31), tier: "draft", report: google.report });
+            const file = this.#free(root, "choix", `m${seq}-${n + 1}`, imageExt(png));
             writeAtomic(join(root, file), png);
             parsed[t.line]!.opts[t.option]!.file = file;
           } catch {
@@ -1549,6 +1626,7 @@ export class ArtService {
         const p = parsed[i];
         return p ? `${CHOICE_MARK}${p.q} || ${p.opts.map((o) => (o.file ? `${o.label}${VISUAL_SEP}${o.file}` : o.label)).join(" || ")}` : l;
       })
+      .concat(noteLines(google.notes))
       .join("\n");
   }
 
@@ -1628,11 +1706,12 @@ export class ArtService {
     // Une même graine pour tous les styles : la composition se ressemble, seul le style change.
     const seed = randomInt(2 ** 31);
     const options: { label: string; prompt: string; file: string }[] = [];
+    const google = this.#reporter(project, null);
     try {
       for (const [k, o] of s.options.entries()) {
         say(`Duel de styles « ${s.subject} » : style ${k + 1} sur ${s.options.length}`);
-        const png = await this.#imagegen.generate({ prompt: o.prompt, width, height, seed });
-        const file = this.#free(root, "styles", `${id.toLowerCase()}-${k + 1}`, ".png");
+        const png = await this.#imagegen.generate({ prompt: o.prompt, width, height, seed, tier: "draft", report: google.report });
+        const file = this.#free(root, "styles", `${id.toLowerCase()}-${k + 1}`, imageExt(png));
         writeAtomic(join(root, file), png);
         options.push({ ...o, file });
       }
@@ -1651,6 +1730,7 @@ export class ArtService {
       [
         `**Duel de styles ${id}** : le même sujet, « ${s.subject} », dans ${options.length} styles. Choisissez celui qui ressemble à votre jeu : il deviendra la référence de style de tous les visuels.`,
         `${CHOICE_MARK}${styleQuestion(id, s.subject)} || ${[...options.map((o, k) => `Style ${k + 1} : ${o.label}${VISUAL_SEP}${o.file}`), "Aucun, d'autres pistes"].join(" || ")}`,
+        ...noteLines(google.notes),
       ].join("\n"),
       null,
     );
@@ -1756,6 +1836,10 @@ export class ArtService {
         const init = direction ? readFileSync(join(root, direction.file)) : null;
         const style = this.#styleOf(root, asset);
         const fix = retouch && this.#kontext() && existsSync(join(root, retouch.file)) ? { image: readFileSync(join(root, retouch.file)), edit: retouch.edit } : null;
+        // Chez Google (ADR-110) : les essais par Nano Banana 2.1, avec le style du jeu ; la retouche qui mène à l'image
+        // finale, par Nano Banana Pro.
+        const refs = fix ? [] : this.#styleRefs(gameRoot, asset);
+        const google = this.#reporter(project, id);
         const files: string[] = [];
         // Au premier tour, le croquis choisi est lui-même un candidat.
         if (direction && round === 1) files.push(direction.file);
@@ -1770,8 +1854,8 @@ export class ArtService {
                 : { prompt };
           progress.stage = "image";
           progress.step = fix ? `Retouche ${v} sur ${VARIANTS} du meilleur essai` : direction ? `Variante ${v} sur ${VARIANTS} du croquis choisi` : `Essai ${v} sur ${VARIANTS}`;
-          const png = await this.#imagegen.generate({ width, height, seed: randomInt(2 ** 31), ...req });
-          const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, ".png");
+          const png = await this.#imagegen.generate({ width, height, seed: randomInt(2 ** 31), ...req, tier: fix ? "final" : "draft", refs, report: google.report });
+          const file = this.#free(root, "production", `${id.toLowerCase()}-t${round}-e${v}`, imageExt(png));
           writeAtomic(join(root, file), png);
           files.push(file);
           progress.preview = { kind: "art", file };
@@ -1797,7 +1881,7 @@ export class ArtService {
         const ok = v.ok || kept;
         // Le meilleur essai passe en dernier : c'est lui que la fiche montre.
         asset.renders = [...asset.renders.filter((r) => r !== best), best];
-        asset.verdict = { ok, summary: v.summary, points: v.points, prompt: v.prompt, file: best, by: "validator", at: this.#clock.now() };
+        asset.verdict = { ok, summary: v.summary, points: v.points, prompt: v.prompt, file: best, by: "validator", at: this.#clock.now(), ...(to3d && v.orientation !== "face" ? { orientation: v.orientation } : {}) };
         this.#setStatus(asset, ok && !to3d ? "valide" : "production");
         if (!ok && v.prompt) asset.prompts = [v.prompt, ...asset.prompts.filter((p) => p !== v.prompt)].slice(0, 6);
         retouch = !ok && v.edit && this.#kontext() ? { file: best, edit: v.edit } : null;
@@ -1815,6 +1899,7 @@ export class ArtService {
                 ? `**${id} « ${asset.name} » : essai ${files.indexOf(best) + 1} retenu** (tour ${round} sur ${ROUNDS}), avec des défauts ${to3d ? "que l'atelier Blender corrigera" : "mineurs"}. ${v.summary}`
                 : `**${id} « ${asset.name} » : pas encore** (tour ${round} sur ${ROUNDS}). ${v.summary}`,
             ...v.points.map((p) => `- ${p}`),
+            ...noteLines(google.notes),
             ok
               ? to3d
                 ? "Il part à l'atelier 3D."
@@ -1822,7 +1907,7 @@ export class ArtService {
               : round === ROUNDS
                 ? "Aucun essai utilisable : le meilleur est sur la fiche. « Valider quand même », « Refaire », ou dites-moi ce qui cloche et je repars de nouveaux croquis."
                 : retouch
-                  ? `Je fais retoucher l'essai ${files.indexOf(best) + 1} par Kontext : « ${retouch.edit} »`
+                  ? `Je fais retoucher l'essai ${files.indexOf(best) + 1} par ${this.#google?.state().configured ? "Nano Banana Pro (ou Kontext si Google est indisponible)" : "Kontext"} : « ${retouch.edit} »`
                   : "Je relance un tour avec un prompt corrigé.",
           ].join("\n"),
           null,
@@ -1847,6 +1932,39 @@ export class ArtService {
     return s.installed && !!s.kontext?.installed;
   }
 
+  /**
+   * Les références de style jointes à Google pour un concept d'asset (ADR-110) : les images de la bible, et 2 à 3 images
+   * d'assets déjà validés du même jeu (les plus récents, même type d'abord). Aucune sans Google, ni sans asset validé.
+   */
+  #styleRefs(gameRoot: string, asset: Asset): Buffer[] {
+    if (!this.#google?.state().configured) return [];
+    const root = artRoot(gameRoot);
+    const validated = readManifest(gameRoot)
+      .assets.filter((a) => a.id !== asset.id && a.verdict?.ok && ["valide", "integration", "integre"].includes(a.status) && existsSync(join(root, a.verdict.file)))
+      .sort((x, y) => Number(y.type === asset.type) - Number(x.type === asset.type) || y.updated_at.localeCompare(x.updated_at))
+      .slice(0, 3)
+      .map((a) => a.verdict!.file);
+    if (!validated.length) return [];
+    const bible = existsSync(join(root, "bible.md")) ? readFileSync(join(root, "bible.md"), "utf8") : "";
+    const pictures = [...bible.matchAll(/!\[[^\]]*\]\(\s*<?([^)>\s]+)>?[^)]*\)/g)]
+      .map((m) => decodeURIComponent(m[1]!).replace(/^\.\//, ""))
+      .filter((f) => safeRel(f) && IMAGE_MIME[extname(f).toLowerCase()] && existsSync(join(root, f)))
+      .slice(0, 2);
+    return [...new Set([...pictures, ...validated])].map((f) => readFileSync(join(root, f)));
+  }
+
+  /** Ce que Google dessine pour un visuel (ADR-110) : son coût compté sur le visuel, et les lignes du fil. */
+  #reporter(project: string, id: string | null): { notes: GenNote[]; report: (n: GenNote) => void } {
+    const notes: GenNote[] = [];
+    return {
+      notes,
+      report: (n) => {
+        notes.push(n);
+        if (n.kind === "google" && id) this.budget.add(project, id, { usd: n.usd });
+      },
+    };
+  }
+
   /** L'image de la référence de style de l'asset, si Kontext peut s'en servir. */
   #styleOf(root: string, asset: Asset): Buffer | null {
     return asset.styleRef && this.#kontext() && existsSync(join(root, asset.styleRef)) ? readFileSync(join(root, asset.styleRef)) : null;
@@ -1861,7 +1979,8 @@ export class ArtService {
     return missing.length ? missing.join(" et ").replace(/^./, (c) => c.toUpperCase()) : null;
   }
 
-  #startModel(project: string, id: string, retouch = false): void {
+  /** `fresh` (ADR-112) : un modèle refait de zéro chez Tripo, même si son squelette pouvait être gardé. */
+  #startModel(project: string, id: string, retouch = false, fresh = false): void {
     if (this.#aside(project, id)) return;
     if (this.#capped(project, id)) return;
     const simple = !!readManifest(this.#projects.get(project).root).assets.find((a) => a.id === id)?.model3d?.simple;
@@ -1874,10 +1993,10 @@ export class ArtService {
     if (gens.has(id)) return;
     gens.set(id, { asset: id, round: 1, rounds: MODEL_ROUNDS, step: retouch ? "Reprise de la scène de l'atelier" : "Préparation de la 3D" });
     this.#generating.set(project, gens);
-    const job = this.#jobStart(project, "model", { id, retouch }, `${project}/model/${id}`);
+    const job = this.#jobStart(project, "model", { id, retouch, fresh }, `${project}/model/${id}`);
     this.#track(
       this.budget
-        .run(project, id, () => this.#produceModel(project, id, retouch))
+        .run(project, id, () => this.#produceModel(project, id, retouch, fresh))
         .finally(() => (gens.delete(id), this.#jobEnd(job)))
         .then((ok) => (ok ? this.#autoIntegrate(project, id, "system") : undefined)),
     );
@@ -1889,7 +2008,7 @@ export class ArtService {
    * finition, l'artisan reprend la même scène avec les remarques du validateur, sans repayer Tripo. `retouch` (ADR-55) :
    * un modèle déjà fabriqué reprend sa scène d'atelier telle qu'elle est, avec les dernières remarques du validateur.
    */
-  async #produceModel(project: string, id: string, retouch = false): Promise<boolean> {
+  async #produceModel(project: string, id: string, retouch = false, fresh = false): Promise<boolean> {
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const progress = this.#generating.get(project)!.get(id)!;
@@ -1898,7 +2017,8 @@ export class ArtService {
     try {
       const asset = readManifest(gameRoot).assets.find((a) => a.id === id);
       if (!asset?.model3d) return false;
-      const spec = asset.model3d;
+      // Style à facettes (ADR-114) : demandé par la directive, ou écrit dans la fiche (« low-poly », « facettes »).
+      const spec = asset.model3d && !asset.model3d.simple && !asset.model3d.facettes && lowPolyStyle(asset) ? { ...asset.model3d, facettes: true } : asset.model3d;
       const source = spec.simple ? null : asset.verdict?.ok ? asset.verdict.file : null;
       if (!spec.simple && !source) return false;
       let credits = 0;
@@ -1916,11 +2036,13 @@ export class ArtService {
         rigModel = previous.rigModel ?? null;
         planche.push(...(previous.views ?? []).filter((f) => existsSync(join(root, f))));
         // Le modèle déjà branché dans le jeu sera remplacé par la version retouchée.
-        if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
+        if (asset.status === "integration" || asset.status === "integre") this.#replacing.set(`${project}/${id}`, "retouch");
       }
       // Des animations changées (ADR-56) : Tripo pose les nouvelles sur le squelette gardé (10 crédits chacune), Blender les
       // range dans la scène gardée. Si Tripo a oublié le squelette (ses tâches expirent), le modèle est refait en entier.
-      const kept = !retouch && source && asset.model?.rigTask && asset.model.source === source && existsSync(join(dir, "scene.blend")) ? asset.model : null;
+      // Un asset déjà dans le jeu, refait (ADR-112) : le nouveau modèle remplacera l'ancien au branchement.
+      if (fresh) this.#replacing.set(`${project}/${id}`, "redo");
+      const kept = !retouch && !fresh && source && asset.model?.rigTask && asset.model.source === source && existsSync(join(dir, "scene.blend")) ? asset.model : null;
       let onlyAnimations = false;
       if (kept) {
         try {
@@ -1949,15 +2071,25 @@ export class ArtService {
           rigModel = kept.rigModel ?? null;
           planche.push(...(kept.views ?? []).filter((f) => existsSync(join(root, f))));
           onlyAnimations = true;
-          if (asset.status === "integration" || asset.status === "integre") this.#replacing.add(`${project}/${id}`);
+          if (asset.status === "integration" || asset.status === "integre") this.#replacing.set(`${project}/${id}`, "retouch");
         } catch (err) {
           progress.step = `Le squelette Tripo n'est plus disponible (${(err as Error).message.slice(0, 120)}) : le modèle est refait`;
           planche.length = 0;
         }
       }
       if (source && !previous && !onlyAnimations) {
+        const image = readFileSync(join(root, source));
+        // La planche dessinée par Google, s'il a une clé (ADR-110) : ses coûts et ses replis sont dits avec la planche.
+        const google = this.#reporter(project, id);
+        // L'angle de l'image de référence (ADR-115) : de profil ou de dos, elle prend sa case dans la planche.
+        const orientation = asset.verdict?.orientation ?? "face";
+        const reference = referenceView(orientation);
+        const sheet: SheetPort | undefined = this.#google?.state().configured ? googleSheet(this.#google, image, google.report, reference) : undefined;
+        // Sans Google, la planche de Tripo part d'une vue de face : sur une autre vue, elle échouerait, crédits perdus.
+        const direct = !sheet && reference !== "front";
+        if (direct) this.#insert(project, "art", `${id} : l'image de référence montre le sujet ${ORIENT_FR[orientation]} ; sans Google, pas de planche (celle de Tripo suppose une vue de face) : la 3D est tirée de l'image seule.`, null);
         const t = await this.#model3d.tripo({
-          image: readFileSync(join(root, source)),
+          image,
           ext: extname(source).slice(1).toLowerCase().replace("jpeg", "jpg"),
           spec,
           seed: randomInt(2 ** 31),
@@ -1965,11 +2097,19 @@ export class ArtService {
             progress.stage = /planche/i.test(s) ? "planche" : "tripo";
             progress.step = s;
           },
-          views: (views, round) => {
-            progress.stage = "planche";
-            progress.step = round === 1 ? "Le validateur regarde la planche" : "Le validateur regarde la planche retouchée";
-            return this.#reviewViews(project, asset, source, views, round, planche);
-          },
+          ...(direct
+            ? {}
+            : {
+                views: (views: ViewImage[], round: number, by?: "tripo" | "google") => {
+                  progress.stage = "planche";
+                  progress.step = round === 1 ? "Le validateur regarde la planche" : "Le validateur regarde la planche retouchée";
+                  // Les lignes de Google suivent la planche qu'elles concernent, une seule fois.
+                  const notes = noteLines(google.notes.splice(0));
+                  return this.#reviewViews(project, asset, source, views, round, planche, by ?? "tripo", notes, reference);
+                },
+              }),
+          ...(sheet ? { sheet } : {}),
+          ...(reference !== "front" ? { reference } : {}),
         });
         if (!t.views) planche.length = 0;
         credits = t.credits;
@@ -1991,6 +2131,9 @@ export class ArtService {
       if (!previous && !onlyAnimations) {
         progress.step = "Blender prépare la scène de l'atelier";
         await this.#model3d.prepare({ dir, input: raws[0] ?? null, extras: raws.slice(1), animations, spec, palette: paletteOf(asset) });
+      } else if (spec.facettes) {
+        // Une scène gardée d'avant ADR-114 (finition reprise, animations changées) : facettes nettes, sauf choix de l'artisan.
+        await this.#model3d.runCode({ dir, code: FACETTES_SUR_SCENE_GARDEE });
       }
       // Ce que l'artisan lit : la fiche, la bible et l'image de référence, copiées dans son dossier.
       writeAtomic(join(dir, "fiche.json"), JSON.stringify({ id: asset.id, name: asset.name, type: asset.type, usage: asset.usage, specs: asset.specs, model3d: spec }, null, 2));
@@ -2012,9 +2155,12 @@ export class ArtService {
       const last = MODEL_ROUNDS + (workshopModel !== "fable" ? 1 : 0);
       const hero = Boolean(spec.rig);
       progress.rounds = last;
+      // La meilleure passe jugée jusqu'ici (ADR-116) : la scène qui l'a donnée est la copie prise au début de la suivante.
+      let best: { pass: number; rank: number; prefix: string; mineur: boolean; model: NonNullable<Asset["model"]> } | null = null;
       for (let pass = 1; pass <= last; pass++) {
         progress.round = pass;
         if (pass > 1 && this.#capped(project, id)) return false;
+        await this.#model3d.snapshot({ dir, name: `scene-passe-${pass}.blend` });
         const renfort = pass > MODEL_ROUNDS && hero;
         const workshop = await this.#artisan(project, asset, dir, reference, sheet, remarks, progress, renfort);
         progress.stage = "controle";
@@ -2049,9 +2195,37 @@ export class ArtService {
         m = readManifest(gameRoot);
         a = m.assets.find((x) => x.id === id);
         if (!a?.model) return false;
+        // Garde à la passe (ADR-116) : une passe moins bien classée qu'une précédente ne remplace pas la meilleure. Sa scène
+        // revient, ré-exportée sous son nom, avec son verdict d'alors (sans revoir le validateur) ; pas de passe de plus.
+        const rank = passRank(v);
+        if (best && rank < best.rank) {
+          const kept = best;
+          progress.stage = "controle";
+          progress.step = `La passe ${pass} a régressé : retour à la scène de la passe ${kept.pass}`;
+          await this.#model3d.restore({ dir, name: `scene-passe-${kept.pass + 1}.blend` });
+          const again = await this.#model3d.export({ dir, output: join(root, kept.model.file), rendersDir: join(root, "production"), prefix: kept.prefix, spec });
+          // Jouable : plus aucune passe ne viendra, il part au jeu comme à la dernière passe (ADR-55).
+          const ok = kept.mineur;
+          a.model = { ...kept.model, tris: again.tris, dims: again.dims, animations: again.animations, verdict: { ...kept.model.verdict!, ok } };
+          this.#setStatus(a, ok ? "valide" : "production");
+          writeManifest(gameRoot, m);
+          await this.#commit(gameRoot, `art: modèle 3D de ${id} : passe ${kept.pass} gardée (la passe ${pass} avait régressé)`);
+          this.#journal.append({ project, actor: { kind: "agent", role: "art_director", run: this.#orchestrator.name }, type: ok ? "art.model_validated" : "art.model_rejected", subject: id, payload: { pass: kept.pass, regressed: pass, credits } });
+          this.#insert(
+            project,
+            "art",
+            [
+              ...a.model.renders.map((r) => `${IMAGE_MARK}${r}`),
+              `**${id} « ${a.name} » en 3D : la passe ${pass} a régressé** (${RANK_FR[rank]}, contre ${RANK_FR[kept.rank]} à la passe ${kept.pass}) : je garde la passe ${kept.pass}, ré-exportée telle qu'elle avait été jugée, et je m'arrête là. ${ok ? "Je la fais intégrer dans le jeu." : "« Valider quand même », ou dites-moi ce qui cloche."}`,
+            ].join("\n"),
+            null,
+          );
+          return ok;
+        }
         // De petites retouches qui résistent à la dernière passe n'empêchent pas un modèle jouable d'entrer dans le jeu (ADR-55).
         const ok = v.ok || (v.mineur && pass >= MODEL_ROUNDS);
         a.model.verdict = { ok, summary: v.summary, points: v.points, prompt: null, file, by: "validator", at: this.#clock.now() };
+        if (!best || rank >= best.rank) best = { pass, rank, prefix, mineur: v.mineur, model: structuredClone(a.model) };
         this.#setStatus(a, ok ? "valide" : "production");
         writeManifest(gameRoot, m);
         await this.#commit(gameRoot, `art: modèle 3D de ${id} ${ok ? "validé" : "à retoucher"} (validateur, passe ${pass})`);
@@ -2111,6 +2285,9 @@ export class ArtService {
       }
     } finally {
       for (const f of raws) rmSync(f, { force: true });
+      // Les copies de scène des garde-fous (ADR-116) : la scène gardée est scene.blend.
+      for (let n = 1; n <= MODEL_ROUNDS + 1; n++) rmSync(join(dir, `scene-passe-${n}.blend`), { force: true });
+      rmSync(join(dir, "scene-avant-pas.blend"), { force: true });
     }
     return false;
   }
@@ -2119,7 +2296,19 @@ export class ArtService {
    * La planche de Tripo (ADR-50) : rangée dans production/, jugée par le validateur, montrée dans la discussion. Au premier
    * passage, les retouches demandées repartent chez Tripo ; au second (planche retouchée), le jugement est seulement dit.
    */
-  async #reviewViews(project: string, asset: Asset, source: string, views: ViewImage[], round: number, saved: string[]): Promise<ViewEdit[]> {
+  async #reviewViews(
+    project: string,
+    asset: Asset,
+    source: string,
+    views: ViewImage[],
+    round: number,
+    saved: string[],
+    by: "tripo" | "google" = "tripo",
+    notes: string[] = [],
+    reference: View = "front",
+  ): Promise<ViewEdit[]> {
+    // Les fichiers gardent le nom de leur case : une référence de profil droit est « planche-droite » (ADR-115).
+    const k0 = VIEW_EN.indexOf(reference);
     const gameRoot = this.#projects.get(project).root;
     const root = artRoot(gameRoot);
     const files = views.map((v, k) => {
@@ -2140,6 +2329,9 @@ export class ArtService {
         prompt: [
           `Planche de l'asset ${asset.id} « ${asset.name} » (${asset.type}). Usage : ${asset.usage}. Spécifications : ${asset.specs || "aucune"}.`,
           `Image de référence : ${source}`,
+          k0 > 0
+            ? `Elle montre le sujet ${ORIENT_FR[asset.verdict?.orientation ?? "face"]} : c'est la vue ${VIEW_FR[k0]} (${reference}) de la planche, telle quelle ; ${by === "google" ? "les trois autres ont été dessinées autour d'elle" : "les autres en sont tirées"}. La vue de face doit montrer le sujet tête vers la caméra. Ne demande aucune retouche de la vue ${reference}.`
+            : "",
           ...views.map((v, k) => `Vue ${VIEW_FR[k]} (${v.view}) : ${files[k]}`),
           round > 1 ? "C'est la planche déjà retouchée : juge-la, sans nouvelle retouche." : "",
         ]
@@ -2151,20 +2343,28 @@ export class ArtService {
         meta: { project, agent: "art_director" },
       });
       const v = data as { ok: boolean; summary: string; points: string[]; edits: ViewEdit[] };
-      const edits = round === 1 && !v.ok ? (v.edits ?? []).filter((e) => VIEW_EN.includes(e.view) && e.prompt?.trim()).slice(0, 4) : [];
+      const edits = round === 1 && !v.ok ? (v.edits ?? []).filter((e) => VIEW_EN.includes(e.view) && e.prompt?.trim() && (k0 <= 0 || e.view !== reference)).slice(0, 4) : [];
+      // Infidèle, et plus rien à retoucher (déjà retouchée, ou aucune retouche qui tienne) : la planche est écartée (ADR-109).
+      const rejected = !v.ok && !edits.length;
       this.#insert(
         project,
         "art",
         [
           ...files.map((f) => `${IMAGE_MARK}${f}`),
-          `**Planche de ${asset.id} « ${asset.name} »${round > 1 ? " retouchée" : ""} : ${v.ok ? "cohérente" : edits.length ? "à retoucher" : "imparfaite"}.** ${String(v.summary ?? "").slice(0, 400)}`,
+          `**Planche de ${asset.id} « ${asset.name} »${round > 1 ? " retouchée" : ""} : ${v.ok ? "cohérente" : edits.length ? "à retoucher" : "écartée"}.** ${String(v.summary ?? "").slice(0, 400)}`,
           ...(v.points ?? []).slice(0, 6).map((p) => `- ${p}`),
+          ...notes,
           edits.length
-            ? `Je fais retoucher par Tripo : ${edits.map((e) => `vue ${VIEW_FR[VIEW_EN.indexOf(e.view)]}`).join(", ")}.`
-            : "La 3D est construite à partir de ces quatre vues ; l'atelier Blender corrigera le reste.",
+            ? `Je fais retoucher par ${by === "google" ? "Google (Nano Banana Pro)" : "Tripo"} : ${edits.map((e) => `vue ${VIEW_FR[VIEW_EN.indexOf(e.view)]}`).join(", ")}.`
+            : rejected
+              ? k0 > 0
+                ? `Elle trahit l'image de référence : la 3D sera tirée de l'image seule, vue ${ORIENT_FR[asset.verdict?.orientation ?? "face"]}.`
+                : "Elle trahit l'image de référence : la 3D sera tirée de l'image seule, fidèle de face."
+              : "La 3D est construite à partir de ces quatre vues ; l'atelier Blender corrigera le reste.",
         ].join("\n"),
         null,
       );
+      if (rejected) throw new Error("planche infidèle à l'image de référence");
       return edits;
     } finally {
       busy.delete(asset.id);
@@ -2186,6 +2386,7 @@ export class ArtService {
     };
     show();
     let lost = 0;
+    let undone = 0;
     for (let step = 1; step <= steps; step++) {
       progress.step = `L'artisan 3D ${spec.simple ? "modélise" : "range le modèle"} dans Blender (pas ${step} sur ${steps})`;
       let data: unknown;
@@ -2197,7 +2398,9 @@ export class ArtService {
             `Spécifications : ${asset.specs || "aucune"}`,
             `Palette de la fiche (variable palette) : ${paletteOf(asset).join(", ") || "aucune : lis la bible"}`,
             `3D demandée : ${spec.size} m (plus grande dimension), ${spec.tris} triangles au plus${spec.simple ? ", objet SIMPLE : la scène est vide, modélise-le" : ", modèle de TRIPO : garde sa forme et sa texture, range-le seulement"}.`,
-            reference ? `Image de référence : ${reference}` : "Pas d'image de référence : suis la fiche et la bible.",
+            reference
+              ? `Image de référence : ${reference}${asset.verdict?.orientation && asset.verdict.orientation !== "face" ? ` (le sujet y est vu ${ORIENT_FR[asset.verdict.orientation]} ; son devant doit quand même regarder -Y)` : ""}`
+              : "Pas d'image de référence : suis la fiche et la bible.",
             sheet.length ? `Planche (ce que le modèle doit montrer sous chaque angle) : ${sheet.join(", ")}` : "",
             remarks.length ? `Le validateur demande ces corrections :\n${remarks.map((r) => `- ${r}`).join("\n")}` : "",
             journal.length ? `Tes pas précédents :\n${journal.slice(-6).join("\n\n")}` : "",
@@ -2229,9 +2432,18 @@ export class ArtService {
       if (s.code?.trim()) {
         const r = await this.#model3d.runCode({ dir, code: s.code });
         line += `\nCode :\n${s.code.slice(0, 3000)}\n→ ${r.ok ? "réussi" : "ERREUR"}${r.sortie ? `\nSortie :\n${r.sortie.slice(-1500)}` : ""}${r.erreur ? `\nErreur :\n${r.erreur.slice(-1500)}` : ""}`;
+        // Garde au pas (ADR-116) : un code qui casse la scène (texture déliée, lueur sur le corps, modèle vidé) est annulé.
+        const avant = r.ok ? asSante(r.sante?.avant) : null;
+        const apres = r.ok ? asSante(r.sante?.apres) : null;
+        const broken = avant && apres ? stepBreak(avant, apres, [asset.usage, asset.specs, ...remarks].join("\n"), !!spec.simple) : null;
+        if (broken) {
+          await this.#model3d.restore({ dir, name: "scene-avant-pas.blend" });
+          line += `\n→ ANNULÉ : ${broken} ; la scène est revenue avant ce pas. Fais autrement.`;
+          undone++;
+        }
       }
       journal.push(line);
-      if (s.fini) return String(s.summary || s.note || "").slice(0, 400);
+      if (s.fini) return `${String(s.summary || s.note || "").slice(0, 400)}${undone ? ` (${undone} code${undone > 1 ? "s" : ""} annulé${undone > 1 ? "s" : ""} par le garde-fou de l'atelier)` : ""}`;
       if (s.code?.trim() || s.photos) {
         shots = await this.#model3d.photos({ dir, prefix: `photo-${step}` });
         show();
@@ -2319,7 +2531,7 @@ export class ArtService {
     asset: Asset,
     files: string[],
     prompt: string,
-  ): Promise<{ best: number; ok: boolean; usable: boolean; summary: string; points: string[]; prompt: string | null; edit: string | null }> {
+  ): Promise<{ best: number; ok: boolean; usable: boolean; summary: string; points: string[]; prompt: string | null; edit: string | null; orientation: Orientation }> {
     const busy = this.#validating.get(project) ?? new Set<string>();
     busy.add(asset.id);
     this.#validating.set(project, busy);
@@ -2332,7 +2544,7 @@ export class ArtService {
           asset.direction ? `Croquis choisi par le directeur créatif (la direction à suivre) : ${asset.direction.file}` : "",
           asset.styleRef ? `Référence de style (l'asset doit en avoir l'air de famille) : ${asset.styleRef}` : "",
           this.#kontext() ? "Flux Kontext est prêt : tu peux proposer une retouche (edit)." : "",
-          asset.model3d ? "Choisis le meilleur (best) comme modèle pour la 3D, puis juge sa forme seule." : "Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer dans le jeu.",
+          asset.model3d ? "Choisis le meilleur (best) comme modèle pour la 3D, puis juge sa forme seule ; dis sous quel angle il montre le sujet (orientation)." :"Choisis le meilleur (best), puis juge-le seul : « ok » s'il peut entrer dans le jeu.",
           `Usage : ${asset.usage}`,
           `Spécifications : ${asset.specs || "aucune"}`,
           `Prompt utilisé (Flux) : ${prompt}`,
@@ -2344,8 +2556,10 @@ export class ArtService {
         role: "art",
         meta: { project, agent: "art_director" },
       });
-      const v = data as { best: number; ok: boolean; usable?: boolean; summary: string; points: string[]; prompt: string | null; edit?: string | null };
+      const v = data as { best: number; ok: boolean; usable?: boolean; summary: string; points: string[]; prompt: string | null; edit?: string | null; orientation?: string };
       return {
+        // Une réponse sans orientation (ou d'avant l'ADR-115) : de face, comme avant.
+        orientation: ORIENTATIONS.includes(v.orientation as Orientation) ? (v.orientation as Orientation) : "face",
         best: Number(v.best) || 1,
         ok: !!v.ok,
         usable: !!v.ok || !!v.usable,
@@ -2532,6 +2746,16 @@ function resolveRef(assets: Asset[], root: string, ref: string, self: string, st
 /** Les vues de la planche, dans l'ordre de Tripo, et leur nom en clair. */
 const VIEW_EN: string[] = ["front", "left", "back", "right"];
 const VIEW_FR = ["face", "gauche", "dos", "droite"];
+/** Le rang d'une passe de l'atelier, en clair (ADR-116). */
+const RANK_FR = ["forme ratée", "forme bonne, finition à reprendre", "jouable", "conforme"];
+/** L'angle de l'image de référence, en clair (ADR-115). */
+const ORIENT_FR: Record<Orientation, string> = {
+  face: "de face",
+  profil_droite: "de profil, tourné vers la droite de l'image",
+  profil_gauche: "de profil, tourné vers la gauche de l'image",
+  trois_quarts: "de trois-quarts",
+  dos: "de dos",
+};
 
 /** L'extension d'une image d'après son contenu (les vues de Tripo arrivent sans nom de fichier). */
 function imageExt(b: Buffer): string {
@@ -2559,6 +2783,14 @@ function vitrineScene(id: string, godot = false): string {
 }
 
 /** Les couleurs de la fiche (codes hexadécimaux), que l'artisan 3D utilise pour repeindre. */
+/** Une scène gardée d'avant ADR-114 : facettes nettes (sauf choix de l'artisan) et peinture de Tripo nettoyée, une fois. */
+export const FACETTES_SUR_SCENE_GARDEE = "facettes(True, auto=True)\nnettoyer_texture(auto=True)";
+
+/** Le style low-poly à facettes, quand la fiche le demande (ADR-114). */
+export function lowPolyStyle(asset: Pick<Asset, "specs" | "usage">): boolean {
+  return /low[\s-]?poly|facett/i.test(`${asset.specs} ${asset.usage}`);
+}
+
 export function paletteOf(asset: Pick<Asset, "specs" | "usage">): string[] {
   return [...new Set(`${asset.specs} ${asset.usage}`.match(/#[0-9a-f]{6}\b/gi) ?? [])].map((c) => c.toUpperCase()).slice(0, 12);
 }

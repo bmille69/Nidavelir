@@ -92,67 +92,102 @@ describe("direction artistique", () => {
 
   async function steps() {
     await page.goto(`${BASE}/#/p/bordee`);
-    await page.locator(".project-tabs a", { hasText: "Direction artistique" }).click();
-    await page.getByRole("button", { name: /Construire la direction artistique/ }).click();
+    // La direction artistique est l'onglet « Art & son » (ADR-113) : rien n'est posé, la page invite à commencer.
+    await page.locator(".project-tabs a", { hasText: "Art & son" }).click();
+    await page.locator(".art-start").waitFor();
+    await page.locator(".art-sound").waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "art-0-vide.png") });
+    // Le DA se parle dans son panneau, par-dessus la galerie.
+    await page.locator(".art-start").getByRole("button", { name: /Construire la direction artistique/ }).click();
+    const da = page.locator(".da-drawer");
+    await da.waitFor();
 
     // Une question de goût, tranchée d'un clic.
-    await page.getByRole("button", { name: "Affiche d'époque" }).click({ timeout: 15_000 });
+    await da.getByRole("button", { name: "Affiche d'époque" }).click({ timeout: 15_000 });
 
     // Une image d'inspiration jointe au message suivant.
-    await page.locator(".composer input[type=file]").setInputFiles(join(sb.dir, "inspiration.png"));
-    await page.locator(".art-chip img").waitFor();
-
-    // L'onglet ne change plus tout seul (ADR-58) : on va voir les visuels.
-    await page.locator(".art-panel .tab", { hasText: "Visuels (1)" }).click({ timeout: 15_000 });
-    await page.locator(".art-asset", { hasText: "Icône de poudre" }).waitFor({ timeout: 15_000 });
-    await page.locator(".art-done", { hasText: "bible mise à jour · A-0001 proposé" }).waitFor();
-    await expect(page.locator(".art-prompt code").first().textContent()).resolves.toMatch(/gunpowder barrel icon/);
+    await da.locator(".composer input[type=file]").setInputFiles(join(sb.dir, "inspiration.png"));
+    await da.locator(".art-chip img").waitFor();
+    await da.locator(".art-done", { hasText: "bible mise à jour · A-0001 proposé" }).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(350);
     await page.screenshot({ path: join(shots, "art-1-discussion.png") });
 
-    // La direction en images : la palette en pastilles, le texte de la bible à déplier (ADR-58).
-    await page.locator(".art-panel .tab", { hasText: "Direction" }).click();
-    await page.locator(".art-swatch", { hasText: "#1B2A3A" }).waitFor();
-    await page.locator(".art-vision summary", { hasText: "Lire le texte" }).click();
-    await page.locator(".art-bible", { hasText: "#1B2A3A : mer de nuit" }).waitFor();
-    await page.locator(".art-panel .tab", { hasText: "Moodboard" }).click();
-    await page.locator(".art-mood-grid img").waitFor();
+    // La direction en images : la palette en pastilles, le texte de la bible à déplier (ADR-58), dans le panneau du DA.
+    await da.locator(".art-panel .tab", { hasText: "Direction" }).click();
+    await da.locator(".art-swatch", { hasText: "#1B2A3A" }).waitFor();
+    await da.locator(".art-vision summary", { hasText: "Lire le texte" }).click();
+    await da.locator(".art-bible", { hasText: "#1B2A3A : mer de nuit" }).waitFor();
+    await da.locator(".art-panel .tab", { hasText: "Moodboard" }).click();
+    await da.locator(".art-mood-grid img").waitFor();
+    await da.getByRole("button", { name: "Fermer" }).click();
+
+    // La galerie : le visuel proposé ; son détail complet s'ouvre au clic (prompts, dépôt du rendu, actions).
+    const tile = page.locator(".acard", { hasText: "Icône de poudre" });
+    await tile.waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "art-galerie.png") });
+    await tile.click();
+    const detail = page.locator(".art-detail");
+    await detail.locator(".art-asset", { hasText: "Icône de poudre" }).waitFor();
+    await expect(detail.locator(".art-prompt code").first().textContent()).resolves.toMatch(/gunpowder barrel icon/);
 
     // Le rendu fait dans Midjourney : le validateur le juge, puis on le fait intégrer.
-    await page.locator(".art-panel .tab", { hasText: "Visuels" }).click();
-    await page.locator(".art-asset input[type=file]").setInputFiles(join(sb.dir, "rendu.png"));
-    await page.locator(".art-verdict.ok", { hasText: "Conforme" }).waitFor({ timeout: 15_000 });
-    await page.locator(".art-render img").waitFor();
+    await detail.locator(".art-asset input[type=file]").setInputFiles(join(sb.dir, "rendu.png"));
+    await detail.locator(".art-verdict.ok", { hasText: "Conforme" }).waitFor({ timeout: 15_000 });
+    await detail.locator(".art-render img").waitFor();
+    await page.waitForTimeout(450);
     await page.screenshot({ path: join(shots, "art-2-verdict.png") });
-    // Validé : il part tout seul au directeur du projet (ADR-48).
-    await page.locator(".msg.art", { hasText: "part dans le jeu" }).waitFor({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
+    // Validé : il part tout seul au directeur du projet (ADR-48) ; le DA le dit dans sa discussion.
+    await page.locator(".da-open").click();
+    await da.locator(".msg.art", { hasText: "part dans le jeu" }).waitFor({ timeout: 15_000 });
     expect(hub.art.state("bordee").assets[0]!.status).toBe("integration");
-    expect(hub.conversations.listThreads("bordee").some((t) => t.title === "Intégrer A-0001 : Icône de poudre")).toBe(true);
+    expect(hub.conversations.listThreads("bordee").find((t) => t.title === "Intégrer A-0001 : Icône de poudre")).toMatchObject({ automatic: true });
 
-    // Un modèle 3D : l'atelier 3D se présente (Blender à installer, clé Tripo à coller).
-    await page.locator(".composer textarea").fill("Il nous faut le cuirassé en 3D");
-    await page.locator(".composer textarea").press("Enter");
-    await page.locator(".art-asset", { hasText: "Cuirassé" }).waitFor({ timeout: 15_000 });
-    await page.locator(".art-gen", { hasText: "Atelier 3D" }).waitFor();
-    await page.getByRole("button", { name: /Installer Blender/ }).waitFor();
-    await page.locator(".art-asset", { hasText: "Modèle 3D : 12 m, 6000 triangles" }).waitFor();
+    // Un modèle 3D : la fiche le dit, et l'atelier 3D se présente dans les Réglages (Blender à installer, clé Tripo à coller).
+    await da.locator(".composer textarea").fill("Il nous faut le cuirassé en 3D");
+    await da.locator(".composer textarea").press("Enter");
+    await expect.poll(() => hub.art.state("bordee").assets.some((a) => /Cuirassé/.test(a.name)), { timeout: 15_000 }).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.locator(".acard", { hasText: "Cuirassé" }).waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Réglages techniques" }).click();
+    const settings = page.locator(".art-settings");
+    await settings.locator(".art-gen", { hasText: "Atelier 3D" }).waitFor();
+    await settings.getByRole("button", { name: /Installer Blender/ }).waitFor();
+    await settings.locator(".set-group", { hasText: "Générateur d'images local" }).waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "art-reglages.png") });
+    await page.keyboard.press("Escape");
+    await page.locator(".acard", { hasText: "Cuirassé" }).click();
+    await page.locator(".art-detail .art-asset", { hasText: "Modèle 3D : 12 m, 6000 triangles" }).waitFor();
+    await page.waitForTimeout(450);
     await page.screenshot({ path: join(shots, "art-5-atelier-3d.png") });
+    await page.keyboard.press("Escape");
     expect(errors).toEqual([]);
   }
 
-  it("sur téléphone : la discussion, puis les visuels", async () => {
+  it("sur téléphone : les visuels, puis la discussion du DA en plein écran", async () => {
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR", isMobile: true, hasTouch: true });
     phone.on("pageerror", (e) => errors.push(e.message));
     await phone.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
     await phone.goto(`${BASE}/#/p/bordee/art`);
-    await phone.locator(".msg.art").first().waitFor();
-    await phone.screenshot({ path: join(shots, "art-3-telephone.png") });
-    await phone.locator(".pane-switch button", { hasText: "Visuels" }).click();
-    await expect(phone.locator(".pane-switch button.on").textContent()).resolves.toMatch(/Visuels/);
-    await phone.locator(".art-asset", { hasText: "Icône de poudre" }).first().waitFor();
+    await phone.locator(".acard", { hasText: "Icône de poudre" }).first().waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.waitForTimeout(350);
     await phone.screenshot({ path: join(shots, "art-4-telephone-visuels.png") });
-    // La file des visuels sur une fiche proposée (ADR-62).
-    await phone.locator(".art-asset.st-propose").first().scrollIntoViewIfNeeded();
+    // « Répondre au Directeur artistique » (« À vous ») mène à /art/da : sa discussion s'ouvre directement.
+    await phone.goto(`${BASE}/#/p/bordee/art/da`);
+    await phone.locator(".da-drawer .msg.art").first().waitFor();
+    expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.waitForTimeout(350);
+    await phone.screenshot({ path: join(shots, "art-3-telephone.png") });
+    await phone.locator(".da-drawer").getByRole("button", { name: "Fermer" }).click();
+    await expect.poll(() => phone.evaluate("location.hash")).toBe("#/p/bordee/art");
+    // La file des visuels sur une fiche proposée (ADR-62), dans son détail.
+    await phone.locator(".acard.st-propose").first().click();
+    await phone.locator(".art-detail .art-asset.st-propose").waitFor();
+    await phone.waitForTimeout(350);
     await phone.screenshot({ path: join(shots, "art-6-telephone-file.png") });
     await phone.close();
     expect(errors).toEqual([]);

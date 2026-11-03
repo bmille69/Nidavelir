@@ -154,8 +154,9 @@ describe("conception visuelle", () => {
   async function steps() {
     await page.goto(`${BASE}/#/p/bordee/art`);
     // Rien de posé : on ouvre sur la direction.
-    await page.locator(".art-panel .tab.active", { hasText: "Direction" }).waitFor();
-    await page.getByRole("button", { name: /Construire la direction artistique/ }).click();
+    // Le DA s'ouvre dans son panneau, par-dessus la galerie encore vide (ADR-113).
+    await page.locator(".art-start").getByRole("button", { name: /Construire la direction artistique/ }).click();
+    await page.locator(".da-drawer .art-panel .tab.active", { hasText: "Discussion" }).waitFor();
 
     // Deux questions, la première en vignettes : on choisit les deux, puis un seul envoi.
     const sea = page.locator(".art-vignette", { hasText: "Bleu d'affiche" });
@@ -207,12 +208,12 @@ describe("conception visuelle", () => {
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR", isMobile: true, hasTouch: true });
     phone.on("pageerror", (e) => errors.push(e.message));
     await phone.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
-    await phone.goto(`${BASE}/#/p/bordee/art`);
-    await phone.locator(".art-vignette").first().waitFor();
+    // La discussion du DA s'ouvre par son adresse (lien « Répondre au Directeur artistique » d'« À vous », ADR-113).
+    await phone.goto(`${BASE}/#/p/bordee/art/da`);
+    await phone.locator(".da-drawer .art-vignette").first().waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "vision-5-telephone.png") });
-    await phone.locator(".pane-switch button", { hasText: "Visuels" }).click();
-    await phone.locator(".art-panel .tab", { hasText: "Direction" }).click();
+    await phone.locator(".da-drawer .art-panel .tab", { hasText: "Direction" }).click();
     await phone.locator(".art-vision-style").waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "vision-6-telephone-direction.png"), fullPage: true });

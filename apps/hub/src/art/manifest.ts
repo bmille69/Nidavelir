@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Model3DSpec } from "./model3d.ts";
+import type { Model3DSpec, Orientation } from "./model3d.ts";
 
 /**
  * Le manifeste des assets (ADR-43) : `studio/art/assets.json` dans le dépôt du jeu. C'est le contrat entre le
@@ -24,6 +24,8 @@ export type Verdict = {
   /** « validator » : le validateur ; « human » : le directeur créatif a tranché. */
   by: "validator" | "human";
   at: string;
+  /** Image de référence d'une 3D : l'angle sous lequel elle montre le sujet (ADR-115) ; absent = de face. */
+  orientation?: Orientation;
 };
 
 export type Asset = {
@@ -112,6 +114,15 @@ export type Manifest = { version: 1; assets: Asset[] };
 
 /** En tête de la section des chantiers qui posent un provisoire en attendant des visuels (ADR-59, ADR-60). */
 export const PENDING_VISUALS = "Visuels confiés au Directeur artistique, pas encore faits";
+
+/**
+ * Les visuels d'un chantier : celui que son titre nomme (« A-0002 … », un chantier d'intégration ou de retouche), ou
+ * ceux que sa consigne attend (liste après PENDING_VISUALS, ADR-59).
+ */
+export function visualsOfTask(t: { title: string; goal: string }): string[] {
+  const own = /^A-\d{4,}/.exec(t.title)?.[0];
+  return own ? [own] : t.goal.includes(PENDING_VISUALS) ? [...t.goal.matchAll(/\n- (A-\d{4,}) «/g)].map((m) => m[1]!) : [];
+}
 
 export const ART_DIR = join("studio", "art");
 export const artRoot = (gameRoot: string) => join(gameRoot, ART_DIR);

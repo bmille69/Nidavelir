@@ -186,6 +186,8 @@ describe("Tripo (atelier 3D)", () => {
     // Seule la vue retouchée change ; les autres restent celles de la première planche.
     expect(seen[1]).toEqual(["front:/t1-front.png", "left:/t1-left.png", "back:/t2-back.png", "right:/t1-right.png"]);
     expect(t.calls[2]!.body).toMatchObject({ inputs: [{ front: "https://cdn/t1-front.png" }, { left: "https://cdn/t1-left.png" }, { back: "https://cdn/t2-back.png" }, { right: "https://cdn/t1-right.png" }], face_limit: 6000 });
+    // La planche garde les réglages de l'image seule : éclairage peint retiré, couleurs de l'image (ADR-109).
+    expect(t.calls[2]!.body).toMatchObject({ texture_version: "v3.5-20260815", delight: true, texture_alignment: "original_image" });
     expect(r.views!.map((v) => v.view)).toEqual(["front", "left", "back", "right"]);
     expect(r.credits).toBe(30);
   });
@@ -199,7 +201,29 @@ describe("Tripo (atelier 3D)", () => {
     const r = await p;
     expect(t.calls.map((c) => c.path)).toEqual(["/v3/generation/image-to-multiview", "/v3/generation/image-to-model"]);
     expect(r.views).toBeUndefined();
-    expect(steps.some((s) => /Planche impossible[\s\S]*image seule/.test(s))).toBe(true);
+    expect(steps.some((s) => /Planche écartée[\s\S]*image seule/.test(s))).toBe(true);
+  });
+
+  it("une planche infidèle, même retouchée, est écartée : le modèle vient de l'image seule (ADR-109)", async () => {
+    const t = fakeTripo({ rigType: "biped" });
+    vi.stubGlobal("fetch", t.fetch);
+    const steps: string[] = [];
+    const p = new RealModel3D(dir).tripo({
+      image: Buffer.from("png"),
+      ext: "png",
+      spec: { size: 1, tris: 2000, rig: false, animations: [] },
+      seed: 1,
+      step: (s) => steps.push(s),
+      views: async (_views, round) => {
+        if (round === 1) return [{ view: "front", prompt: "Long tube cannon, like the reference." }];
+        throw new Error("planche infidèle à l'image de référence");
+      },
+    });
+    for (let i = 0; i < 50; i++) await vi.advanceTimersByTimeAsync(15_000);
+    const r = await p;
+    expect(t.calls.map((c) => c.path)).toEqual(["/v3/generation/image-to-multiview", "/v3/generation/edit-multiview", "/v3/generation/image-to-model"]);
+    expect(r.views).toBeUndefined();
+    expect(steps.some((s) => /Planche écartée \(planche infidèle[\s\S]*image seule/.test(s))).toBe(true);
   });
 
   it("les animations que le squelette sait jouer", () => {

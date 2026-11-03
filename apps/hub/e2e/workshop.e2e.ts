@@ -12,7 +12,7 @@ import { createHub, type Hub } from "../src/hub.ts";
 import { buildServer } from "../src/server/http.ts";
 import { FakeOrchestrator } from "../test/fake-orchestrator.ts";
 import { FakeExecutor, planOutput, REPORT, VERIFIED } from "../test/fake-executor.ts";
-import { cleanupSandboxes, sandbox, type Sandbox } from "../test/helpers.ts";
+import { cleanupSandboxes, DIRECTOR, msg, sandbox, type Sandbox } from "../test/helpers.ts";
 
 const PORT = 4398;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -105,22 +105,76 @@ describe("atelier", () => {
     await page.getByRole("button", { name: /Autonomie : Atelier/ }).waitFor();
     await page.getByPlaceholder(/Écrivez librement/).fill("Les balles du perso font cheap, fais-les plus premium. go");
     await page.getByRole("button", { name: "Envoyer" }).click();
-    await page.locator(".brief summary", { hasText: "Balles lumineuses du fusil auto" }).waitFor({ timeout: 10_000 });
-    await page.locator(".msg", { hasText: "Chantier T-0001 « Balles lumineuses du fusil auto » lancé" }).waitFor({ timeout: 10_000 });
-    await page.locator(".workshop-list", { hasText: "Balles lumineuses du fusil auto" }).waitFor();
-    await page.locator(".brief summary").click();
+    // La consigne devient une carte « Proposition de chantier » (ADR-113) : titre et objectif en clair, la consigne complète repliée.
+    const proposal = page.locator(".proposal-card", { hasText: "Balles lumineuses du fusil auto" });
+    await proposal.waitFor({ timeout: 10_000 });
+    await proposal.locator(".proposal-lbl", { hasText: "Proposition de chantier" }).waitFor();
+    // Le lancement : une ligne discrète, qui mène au chantier.
+    await page.locator(".msg .event", { hasText: "Chantier T-0001 « Balles lumineuses du fusil auto » lancé" }).waitFor({ timeout: 10_000 });
+    await expect(page.locator(".msg .event a", { hasText: "T-0001" }).getAttribute("href")).resolves.toBe(`#/p/${P}/tasks/T-0001`);
+    // Le chantier se suit à droite, dans « En cours » sous la boîte « À vous » (ADR-113).
+    await page.locator(".inbox-rail .rail-runs .run", { hasText: "Balles lumineuses du fusil auto" }).waitFor();
+    await proposal.locator("summary", { hasText: "Consigne complète pour le Développeur" }).click();
+    await proposal.getByText(/Hors périmètre : armes énergétiques/).waitFor();
     await page.screenshot({ path: join(shots, "atelier-1-go.png") });
     // Le directeur connaissait le code : consignes du projet et fichiers dans son contexte.
     expect(fake.calls[0]!.systemPrompt).toMatch(/Le rendu ne modifie jamais la simulation[\s\S]*src\/render3d\/projectileView.ts/);
 
     finish();
     // Le testeur valide : le hub fusionne tout seul (ADR-31), sans clic de votre part.
-    await page.locator(".msg", { hasText: "terminé, vérifié par le testeur et fusionné dans votre jeu" }).waitFor({ timeout: 15_000 });
+    // Le compte rendu devient une carte (ADR-113) : fusionné, avis du Testeur en pastille, « ▶ Lancer le jeu », le technique replié.
+    const report = page.locator(".report", { hasText: "Balles lumineuses du fusil auto" });
+    await report.waitFor({ timeout: 15_000 });
+    await report.locator(".report-st.ok", { hasText: "Fusionné dans le jeu" }).waitFor();
+    await report.locator(".rc-pill", { hasText: /^Validé/ }).waitFor();
+    await report.getByRole("button", { name: /Lancer le jeu/ }).waitFor();
+    // Le texte complet reste accessible : sous « Détails techniques ».
+    await report.locator(".report-tech summary").click();
+    await report.locator(".report-tech", { hasText: "terminé, vérifié par le testeur et fusionné dans votre jeu" }).waitFor();
+    await page.locator(".inbox-rail .merged-row", { hasText: "Balles lumineuses du fusil auto" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(shots, "atelier-2-termine.png") });
 
     await page.goto(`${BASE}/#/p/${P}/tasks/T-0001`);
     await page.getByText(/Fusionné dans votre jeu/).waitFor({ timeout: 10_000 });
     expect(readFileSync(join(repo, "src/render3d/projectileView.ts"), "utf8")).toMatch(/0.12/);
+
+    // « Le jeu » (ADR-113) : la bible en clair, l'état du jeu en rubriques repliables (le jargon atténué), et « Réalisé
+    // récemment » d'après le compte rendu en clair du chantier. Le carnet est posé tel que le directeur l'écrit.
+    const carnet = [
+      "## Ce qui existe",
+      "",
+      "**Personnages** : Gardien Titan 3D (`guardian_titan.glb`, 56 px ; idle, run, jump, hurt). Chasseur, Arcaniste inchangés.",
+      "**Armes, visée** : fusil auto Kinetic ; balles à noyau blanc-chaud, sillage de 0,12 s (`projectileView.ts`).",
+      "**Carte « La Ligne Brisée »**",
+      "- 134×134 cellules de 40 px, départ (87,87).",
+      "- Quartiers : Barrage, Carrière, Forêt des Pins, Village.",
+      "",
+      "## Choix déjà faits",
+      "",
+      "- Le rendu ne modifie jamais la simulation.",
+      "",
+      "## Limites connues et reste à faire",
+      "",
+      "- Les tirs ennemis n'ont pas encore de sillage.",
+    ].join("\n");
+    hub.db.prepare("INSERT INTO game_state (project, text, updated_at, task) VALUES (?, ?, ?, ?) ON CONFLICT (project) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at, task = excluded.task").run(P, carnet, new Date().toISOString(), "T-0001");
+    await page.goto(`${BASE}/#/p/${P}/vision`);
+    await page.locator(".jeu-hero", { hasText: "La bible, en clair" }).waitFor();
+    await page.locator(".gs-block h4", { hasText: "Ce qui existe dans le jeu" }).waitFor();
+    // Le premier sujet est ouvert ; les noms de fichiers sont là, atténués, jusqu'à « Termes techniques : visibles ».
+    await page.locator("details.gs[open]", { hasText: "Personnages" }).locator("code.j", { hasText: "guardian_titan.glb" }).waitFor();
+    await page.locator("details.gs", { hasText: "Carte « La Ligne Brisée »" }).locator("summary").click();
+    await page.locator(".gs-body li", { hasText: "Quartiers : Barrage" }).waitFor();
+    await page.getByRole("button", { name: /Termes techniques : atténués/ }).click();
+    await page.locator(".game-state.jargon-on").waitFor();
+    const done = page.locator(".jeu-recent .tl li", { hasText: "Balles lumineuses du fusil auto" });
+    await done.waitFor({ timeout: 10_000 });
+    await expect(done.locator("a").getAttribute("href")).resolves.toBe(`#/p/${P}/tasks/T-0001`);
+    await page.locator(".jeu-bible-h a", { hasText: "Toutes les décisions" }).waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "jeu.png"), fullPage: true });
+    await page.goto(`${BASE}/#/p/${P}/tasks/T-0001`);
+    await page.getByText(/Fusionné dans votre jeu/).waitFor({ timeout: 10_000 });
     // Aucune fiche notée ; le seul appel structuré est la mise à jour du carnet « État du jeu » (ADR-33).
     expect(fake.calls.filter((c) => c.kind === "structured" && !/carnet « État du jeu »/.test(c.systemPrompt))).toHaveLength(0);
     expect(pageErrors).toEqual([]);
@@ -175,6 +229,34 @@ describe("atelier", () => {
     await page.locator(".threads a.active", { hasText: "Tirs premium" }).waitFor();
     expect(hub.conversations.getThread(P, first!.id).title).toBe("Tirs premium");
 
+    // Un fil que le hub ouvre seul (intégrer un visuel) : rangé sous « Automatiques », replié (ADR-113).
+    const integration = hub.conversations.createThread(P, "Intégrer A-0001 : Grouillot", "art");
+    hub.conversations.notify(P, integration.id, "Je lance l'intégration du Grouillot.");
+    const group = page.locator(".threads .t-toggle", { hasText: "Automatiques" });
+    await group.waitFor({ timeout: 10_000 });
+    await expect(group.getAttribute("aria-expanded")).resolves.toBe("false");
+    await page.locator(".threads .t-group", { hasText: "Vos discussions" }).waitFor();
+    expect(await page.locator(".threads a", { hasText: "Intégrer A-0001" }).count()).toBe(0);
+    // La recherche cherche aussi dans les fils automatiques.
+    await page.locator(".t-search input").fill("grouillot");
+    await page.locator(".threads a", { hasText: "Intégrer A-0001 : Grouillot" }).waitFor();
+    expect(await page.locator(".threads a", { hasText: "Tirs premium" }).count()).toBe(0);
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "discussions-recherche.png") });
+    await page.locator(".t-search input").fill("");
+    await group.click();
+    await page.locator(".threads a", { hasText: "Intégrer A-0001 : Grouillot" }).waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "discussions-automatiques.png") });
+    await group.click();
+    await expect(group.getAttribute("aria-expanded")).resolves.toBe("false");
+    // Replié, le groupe dit qu'il y a du nouveau dedans.
+    await group.locator(".count", { hasText: "1" }).waitFor();
+    // Rouvrir le jeu : on arrive sur votre fil, pas sur le fil automatique, plus récent.
+    await page.goto(`${BASE}/#/p/${P}`);
+    await expect.poll(() => page.url()).toContain(`/t/${first!.id}`);
+    await page.locator(".threads a.active", { hasText: "Tirs premium" }).waitFor();
+
     // Le studio écrit dans une autre discussion (ex. le Concepteur transmet) : pastille et bandeau.
     const other = hub.conversations.createThread(P, "Conception : Résolution en 3D");
     hub.conversations.notify(P, other.id, "Conception transmise : 6 chantiers.");
@@ -186,4 +268,98 @@ describe("atelier", () => {
     await expect.poll(() => page.locator(".threads li.has-news").count()).toBe(0);
     expect(pageErrors).toEqual([]);
   });
+
+  it("« À vous » : le Gardien, un chantier à relire et un choix du directeur, tranchés sur place (ADR-113)", async () => {
+    // Un chantier que le testeur refuse trois fois : il attend votre mot.
+    const thread = hub.conversations.createThread(P, "Le HUD").id;
+    fake.replies.push(["Je refais le viseur.", "[[CHANTIER: Viseur plus lisible]]", "Objectif : un viseur lisible.", "Où : src/render3d/projectileView.ts.", "[[/CHANTIER]]"].join("\n"));
+    for (let k = 0; k < 3; k++)
+      exec.scripts.execute.push(async (t) => {
+        await t.write("src/render3d/projectileView.ts", `export const crosshair = ${2 + k};\n`);
+        return REPORT;
+      });
+    const FAIL = { ...VERIFIED, verdict: "fail", summary_simple: "Le viseur déborde à droite de l'écran.", checks: [{ criterion: "Viseur centré", result: "fail", evidence: "décalé de 12 px" }], recommendation: "request_changes" };
+    for (let k = 0; k < 3; k++) exec.scripts.verify.push(() => FAIL);
+    await hub.conversations.send(P, thread, "Le viseur est illisible. go");
+    await page.goto(`${BASE}/#/p/${P}/t/${thread}`);
+    const rail = page.locator(".inbox-rail");
+    const review = rail.locator('.dcard[data-inbox="review"]', { hasText: "Viseur plus lisible" });
+    await review.waitFor({ timeout: 30_000 });
+    const task = hub.tasks.list(P).find((t) => t.title === "Viseur plus lisible")!;
+
+    // Le Gardien d'abord, en braise, avec le vrai compte à rebours. (En atelier il autorise seul ce qui est sans danger ;
+    // il demande après une compétence externe, ADR-105 : la demande est posée telle que le hub l'enregistre.)
+    const at = new Date().toISOString();
+    hub.db
+      .prepare("INSERT INTO escalations (id, project, task, run, status, data_json, created_at) VALUES ('E-0001', ?, ?, 'RUN-0099', 'pending', ?, ?)")
+      .run(P, task.id, JSON.stringify({ id: "E-0001", project: P, task: task.id, run: "RUN-0099", tool: "Bash", summary: "Installer la bibliothèque three-mesh-bvh", input: { command: "npm i three-mesh-bvh" }, reason: "commande non prévue dans le plan, après la compétence externe perf-3d", status: "pending", created_at: at, decided_at: null }), at);
+    const esc = rail.locator('.dcard.urgent[data-inbox="escalation"]');
+    await esc.waitFor({ timeout: 15_000 });
+    await expect(esc.locator(".countdown").textContent()).resolves.toMatch(/Sans réponse dans 1[45] min/);
+    await expect(rail.locator(".dcard").first().getAttribute("data-inbox")).resolves.toBe("escalation");
+    await page.locator(".project-tabs a", { hasText: "Discussion" }).locator(".tab-count.pulse").waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "projet-gardien.png") });
+    await esc.getByRole("button", { name: "Refuser" }).click();
+    await esc.waitFor({ state: "detached" });
+    expect(hub.tasks.escalations(P).map((e) => e.status)).toEqual(["denied"]);
+
+    // Une vraie question du directeur, à options, et le chantier qui attend votre mot.
+    hub.vision.capture(P, DIRECTOR, { type: "mechanic", title: "Fin de mission", statement: "Montrer la fin de mission", source: msg("m", "fin") });
+    hub.vision.submitProposal(P, DIRECTOR, {
+      title: "Fin de mission : comment la montrer ?",
+      statement: "Un bandeau en haut et un ralenti d'une seconde.",
+      nature: "creative",
+      source: { kind: "message", ref: "m" },
+      details: {
+        based_on: [hub.vision.list(P, { type: "mechanic" }).at(-1)!.id],
+        summary: "Le directeur hésite entre deux versions.",
+        options: [
+          { key: "A", label: "Écran de victoire plein écran", statement: "Score, butin et bouton « Continuer ».", tradeoffs: "Coupe l'action." },
+          { key: "B", label: "Bandeau et ralenti", statement: "Un bandeau en haut et un ralenti d'une seconde.", tradeoffs: "Moins de place pour le butin." },
+        ],
+        recommended_option: "B",
+      },
+    });
+    await review.locator(".tester", { hasText: "Le viseur déborde" }).waitFor();
+    const choice = rail.locator('.dcard[data-inbox="proposal"]', { hasText: "Fin de mission" });
+    await choice.getByText("★ conseillé").waitFor();
+    // Le plus urgent en haut : le chantier à relire avant la question.
+    await expect(rail.locator(".dcard").evaluateAll((cards) => cards.map((c) => c.getAttribute("data-inbox")))).resolves.toEqual(["review", "proposal"]);
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "projet-discussion.png") });
+
+    // Au téléphone : « À vous » d'abord, sans faire défiler la conversation.
+    const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR", isMobile: true, hasTouch: true });
+    phone.on("pageerror", (e) => pageErrors.push(e.message));
+    await phone.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
+    await phone.goto(`${BASE}/#/p/${P}/t/${thread}`);
+    await phone.locator(".pane-switch button.on", { hasText: /À vous/ }).waitFor();
+    await phone.locator('.inbox-rail .dcard[data-inbox="review"]').waitFor();
+    expect(await phone.locator(".conversation").isVisible()).toBe(false);
+    expect(await phone.locator(".project-tabbar .tab-item", { hasText: "Récap" }).isVisible()).toBe(true);
+    expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.waitForTimeout(350);
+    await phone.screenshot({ path: join(shots, "projet-telephone.png") });
+    await phone.locator(".pane-switch button", { hasText: "Conversation" }).click();
+    await phone.locator(".project.pane-chat .composer").waitFor();
+    await phone.close();
+
+    // Trancher la question : la carte s'efface.
+    await choice.getByRole("button", { name: /Bandeau et ralenti/ }).click();
+    await choice.waitFor({ state: "detached" });
+    expect(hub.vision.list(P, { type: "decision", status: "validated" }).find((d) => d.title.startsWith("Fin de mission"))?.validated_by?.kind).toBe("human");
+
+    // Fusionner depuis la boîte : le chantier passe dans « Récemment fusionné ».
+    await review.getByRole("button", { name: "Fusionner" }).click();
+    await page.locator(".inbox-toast", { hasText: "fusionné dans votre jeu" }).waitFor();
+    await review.waitFor({ state: "detached" });
+    await expect.poll(() => hub.tasks.list(P).find((t) => t.title === "Viseur plus lisible")?.status).toBe("merged");
+    expect(readFileSync(join(repo, "src/render3d/projectileView.ts"), "utf8")).toMatch(/crosshair = 4/);
+    await rail.locator(".merged-row", { hasText: "Viseur plus lisible" }).waitFor();
+    await rail.locator(".inbox-empty", { hasText: "Rien ne vous attend" }).waitFor();
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(shots, "projet-vide.png") });
+    expect(pageErrors).toEqual([]);
+  }, 90_000);
 });
