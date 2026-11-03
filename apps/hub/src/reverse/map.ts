@@ -115,6 +115,16 @@ export function buildMap(root: string, name: string): { map: string; index: stri
     lines.push("");
   }
 
+  // IL2CPP (ADR-96) : le code de chaque fonction, relu par Cpp2IL et annoté par le hub.
+  const functions = read(root, "fonctions/LISEZMOI.md");
+  if (functions) {
+    const summary = /## Contenu : ([^\n]+)\n((?:- [^\n]+\n)*)/.exec(functions);
+    lines.push("## Code des fonctions (IL2CPP)");
+    lines.push("- Les méthodes de `ExportedProject/` sont vides : leur vrai code est dans `fonctions/<assemblage>/<chemin>/<Classe>.txt`, en ISIL annoté. Lisez d'abord `fonctions/LISEZMOI.md`.");
+    if (summary) lines.push(`- ${summary[1]} :`, ...summary[2]!.trim().split("\n").slice(0, 12).map((l) => `  ${l}`));
+    lines.push("");
+  }
+
   // Dossiers : où est quoi, en nombre de fichiers.
   const byDir = new Map<string, { n: number; code: number; data: number }>();
   for (const f of files) {
@@ -157,9 +167,9 @@ export function buildMap(root: string, name: string): { map: string; index: stri
     lines.push("", "Tous les types sont dans `index-code.txt` (une ligne par type : nom, sorte, parent, fichier:ligne). Cherchez-y avec Grep.", "");
   }
 
-  // Données : où sont décrits cartes, ennemis, textes…
+  // Données : où sont décrits cartes, ennemis, textes… (le code des fonctions IL2CPP, en .txt, n'en est pas).
   const dataDirs = new Map<string, Map<string, number>>();
-  for (const f of files.filter((x) => DATA.has(x.ext))) {
+  for (const f of files.filter((x) => DATA.has(x.ext) && !x.rel.startsWith("fonctions/"))) {
     const dir = f.rel.includes("/") ? f.rel.slice(0, f.rel.lastIndexOf("/")) : ".";
     const m = dataDirs.get(dir) ?? new Map<string, number>();
     m.set(f.ext, (m.get(f.ext) ?? 0) + 1);
