@@ -1,0 +1,671 @@
+/* La Forge (ADR-106) : l'équipe en voxels. Importé en dernier dans main.tsx. */
+
+/* La page « La Forge » (remplace « En direct ») : toute la largeur et toute la hauteur de la zone de travail. */
+.forge-global {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  padding: 18px 22px 20px;
+}
+.forge-global-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.forge-global-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 1.45rem;
+}
+.forge-global-sub {
+  margin-right: auto;
+}
+.forge-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.forge-projects a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 12.5px;
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.forge-projects a:hover {
+  color: var(--text);
+  border-color: var(--hairline-strong, rgba(255, 255, 255, 0.18));
+}
+.forge-projects a.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 229, 255, 0.07);
+}
+.forge-global-empty {
+  margin: 0;
+}
+
+/* La scène prend toute la place ; le panneau glisse par-dessus, à droite, seulement quand on l'ouvre. */
+.forge-page {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  display: flex;
+}
+
+.forge-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 55%, rgba(0, 229, 255, 0.07), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 50% 70%, rgba(255, 90, 0, 0.06), transparent 70%),
+    linear-gradient(180deg, #0c1220, #080b12);
+  box-shadow: var(--lift), var(--elev-1);
+}
+
+.forge-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.forge-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Étiquettes : discrètes par défaut (un mot, sans cadre), une fiche claire au survol ou à la sélection. */
+.forge-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin-top: -6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(232, 237, 245, 0.6);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+  will-change: transform;
+  transition: opacity 0.18s, color 0.18s, background-color 0.18s, border-color 0.18s, padding 0.18s, box-shadow 0.18s;
+}
+.forge-tag b {
+  font-weight: 500;
+}
+.forge-tag small {
+  display: none;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted, #9aa3b2);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* Au survol ou sélectionnée : la fiche, lisible, au-dessus des autres. */
+.forge-tag.hover,
+.forge-tag.selected {
+  z-index: 3;
+  opacity: 1 !important;
+  padding: 5px 11px 6px;
+  color: var(--text, #e8edf5);
+  font-size: 12px;
+  text-shadow: none;
+  background: rgba(10, 14, 22, 0.95);
+  border-color: var(--hairline-strong, rgba(255, 255, 255, 0.16));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.forge-tag.hover b,
+.forge-tag.selected b {
+  font-weight: 650;
+  visibility: visible !important;
+}
+.forge-tag.hover small,
+.forge-tag.selected small {
+  display: block;
+}
+.forge-tag.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.3), 0 0 18px rgba(0, 229, 255, 0.22), 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* Les nains : au repos, rien (le foyer resterait lisible) ; au travail, le nom et un point cyan. */
+.forge-name[data-state="idle"]:not(.hover):not(.selected) b {
+  visibility: hidden;
+}
+.forge-name[data-state="work"] {
+  color: rgba(232, 237, 245, 0.82);
+}
+.forge-name[data-state="work"]:not(.hover):not(.selected) b::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 5px 1px 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.8);
+  vertical-align: middle;
+}
+/* Ce qui vous attend reste visible : braise, mais compacte. */
+.forge-name[data-state="wait"],
+.forge-you[data-state="wait"],
+.forge-sign[data-state="wait"] {
+  color: #ffc9a3;
+  border-color: rgba(255, 90, 0, 0.7);
+  background: rgba(40, 14, 3, 0.82);
+  text-shadow: none;
+  animation: forge-wait 1.6s ease-in-out infinite;
+}
+.forge-name[data-state="wait"] b::before {
+  content: "! ";
+  color: var(--ember);
+  font-weight: 700;
+}
+.forge-name.sleep::after {
+  content: "z Z z";
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  color: #a99be0;
+  font-size: 10px;
+  letter-spacing: 1px;
+  animation: forge-zzz 2.4s ease-in-out infinite;
+}
+
+/* Les ateliers (établis, file, votre table, trésor) : un mot pâle ; le détail au survol. */
+.forge-sign,
+.forge-prop {
+  font-size: 10px;
+  text-transform: none;
+}
+.forge-sign[data-state="idle"],
+.forge-prop[data-state="idle"] {
+  opacity: 0.42;
+}
+.forge-sign[data-state="idle"] small,
+.forge-prop[data-state="idle"]:not(:has(b)) small {
+  display: block;
+  color: inherit;
+  font-size: 10px;
+}
+.forge-sign[data-state="work"] b,
+.forge-prop[data-state="work"] b {
+  color: var(--accent);
+}
+.forge-sign[data-state="verify"] b {
+  color: #9be0b6;
+}
+.forge-you[data-state="wait"] b {
+  color: #ffb27a;
+}
+
+@keyframes forge-wait {
+  50% {
+    box-shadow: 0 0 16px rgba(255, 90, 0, 0.45);
+  }
+}
+@keyframes forge-zzz {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+.forge-toolbar {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.forge-toolbar > * {
+  pointer-events: auto;
+}
+.forge-spacer {
+  flex: 1;
+}
+.forge-clock,
+.forge-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(8, 11, 18, 0.72);
+  border: 1px solid var(--hairline);
+  font-size: 12px;
+}
+.forge-clock.night {
+  color: #c9d2ff;
+  border-color: rgba(127, 156, 255, 0.4);
+}
+.forge-btn {
+  padding: 5px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: rgba(8, 11, 18, 0.72);
+  border: 1px solid var(--hairline-strong, var(--hairline));
+  color: inherit;
+  cursor: pointer;
+}
+.forge-btn:hover {
+  border-color: rgba(0, 229, 255, 0.5);
+}
+.forge-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.forge-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #59606e;
+  flex: none;
+}
+.dot.work {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+}
+.dot.wait {
+  background: var(--ember);
+  box-shadow: 0 0 8px rgba(255, 90, 0, 0.6);
+}
+
+.forge-demo {
+  position: absolute;
+  left: 50%;
+  bottom: 38px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(60, 20, 4, 0.9);
+  border: 1px solid var(--ember);
+  color: #ffd2b0;
+  font-size: 12.5px;
+  pointer-events: none;
+}
+.forge-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 10px;
+  margin: 0;
+  opacity: 0.75;
+  pointer-events: none;
+}
+.forge-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 24px;
+  background: rgba(8, 11, 18, 0.85);
+}
+
+.forge-drawer {
+  position: absolute;
+  top: 58px;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100% - 24px));
+  z-index: 3;
+  display: flex;
+  pointer-events: auto;
+  animation: forge-drawer-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.forge-drawer .forge-panel {
+  flex: 1;
+  background: rgba(13, 17, 26, 0.94);
+  backdrop-filter: blur(10px);
+}
+.forge-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.forge-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+@keyframes forge-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+.forge-for-you {
+  cursor: pointer;
+  pointer-events: auto;
+  border-color: rgba(255, 90, 0, 0.6);
+  color: #ffc9a3;
+}
+.forge-model {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.forge-model h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.forge-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--plate);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--lift), var(--elev-1);
+}
+.forge-panel h3 {
+  font-family: var(--font-title);
+  font-size: 15px;
+  margin: 14px 0 8px;
+}
+.forge-panel h3:first-child,
+.forge-back + h3 {
+  margin-top: 4px;
+}
+.forge-panel .forge-back,
+.forge-panel .forge-link {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  min-height: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.forge-back {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.forge-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+.forge-who h3 {
+  margin: 0 !important;
+}
+.forge-who > div {
+  flex: 1;
+  min-width: 0;
+}
+.forge-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+}
+.forge-mode {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(89, 96, 110, 0.25);
+  color: var(--muted, #9aa3b2);
+  white-space: nowrap;
+}
+.forge-mode.work {
+  background: rgba(0, 229, 255, 0.12);
+  color: var(--accent);
+}
+.forge-mode.wait {
+  background: rgba(255, 90, 0, 0.15);
+  color: #ffb27a;
+}
+.forge-team {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.forge-panel .forge-team button {
+  box-shadow: none;
+  min-height: 0;
+  justify-content: flex-start;
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.forge-panel .forge-team button:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.forge-team button > span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.forge-team b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.forge-team small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.forge-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.forge-list li {
+  margin: 6px 0;
+  font-size: 13px;
+}
+.forge-task {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.forge-files {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.forge-log {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.forge-log code {
+  display: block;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 4px 7px;
+  border-radius: 5px;
+}
+.forge-alert {
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--ember);
+  background: rgba(255, 90, 0, 0.08);
+  font-size: 13px;
+}
+
+/* L'aperçu sur l'accueil. */
+.forge-mini .section-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.forge-mini-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.forge-mini-chips button {
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--muted, #9aa3b2);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.forge-mini-chips button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.forge-mini-stage {
+  position: relative;
+  display: block;
+  height: 200px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 55%, rgba(0, 229, 255, 0.07), transparent 70%),
+    linear-gradient(180deg, #0c1220, #080b12);
+  color: inherit;
+  text-decoration: none;
+}
+.forge-mini-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.forge-mini-caption {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(8, 11, 18, 0.75);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.forge-mini-go {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.forge-mini-stage:hover .forge-mini-go {
+  opacity: 1;
+}
+.forge-mini-stage:hover {
+  border-color: rgba(0, 229, 255, 0.45);
+}
+
+@media (max-width: 700px) {
+  .forge-global {
+    padding: 12px;
+  }
+  .forge-page {
+    min-height: 62vh;
+  }
+  .forge-drawer {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 60%;
+  }
+}
+
+/* Les boutons de la Forge ne prennent pas le style des boutons d'action (dégradé cyan, halo). */
+.forge-panel button,
+.forge-btn,
+.forge-mini-chips button {
+  box-shadow: none;
+  filter: none;
+  font-weight: 500;
+}
+.forge-panel button:hover:not(:disabled),
+.forge-btn:hover:not(:disabled),
+.forge-mini-chips button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}

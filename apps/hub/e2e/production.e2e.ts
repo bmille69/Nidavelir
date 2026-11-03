@@ -90,16 +90,27 @@ afterAll(async () => {
 describe("chaîne de production (ADR-64)", () => {
   it("la file dans son vrai ordre, les visuels attendus, « à vous de jouer » et le moniteur", async () => {
     await page.goto(`${BASE}/#/p/${P}`);
-    const panel = page.locator(".workshop-panel");
-    await page.locator(".project-monitor .monitor .mon-tile").first().waitFor({ timeout: 15_000 });
-    await panel.locator(".workshop-list li").first().waitFor();
-    const titles = await panel.locator(".workshop-list li strong").allTextContents();
-    expect(titles).toEqual(["Marqueurs du Village", "A-0006 Kit béton", "Habillage du Village", "Ciel : dôme et horizon"]);
-    await expect(panel.locator(".workshop-list li").first().textContent()).resolves.toMatch(/repris après un redémarrage \(ancien T-0001\)/);
-    await expect(panel.locator(".workshop-list li").nth(2).textContent()).resolves.toMatch(/n° 2 dans la file[\s\S]*A-0001 · provisoire/);
+    // La boîte « À vous » (ADR-113) : le chantier qui attend votre mot (repris après un redémarrage) et la question du DA.
+    const rail = page.locator(".inbox-rail");
+    const review = rail.locator('.dcard[data-inbox="review"]', { hasText: "Marqueurs du Village" });
+    await review.waitFor({ timeout: 15_000 });
+    await expect(review.textContent()).resolves.toMatch(/Repris après un redémarrage \(ancien T-0001\)/);
+    await rail.locator('.dcard[data-inbox="art"]', { hasText: "Le Directeur artistique vous pose une question" }).waitFor();
+    // Dessous, « En cours » : la file dans son vrai ordre (ADR-64), une intégration de visuel devant, les visuels attendus.
+    await rail.locator(".rail-runs .run").first().waitFor();
+    const titles = await rail.locator(".rail-runs .run-h b").allTextContents();
+    expect(titles).toEqual(["A-0006 Kit béton", "Habillage du Village", "Ciel : dôme et horizon"]);
+    await expect(rail.locator(".rail-runs .run").nth(1).textContent()).resolves.toMatch(/n° 2 dans la file[\s\S]*A-0001 · provisoire/);
+    await page.waitForTimeout(350);
     await page.screenshot({ path: join(shots, "prod-1-chantiers.png") });
+    // Le moniteur est dans le panneau de la pastille d'activité.
+    await page.locator(".activity-pill").click();
+    await page.locator(".activity-pop .monitor .mon-tile").first().waitFor({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
 
-    // « À vous de jouer » : le chantier qui attend votre mot et la question du DA.
+    // « À vous de jouer » : hors du projet, le bouton flottant reprend tout ; dans le projet, il ne parle que des autres.
+    expect(await page.locator(".for-you.floating").count()).toBe(0);
+    await page.goto(`${BASE}/#/`);
     await page.locator(".for-you.floating .for-you-btn").click();
     const pop = page.locator(".for-you-pop");
     await expect(pop.textContent()).resolves.toMatch(/attend votre mot[\s\S]*Le Directeur artistique attend votre réponse/);
@@ -107,20 +118,28 @@ describe("chaîne de production (ADR-64)", () => {
     await pop.locator("a", { hasText: "Directeur artistique" }).click();
     await page.waitForURL(/#\/p\/destiny\/art/);
 
-    // Le moniteur du studio en direct.
+    // La Forge (ancien lien « En direct », qui y mène).
     await page.goto(`${BASE}/#/direct`);
-    await page.locator(".monitor .mon-tile").first().waitFor();
-    await page.screenshot({ path: join(shots, "prod-3-direct.png") });
+    await page.waitForURL(/#\/direct$/);
+    await page.locator(".forge-page").waitFor();
+    await page.screenshot({ path: join(shots, "prod-3-forge.png") });
 
     // Téléphone : la cloche dans la barre du haut.
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR", isMobile: true, hasTouch: true });
     phone.on("pageerror", (e) => errors.push(e.message));
     await phone.goto(`${BASE}/login?token=${hub.sessions.createLoginToken()}`);
-    await phone.goto(`${BASE}/#/p/${P}/tasks`);
+    await phone.goto(`${BASE}/#/`);
     await phone.locator(".mobile-bar .for-you-btn").click();
     await phone.locator(".for-you-pop").waitFor();
     expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
     await phone.screenshot({ path: join(shots, "prod-4-telephone.png") });
+    // Dans le projet, « À vous » s'ouvre d'abord, avec son compte.
+    await phone.goto(`${BASE}/#/p/${P}`);
+    await phone.locator(".pane-switch button.on", { hasText: /À vous/ }).locator(".count").waitFor();
+    await phone.locator('.inbox-rail .dcard[data-inbox="review"]').waitFor();
+    expect(await phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")).toBe(true);
+    await phone.waitForTimeout(350);
+    await phone.screenshot({ path: join(shots, "prod-5-telephone-a-vous.png") });
     await phone.close();
     expect(errors).toEqual([]);
   }, 60_000);
