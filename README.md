@@ -1,5 +1,7 @@
 # Nidavellir : Game Studio Hub (projet « Ambition »)
 
+*English overview: [README.en.md](README.en.md)*
+
 Studio personnel de développement de jeux vidéo assisté par IA, pour **un seul utilisateur sous Windows**, qui reste **directeur créatif et décideur final**. Le hub (un processus Node local) fait travailler une équipe d'agents sur vos jeux, sous son contrôle : c'est lui qui applique les règles, pas les consignes données aux modèles.
 
 > État au 27/10/2026 : phases 1 et 2 de la [feuille de route](docs/ROADMAP.md) terminées, puis une soixantaine de décisions nées de l'usage réel (ADR-19 à ADR-80), et la phase 6 « le studio mesure le jeu » (ADR-81 à ADR-91). Trois jeux pilotés (Survivor Destiny et Bordée en web, Néon Saloon sous Godot), 186 chantiers fusionnés. Le détail de chaque choix est dans [docs/DECISIONS.md](docs/DECISIONS.md).
